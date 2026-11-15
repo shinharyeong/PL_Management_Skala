@@ -7,6 +7,7 @@
 import re
 from collections import Counter, defaultdict
 
+from .business_validation import build_business_contracts, validate_business_row
 from .normalization import inspect_number_format, normalize_number
 from .ooxml import range_bounds
 
@@ -212,7 +213,7 @@ def _layout(sheet: dict, index: dict) -> dict:
         labels = {
             _text(cell).strip(): column for column, cell in row.items() if _text(cell)
         }
-        if {"조직명", "관리분류", "중분류", "소분류", "사업부코드"} <= labels.keys():
+        if {"조직명", "관리분류", "중분류", "소분류"} <= labels.keys():
             kind, group_row, month_row = "revenue_detail", row_number, row_number + 1
         elif {"대분류", "중분류", "소분류", "조직명", "예산Code"} <= labels.keys():
             kind, group_row, month_row = "expense_detail", row_number - 1, row_number
@@ -247,7 +248,11 @@ def _layout(sheet: dict, index: dict) -> dict:
                 (start, group) for start, group in groups if 0 <= column - start <= 12
             ]
             if candidates:
-                periods[column] = _period([candidates[-1][1], cell])
+                group = candidates[-1][1]
+                periods[column] = _period([group, cell])
+                # 연도군 제목은 바로 아래 연간/월 헤더의 소속을 명시한다.
+                periods[column]["scenario"] = _scenario(_text(group))
+                periods[column]["rule_id"] = "PERIOD_GROUP_HEADER_SCENARIO"
         return {
             "kind": kind,
             "header_row": month_row,
@@ -286,7 +291,7 @@ def _layout(sheet: dict, index: dict) -> dict:
 
 
 def _periods_with_cross_evidence(layouts: list[dict]) -> None:
-    """같은 워크북의 명시 월별 시나리오로 혼합 기간의 의미를 보완한다.
+    """같은 워크북의 명시 월별 시나리오로 실적 연도군의 의미를 보완한다.
 
     Args:
         layouts: 표 레이아웃 목록. 시트별 기간 사전이 갱신된다.
@@ -305,8 +310,15 @@ def _periods_with_cross_evidence(layouts: list[dict]) -> None:
             if period["month"] and period["scenario"] in {"actual", "estimate"}:
                 evidence[(period["year"], period["month"])].append(period)
     for layout in layouts:
-        for period in layout["periods"].values():
-            if period["scenario"] == "mixed" and period["month"]:
+        periods = list(layout["periods"].values())
+        for period in [p for p in periods if p["month"]] + [
+            p for p in periods if not p["month"]
+        ]:
+            if (
+                layout["kind"] in {"revenue_detail", "expense_detail"}
+                and period["scenario"] in {"actual", "mixed"}
+                and period["month"]
+            ):
                 matches = evidence.get((period["year"], period["month"]), [])
                 scenarios = {match["scenario"] for match in matches}
                 if len(scenarios) == 1:
@@ -315,11 +327,18 @@ def _periods_with_cross_evidence(layouts: list[dict]) -> None:
                         period["provenance"] + matches[0]["provenance"]
                     )
                     period["rule_id"] = "PERIOD_CROSS_SHEET_MONTH_SCENARIO"
+                elif len(scenarios) > 1:
+                    period["scenario"] = "unknown"
+                    period["provenance"] += [
+                        ref for match in matches for ref in match["provenance"]
+                    ]
+                    period["rule_id"] = "PERIOD_CROSS_SHEET_SCENARIO_CONFLICT"
             if (
-                layout["kind"] == "financial_statement"
+                layout["kind"]
+                in {"financial_statement", "revenue_detail", "expense_detail"}
                 and period["aggregation"] == "annual"
             ):
-                if period["scenario"] != "actual":
+                if period["scenario"] not in {"actual", "mixed"}:
                     continue
                 monthly = [
                     p
@@ -328,6 +347,19 @@ def _periods_with_cross_evidence(layouts: list[dict]) -> None:
                     and p["month"]
                     and p["scenario"] in {"actual", "estimate"}
                 ]
+                conflicts = [
+                    p
+                    for p in periods
+                    if p["year"] == period["year"]
+                    and p.get("rule_id") == "PERIOD_CROSS_SHEET_SCENARIO_CONFLICT"
+                ]
+                if conflicts:
+                    period["scenario"] = "unknown"
+                    period["rule_id"] = "PERIOD_CROSS_SHEET_SCENARIO_CONFLICT"
+                    period["provenance"] += [
+                        ref for p in conflicts for ref in p["provenance"]
+                    ]
+                    continue
                 if {p["scenario"] for p in monthly} == {"actual", "estimate"}:
                     period["scenario"] = "mixed"
                     period["rule_id"] = "PERIOD_ANNUAL_MIXED_COMPONENTS"
@@ -352,7 +384,9 @@ def _organization_registry(indices: list[dict]) -> dict[str, dict]:
     for index in indices:
         for row_number, row in index["rows"].items():
             labels = {_text(cell).strip(): column for column, cell in row.items()}
-            if not {"사업부코드", "사업부명", "팀코드"} <= labels.keys():
+            if not {"사업부코드", "사업부명"} <= labels.keys() or any(
+                _year(label) for label in labels
+            ):
                 continue
             for number, data in index["rows"].items():
                 if number <= row_number:
@@ -361,23 +395,100 @@ def _organization_registry(indices: list[dict]) -> dict[str, dict]:
                     data.get(labels["사업부코드"]),
                     data.get(labels["사업부명"]),
                 )
-                code, name = _text(code_cell), _text(name_cell)
+                code, name = _text(code_cell).strip(), _text(name_cell).strip()
                 if code and name:
-                    previous = registry.get(code)
-                    conflict = previous is not None and previous["name"] != name
-                    registry[code] = {
-                        "name": None if conflict else name,
-                        "provenance": [_ref(code_cell), _ref(name_cell)],
-                    }
+                    entry = registry.setdefault(
+                        code, {"name": name, "names": set(), "provenance": []}
+                    )
+                    if name not in entry["names"]:
+                        entry["names"].add(name)
+                        entry["provenance"].extend([_ref(code_cell), _ref(name_cell)])
+                    entry["name"] = name if len(entry["names"]) == 1 else None
     return registry
 
 
-def _workbook_organization(layouts: list[dict], indices: list[dict]) -> dict:
+def _resolve_organization(
+    code_cell: dict | None,
+    name_cell: dict | None,
+    registry: dict,
+    fallback: dict | None = None,
+) -> dict:
+    """명시 코드 또는 같은 원본의 유일한 이름 대응으로 조직을 확인한다.
+
+    Args:
+        code_cell: 행의 명시 사업부 코드 셀 또는 None.
+        name_cell: 행의 조직명 셀 또는 None.
+        registry: 같은 워크북의 사업부 코드표.
+        fallback: 확인된 공통 조직. 이름이 일치할 때만 누락 코드를 보완한다.
+    Returns:
+        원문 이름, 근거, 확인 상태를 포함한 조직 사전. 충돌 코드는 추정하지 않는다.
+    Raises:
+        없음. 추출 계약을 만족하는 입력을 전제로 한다.
+    Side Effects:
+        없음. 원본·registry·fallback을 변경하지 않는다.
+    """
+    code, name = _text(code_cell).strip(), _text(name_cell).strip()
+    provenance = [ref for ref in (_ref(code_cell), _ref(name_cell)) if ref]
+    status = "unresolved"
+    diagnostic = None
+    if code:
+        entry = registry.get(code)
+        if entry and (entry["name"] is None or (name and entry["name"] != name)):
+            status, diagnostic = "conflict", "ORGANIZATION_CODE_NAME_CONFLICT"
+            provenance += entry["provenance"]
+        else:
+            status = "resolved"
+            if entry:
+                name = name or entry["name"]
+                provenance += entry["provenance"]
+        if (
+            fallback
+            and fallback.get("code") == code
+            and fallback.get("status") == "conflict"
+        ):
+            status, diagnostic = "conflict", "ORGANIZATION_CODE_NAME_CONFLICT"
+            provenance += fallback["provenance"]
+    elif name:
+        matches = [
+            (key, entry) for key, entry in registry.items() if name in entry["names"]
+        ]
+        if len(matches) == 1 and matches[0][1]["name"] == name:
+            code, entry = matches[0]
+            status = "resolved"
+            provenance += entry["provenance"]
+        elif matches:
+            status, diagnostic = "ambiguous", "ORGANIZATION_NAME_AMBIGUOUS"
+            provenance += [ref for _, entry in matches for ref in entry["provenance"]]
+        elif fallback and fallback.get("code") and fallback.get("status") == "resolved":
+            if name in {fallback.get("name"), fallback.get("original_name")}:
+                code, status = fallback["code"], "resolved"
+                provenance += fallback["provenance"]
+            else:
+                status, diagnostic = "conflict", "ORGANIZATION_NAME_CONFLICT"
+        else:
+            diagnostic = "ORGANIZATION_CODE_UNRESOLVED"
+    elif fallback:
+        return dict(fallback)
+    return {
+        "code": code or None,
+        "name": name or None,
+        "original_name": _text(name_cell) or None,
+        "scope": "organization" if code or name else "unknown",
+        "provenance": provenance,
+        "status": status,
+        "diagnostic": diagnostic,
+    }
+
+
+def _workbook_organization(
+    layouts: list[dict], indices: list[dict], registry: dict
+) -> dict:
     """상세 행의 조직 식별자를 모아 단일 조직과 여러 조직 범위를 구분한다.
 
     Args:
         layouts: 시트별 레이아웃.
         indices: 같은 순서의 시트별 색인.
+        registry: 같은 워크북의 조직 코드표.
     Returns:
         단일 코드·원래 이름 또는 multi_organization 범위와 원본 근거.
     Raises:
@@ -395,15 +506,18 @@ def _workbook_organization(layouts: list[dict], indices: list[dict]) -> dict:
                 continue
             code_cell = row.get(columns.get("사업부코드"))
             name_cell = row.get(columns.get("조직명"))
-            code = _text(code_cell)
-            if code:
-                organizations[code] = {
-                    "code": code,
-                    "name": _text(name_cell) or None,
-                    "original_name": _text(name_cell) or None,
-                    "scope": "organization",
-                    "provenance": [_ref(code_cell), _ref(name_cell)],
-                }
+            organization = _resolve_organization(code_cell, name_cell, registry)
+            if organization["code"] and organization["status"] == "resolved":
+                previous = organizations.get(organization["code"])
+                if previous and (
+                    previous["status"] == "conflict"
+                    or previous["name"] != organization["name"]
+                ):
+                    previous["status"] = "conflict"
+                    previous["diagnostic"] = "ORGANIZATION_CODE_NAME_CONFLICT"
+                    previous["provenance"] += organization["provenance"]
+                else:
+                    organizations[organization["code"]] = organization
     if len(organizations) == 1:
         return next(iter(organizations.values()))
     return {
@@ -411,6 +525,7 @@ def _workbook_organization(layouts: list[dict], indices: list[dict]) -> dict:
         "name": None,
         "original_name": None,
         "scope": "multi_organization" if organizations else "unknown",
+        "status": "multiple" if organizations else "unresolved",
         "provenance": [
             ref for value in organizations.values() for ref in value["provenance"]
         ],
@@ -500,6 +615,52 @@ def _submission(metadata: dict) -> dict:
     }
 
 
+def _normalization_locale(
+    cell: dict, unit: str | None, supplied_locale: str | None
+) -> tuple[str | None, bool]:
+    """명시 KRW 단위와 쉼표 그룹 서식이 일치하는 문자열만 구분자를 확인한다.
+
+    Args:
+        cell: 원본 셀. 실제 number 자료형에는 서식 추론을 적용하지 않는다.
+        unit: 제목 등 원본에서 확인된 금액 단위.
+        supplied_locale: 호출자가 명시한 로케일. 있으면 그대로 우선 사용한다.
+    Returns:
+        정규화에 전달할 로케일과 원본 서식으로 확인했는지 여부.
+        회계 여백은 허용하되 배율·날짜·백분율·숫자 리터럴은 추론하지 않는다.
+    Raises:
+        없음. 지원하지 않는 표시는 기존 미확정 처리로 보낸다.
+    Side Effects:
+        없음. 원본값·부호·단위를 바꾸거나 숫자를 직접 변환하지 않는다.
+    """
+    if (
+        supplied_locale is not None
+        or cell.get("data_type") != "string"
+        or unit not in {"원", "천원", "만원", "백만원", "억원"}
+    ):
+        return supplied_locale, False
+    number_format = cell.get("number_format") or ""
+    format_info = inspect_number_format(number_format)
+    if (
+        format_info["percent_display"]
+        or format_info["date_or_time_display"]
+        or any(
+            section["display_scale_divisor"] != "1" or section["condition_tokens"]
+            for section in format_info["sections"]
+        )
+        or re.search(r'"[^"]*\d[^"]*"|\\\d', number_format)
+    ):
+        return None, False
+    # 여백 제어만 제거하여 실제 숫자 리터럴이나 표시 배율을 그룹 근거로 오인하지 않는다.
+    positive_format = re.sub(r"_.|\*.", "", format_info["sections"][0]["raw"]).strip()
+    text = _text(cell).strip()
+    grouped_token = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?"
+    if re.fullmatch(r"#,##0(?:\.0+)?", positive_format) and re.fullmatch(
+        rf"(?:[+-]?{grouped_token}|\({grouped_token}\))", text
+    ):
+        return "ko_KR", True
+    return None, False
+
+
 def _statement_items(index: dict, layout: dict) -> dict[int, dict]:
     """답안지의 들여쓰기 열을 계층 항목 경로로 보존한다.
 
@@ -584,18 +745,17 @@ def _row_context(
             row.get(columns.get("사업부코드")),
             row.get(columns.get("조직명")),
         )
-        if data_row and (_text(code_cell) or _text(name_cell)):
-            code = _text(code_cell) or None
-            lookup = registry.get(code, {})
-            organization = {
-                "code": code,
-                "name": _text(name_cell) or lookup.get("name"),
-                "original_name": _text(name_cell) or None,
-                "scope": "organization",
-                "provenance": [
-                    ref for ref in [_ref(code_cell), _ref(name_cell)] if ref
-                ],
-            }
+        item_label = row.get(
+            columns.get("소분류" if kind == "revenue_detail" else "예산명칭")
+        )
+        description_cell = row.get(columns.get("거래내역 및 산출근거"))
+        identifiable_detail = bool(
+            _text(item_label) or re.search(r"\[ID:[^\]]+\]", _text(description_cell))
+        )
+        if data_row and (_text(code_cell) or _text(name_cell) or identifiable_detail):
+            organization = _resolve_organization(
+                code_cell, name_cell, registry, common_org
+            )
             names = (
                 ["관리분류", "중분류", "소분류"]
                 if kind == "revenue_detail"
@@ -609,11 +769,34 @@ def _row_context(
                 else labels[-1]
             )
             code_cell = row.get(columns.get("예산Code"))
+            account_cell = (
+                row.get(columns.get("중분류"))
+                if kind == "revenue_detail"
+                else code_cell
+            )
+            account_match = (
+                re.fullmatch(r"\s*(\d+)\s+\S.*", _text(account_cell))
+                if kind == "revenue_detail"
+                else None
+            )
+            account_code = (
+                account_match.group(1) if account_match else _text(code_cell) or None
+            )
+            description = row.get(columns.get("거래내역 및 산출근거"))
+            identity = re.search(
+                r"\[ID:([^;\]\s]+)\s*;\s*수정:(\d+)\]", _text(description)
+            )
             item = {
-                "code": _text(code_cell) or _metric(_text(name_cell)),
+                "code": account_code or _metric(_text(name_cell)),
                 "name": _text(name_cell) or (path[-1] if path else None),
                 "header_path": path,
-                "provenance": [_ref(label) for label in labels if label],
+                "provenance": [
+                    _ref(label)
+                    for label in [*labels, name_cell, account_cell, description]
+                    if label
+                ],
+                "detail_id": identity.group(1) if identity else None,
+                "detail_revision": int(identity.group(2)) if identity else None,
             }
             for name in (
                 "관리분류",
@@ -775,7 +958,8 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
 
     Args:
         workbook: extract_workbook의 원본 보존 결과. 입력은 변경하지 않는다.
-        metadata: 선택 조직명·코드, 제출 월·버전. 파일명에서 추측하지 않는다.
+        metadata: 선택 조직명·코드, 제출 월·버전. 조직 보완은
+            organization_verified=True인 입력만 사용하며 파일명에서 추측하지 않는다.
     Returns:
         records, diagnostics, summary, gap_relationships 사전. Decimal은 저장
         계층에서 문자열로 직렬화한다. 숫자·수식 후보는 미매핑이어도 남는다.
@@ -790,19 +974,14 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
     sheets = workbook["sheets"]
     indices = [_index(sheet) for sheet in sheets]
     layouts = [_layout(sheet, index) for sheet, index in zip(sheets, indices)]
+    business_contracts = build_business_contracts(workbook)
     _periods_with_cross_evidence(layouts)
     registry = _organization_registry(indices)
-    common_org = _workbook_organization(layouts, indices)
-    workbook_role = (
-        "consolidated_reference"
-        if common_org["scope"] == "multi_organization"
-        and any(layout["kind"] == "organization_summary" for layout in layouts)
-        else "organization_workbook"
-        if common_org["scope"] == "organization"
-        else "unknown"
-    )
-    if common_org["scope"] == "unknown" and (
-        metadata.get("organization_code") or metadata.get("organization_name")
+    common_org = _workbook_organization(layouts, indices, registry)
+    if (
+        common_org["scope"] == "unknown"
+        and (metadata.get("organization_code") or metadata.get("organization_name"))
+        and metadata.get("organization_verified") is True
     ):
         common_org = {
             "code": metadata.get("organization_code"),
@@ -810,12 +989,54 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
             "original_name": None,
             "scope": "organization",
             "provenance": [{"metadata": "organization"}],
+            "status": "resolved" if metadata.get("organization_code") else "unresolved",
         }
+    workbook_role = (
+        "consolidated_reference"
+        if common_org["scope"] == "multi_organization"
+        and any(layout["kind"] == "organization_summary" for layout in layouts)
+        else "organization_workbook"
+        if common_org["scope"] == "organization"
+        and common_org.get("status") == "resolved"
+        else "unknown"
+    )
     records, diagnostics, sheet_summaries = [], [], []
+    organization_diagnostics = set()
+    period_diagnostics = set()
+    if (
+        metadata.get("organization_code") or metadata.get("organization_name")
+    ) and metadata.get("organization_verified") is not True:
+        diagnostics.append(
+            {
+                "code": "ORGANIZATION_METADATA_UNVERIFIED",
+                "severity": "warning",
+                "message": "검증 표식이 없는 조직 메타데이터는 조직 확정에 사용하지 않았습니다.",
+            }
+        )
+    if (
+        metadata.get("organization_verified") is True
+        and common_org.get("status") == "resolved"
+        and any(
+            metadata.get(field) and metadata[field] != common_org.get(target)
+            for field, target in (
+                ("organization_code", "code"),
+                ("organization_name", "name"),
+            )
+        )
+    ):
+        diagnostics.append(
+            {
+                "code": "ORGANIZATION_METADATA_CONFLICT",
+                "severity": "warning",
+                "message": "조직 메타데이터가 원본의 조직 근거와 충돌하여 원본 근거를 유지했습니다.",
+                "provenance": common_org["provenance"],
+            }
+        )
     ratio_formats = {}
     file = workbook["file"]
     for sheet, index, layout in zip(sheets, indices, layouts):
         sheet_records = []
+        business_rows = {}
         unit, unit_sources = _unit(index)
         statement_items = (
             _statement_items(index, layout)
@@ -843,13 +1064,30 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
                 if financial
                 else _period([])
             )
+            if (
+                period.get("rule_id") == "PERIOD_CROSS_SHEET_SCENARIO_CONFLICT"
+                and (sheet["name"], cell["column_index"]) not in period_diagnostics
+            ):
+                period_diagnostics.add((sheet["name"], cell["column_index"]))
+                diagnostics.append(
+                    {
+                        "code": "PERIOD_CROSS_SHEET_SCENARIO_CONFLICT",
+                        "severity": "warning",
+                        "sheet": sheet["name"],
+                        "column": cell["column"],
+                        "message": "동일 연월의 원본 시나리오 근거가 충돌하여 시나리오를 확정하지 않았습니다.",
+                        "provenance": period["provenance"],
+                    }
+                )
             source_unit = unit if financial else None
             formula = cell.get("formula")
             rules = ["MAP_" + layout["kind"].upper()]
             unit_evidence = list(unit_sources) if financial else []
             if context["role"] == "subtotal" and layout["kind"].endswith("_detail"):
                 expression = (formula or {}).get("text") or ""
-                if unit == "천원" and re.search(r"/\s*100000(?:\.0*)?\s*$", expression):
+                if unit == "천원" and re.search(
+                    r"/\s*(?:100000(?:\.0*)?|10\s*\^\s*5)\s*$", expression
+                ):
                     source_unit = "억원"
                     unit_evidence.append(_ref(cell))
                     rules.append("UNIT_SUBTOTAL_THOUSAND_TO_HUNDRED_MILLION")
@@ -871,13 +1109,18 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
             if financial and ratio_formats[number_format]:
                 value_kind, source_unit = "ratio", None
                 context["role"] = "ratio"
+            normalization_locale, format_confirmed = _normalization_locale(
+                cell, source_unit, metadata.get("locale")
+            )
+            if format_confirmed and value_kind == "amount":
+                rules.append("TEXT_INTEGER_GROUPING_FROM_SOURCE_FORMAT")
             normalization = normalize_number(
                 cell.get("value"),
                 data_type=cell.get("data_type", "blank"),
                 value_kind=value_kind,
                 unit=source_unit,
                 number_format=cell.get("number_format"),
-                locale=metadata.get("locale"),
+                locale=normalization_locale,
             )
             # 표시 형식 전체는 원본 스타일에 이미 보존되므로 값마다 반복하지 않는다.
             normalization.pop("format_analysis", None)
@@ -888,8 +1131,31 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
             reasons = []
             if not financial:
                 reasons.append("재무 값 영역 또는 지표 의미 미확정")
-            if context["organization"]["scope"] == "unknown":
+            organization = context["organization"]
+            if (
+                organization["scope"] == "unknown"
+                or not organization.get("code")
+                or organization.get("status") in {"conflict", "ambiguous", "unresolved"}
+            ):
                 reasons.append("조직 미확정")
+            org_diagnostic = organization.get("diagnostic")
+            diagnostic_key = (org_diagnostic, sheet["name"], cell["row"])
+            if (
+                financial
+                and org_diagnostic
+                and diagnostic_key not in organization_diagnostics
+            ):
+                organization_diagnostics.add(diagnostic_key)
+                diagnostics.append(
+                    {
+                        "code": org_diagnostic,
+                        "severity": "warning",
+                        "sheet": sheet["name"],
+                        "row": cell["row"],
+                        "message": "조직코드·이름의 근거가 충돌하거나 유일한 대응을 확인할 수 없습니다.",
+                        "provenance": organization["provenance"],
+                    }
+                )
             if not context["item"]["name"]:
                 reasons.append("항목 미확정")
             if period["year"] is None or period["aggregation"] == "unknown":
@@ -940,6 +1206,12 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
                 "number_format": cell.get("number_format"),
                 "raw_record_id": cell["record_id"],
             }
+            if context["role"] == "detail":
+                if cell["row"] not in business_rows:
+                    business_rows[cell["row"]] = validate_business_row(
+                        index["rows"][cell["row"]], layout, business_contracts
+                    )
+                record["business_validation"] = business_rows[cell["row"]]
             sheet_records.append(record)
         counts = Counter(record["mapping"]["status"] for record in sheet_records)
         sheet_summaries.append(

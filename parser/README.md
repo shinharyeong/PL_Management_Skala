@@ -10,6 +10,7 @@
 | `extraction.py` | 모든 시트의 원본 내용 추출과 빈 스타일 영역의 희소 구조 보존 |
 | `normalization.py` | 저장값 우선의 Decimal 숫자·부호·단위·비율 정규화 |
 | `mapping.py` | 확인된 헤더·코드표를 통한 조직·항목·대상 기간·역할 연결 |
+| `business_validation.py` | 같은 원본의 상세 ID·코드표·집계 수식 계약에 따른 업무필드 검증 |
 | `validation.py` | 독립 원본 대조, 출처 연결, 적용 가능한 원본·마스터 비교 |
 | `pipeline.py` | 단일·복수 파일 처리와 명시적으로 요청한 결과 저장 |
 | `paths.py`, `__main__.py` | 경로 설정과 CLI |
@@ -63,7 +64,7 @@ PYTHONPATH=src python3 -B -m excel_parser parse /path/to/inputs --recursive --wr
 ### 데이터 없는 기본 테스트
 
 ```bash
-PYTHONPATH=src python3 -B -m unittest discover -s tests -v
+PYTHONPATH=src:../parser_ai/src python3 -B -m unittest discover -s tests -v
 ```
 
 기본 테스트는 메모리 자료와 합성 기대값을 사용합니다. 별도 데이터가 필요한 통합 테스트는 데이터 경로를 지정하지 않으면 명시적으로 건너뜁니다. 테스트용 Excel 파일을 디스크에 만들지 않습니다.
@@ -71,7 +72,7 @@ PYTHONPATH=src python3 -B -m unittest discover -s tests -v
 ### 별도 데이터로 통합 검증
 
 ```bash
-EXCEL_PARSER_TEST_DATA=/path/to/inputs PYTHONPATH=src python3 -B -m unittest discover -s tests -v
+EXCEL_PARSER_TEST_DATA=/path/to/inputs PYTHONPATH=src:../parser_ai/src python3 -B -m unittest discover -s tests -v
 ```
 
 통합 검증 자료는 저장소에 추가하지 않습니다. 입력 집합에 지원하는 마스터가 없으면 마스터 비교는 적용 불가로 구분하며, 그 사실을 집계 일치로 해석하지 않습니다. 형식 검사에는 선택적으로 `ruff check --no-cache src tests`를 사용할 수 있습니다.
@@ -86,7 +87,49 @@ Contingency 제외 영업이익은 원본에 명시되어 있으면 우선 연�
 
 ## 파싱 명세
 
+두 파서의 독립 비교는 `python3 -B parser/compare.py`로 실행합니다(저장소 루트 기준).
+기본은 메모리·콘솔만 사용하며 정답을 엔진 입력과 분리합니다.
+[비교 환경의 명령·평가 계약·실험 조건](docs/development/parser-comparison.md)을 참고하세요.
+
+월별 검증은 같은 진입점의 `monthly export`로 실제 AI 요청 컨텍스트를 내보낸 뒤,
+Codex 세션에서 정답을 보지 않고 작성한 `plans.json`을 `monthly run`으로 재생합니다.
+두 파서에는 조직 원본만 전달하고, 마스터 상세는 독립 평가기에서 업무키로 대조합니다.
+외부 API를 차단하며 최초 계획과 결과를 덮어쓰지 않습니다. 결과 저장은
+사용자가 요청한 경우에만 `--write-output`과 새 실행 폴더를 지정해 수행합니다.
+
+조직 원본으로 월별 마스터를 재구성할 때는 `master generate --inventory <최초 inventory.json>
+--output-dir <새 실행 폴더> --write-output`을 사용합니다. 이 단계는 기존 마스터를
+읽지 않고, 원본 상세·수정번호·출처와 조직별·전사 합계를 저장합니다. 이후
+`master evaluate --output-dir <생성 완료 폴더> --write-output`으로 기존 마스터와
+상세·합계를 대조합니다. 기준월과 금액의 대상 연월은 분리하고, 실제 0원·빈칸·
+캐시 없는 수식을 구분합니다. 필수 상세나 조직이 빠지면 부분 생성으로 표시합니다.
+
+생성 JSON의 Excel 내보내기는 `node parser/src/excel_parser/export_masters.mjs
+<생성 완료 폴더> --workers 2`로 실행합니다. 각 월의 Excel은 전사 합계, 조직별 합계,
+매출 상세, 비용 상세 네 시트를 제공하며, 저장 후 값·타입·빈칸을 다시 검사합니다.
+실행 조건과 수정본 선택 정책은 [비교 개발 문서](docs/development/parser-comparison.md)에 있습니다.
+
 - [함수별 명세와 호출 관계](docs/development/function-reference.md)
 - [의미 매핑 규칙](docs/development/mapping-rules.md)
 - [숫자·부호·단위 정규화](docs/development/normalization-rules.md)
 - [출력 구조와 타입](docs/development/output-contract.md)
+
+월별 마스터의 상세는 숫자 금액 확정과 업무키 유효성을 분리합니다. 같은 원본 등록 계약에 없는 계정·관리분류와 무효 문자열 ID는 원문·금액·출처를 남기고 합계에서 제외합니다. 원본에서 확인한 행 조직은 제출 소유자와 달라도 유지합니다. 원본 빈칸·실제 0원·수식 캐시 누락을 보존하며 기준 마스터의 생략 패턴을 파서 규칙으로 사용하지 않습니다. 저장된 이전·현재 실행의 셀별 회귀 비교와 합계 차액 추적은 [비교 검증 문서](docs/development/parser-comparison.md)에 설명합니다.
+
+`월별검증_2026`의 확인된 생성 계약을 적용하는 v4는 생성 명령에
+`--publication-policy source-contract-v4`를 명시합니다. 이 정책은 무효 업무키,
+제출 범위 밖 비용행, 당해 1월 실적 빈칸 행, 계약상 비활성 매출행을 최종 상세에서
+제외하고 원문 전체를 감사에 보존합니다. 개별 0원을 일괄 생략하지 않으며,
+정책을 생략한 기존 조립 동작은 유지합니다. 원본 품질 상태와 발행 상세의 상태는
+별도로 기록합니다. 이 더미 생성 계약을 일반 업무 파일에 자동 적용하지 않습니다.
+
+v4 최종 검증은 저장된 Excel을 직접 읽습니다(저장소 루트 기준).
+
+```bash
+PYTHONPATH=parser/src python3 -B -m excel_parser.benchmark.excel_evaluation --run <생성 및 Excel 저장 완료 폴더> --output <새 평가 폴더> --write-output
+```
+
+`strict_excel_detail_and_total_match`는 기존 엄격 상세 채점 외에도 실제 합계표의
+금액·월별 건수·조직 수·Excel 구조가 맞아야 참입니다. JSON 값을 채점 입력으로
+보충하지 않습니다. v3 대비 보고는 `benchmark.publication_report`로 저장 평가를
+비교하며 기본 경로 계약은 `<생성 폴더>/evaluation/validation.json`입니다.
