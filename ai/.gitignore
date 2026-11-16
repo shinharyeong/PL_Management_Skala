@@ -1,0 +1,11 @@
+.env
+.venv/
+.cache/
+_backup_before_rename/
+preview_html/
+
+# 로컬 전용(저장소에 올리지 않음)
+.cache/
+.venv/
+_backup_before_rename/
+preview_html/
