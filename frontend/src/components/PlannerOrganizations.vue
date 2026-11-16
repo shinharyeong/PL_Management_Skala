@@ -165,7 +165,7 @@ onBeforeUnmount(dispose)
           <h3>변경 이력</h3>
           <div class="table-scroll"><table class="changes"><caption class="visually-hidden">변경 항목과 소명 사유</caption><thead><tr><th>변경 일자</th><th>변경 항목</th><th>소명 사유</th></tr></thead><tbody><template v-if="mode === 'preview' && year === 2026 && month === 10 && selectedId === 'media'"><tr v-for="row in changes" :key="row[1]"><td>{{ row[0] }}</td><td><b>{{ row[1] }}</b> {{ row[2] }}</td><td>{{ row[3] }}</td></tr></template><tr v-else><td colspan="3" class="empty-cell">{{ mode === 'actual' ? '변경·소명 이력은 연동 준비 중입니다.' : '선택한 조직·기간의 예시 변경 이력이 없습니다.' }}</td></tr></tbody></table></div>
         </section>
-        <section class="master-card"><h2>월별 마스터</h2><div v-if="mode === 'preview'" class="master-rail"><button v-for="(master, index) in masters" :key="master[0]" :class="{ waiting: index === 0 }" @click="explainPreview"><strong>{{ master[0] }}</strong><span>{{ master[1] }}</span><b>⤓</b></button></div><p v-else class="master-empty">공식 마스터 조회는 연동 준비 중입니다.</p></section>
+        <section class="master-card"><h2>월별 마스터</h2><div v-if="mode === 'preview'" class="master-rail"><button v-for="(master, index) in masters" :key="master[0]" :class="{ waiting: index === 0 }" @click="explainPreview"><strong>{{ master[0] }}</strong><span>{{ master[1] }}</span><b>⤓</b></button></div><p v-else class="master-empty">실제 월간 마스터는 <RouterLink to="/planning/gap" class="text-button">월간 시트 관리</RouterLink>, 연간 계획 마스터는 <RouterLink to="/planning/requests" class="text-button">요청·검토</RouterLink>에서 확인하세요.</p></section>
       </div>
     </div>
   </div>

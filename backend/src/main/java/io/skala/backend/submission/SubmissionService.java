@@ -127,7 +127,7 @@ public class SubmissionService {
         var params = new ArrayList<Object>();
         String where = " WHERE 1=1";
         if (!actor.role().equals("PLANNER")) {
-            where += " AND EXISTS (SELECT 1 FROM request_target t WHERE t.request_id=r.id AND t.organization_id=?)";
+            where += " AND EXISTS (SELECT 1 FROM request_target t WHERE t.request_id=r.id AND t.organization_id=? AND t.excluded=FALSE)";
             params.add(id(actor.organization().id()));
         }
         where += filters(query, params, false);
@@ -176,7 +176,7 @@ public class SubmissionService {
                 if (count("""
                         SELECT COUNT(*) FROM request_target t JOIN submission_request r ON r.id=t.request_id
                         WHERE r.annual_plan_id=? AND r.type='ANNUAL_PLAN' AND t.organization_id=?
-                        AND t.confirmed_plan_submission_id IS NOT NULL
+                        AND t.excluded=FALSE AND t.confirmed_plan_submission_id IS NOT NULL
                         """, row.get("annual_plan_id"), id(actor.organization().id())) == 0) {
                     throw conflict("PLAN_SOURCE_MISSING", "해당 조직의 확정 계획본이 없습니다.");
                 }
@@ -315,7 +315,7 @@ public class SubmissionService {
     private Map<String, Object> requestRow(Actor actor, long requestId) {
         var found = rows(REQUEST_SQL + " WHERE r.id=?", requestId);
         if (found.isEmpty() || (!actor.role().equals("PLANNER")
-                && count("SELECT COUNT(*) FROM request_target WHERE request_id=? AND organization_id=?", requestId, id(actor.organization().id())) == 0)) {
+                && count("SELECT COUNT(*) FROM request_target WHERE request_id=? AND organization_id=? AND excluded=FALSE", requestId, id(actor.organization().id())) == 0)) {
             throw notFound();
         }
         return found.getFirst();
@@ -351,7 +351,7 @@ public class SubmissionService {
                 LEFT JOIN submission latest ON latest.id=(
                     SELECT s.id FROM submission s WHERE s.request_id=t.request_id AND s.organization_id=t.organization_id
                     AND s.status<>'DRAFT' ORDER BY s.seq DESC LIMIT 1)
-                WHERE t.request_id=?
+                WHERE t.request_id=? AND t.excluded=FALSE
                 """ + where + " ORDER BY o.id").params(params).query().listOfRows();
         var targetViews = new ArrayList<Map<String, Object>>();
         int submitted = 0;

@@ -8,6 +8,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.skala.backend.common.ApiException;
 import io.skala.backend.foundation.CommandExecutor;
+import io.skala.backend.master.AnnualMasterService;
+import io.skala.backend.master.MonthlyMasterService;
 import io.skala.backend.security.Actor;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -26,23 +28,27 @@ public class SubmissionWorkflowService {
     private final CommandExecutor commands;
     private final SubmissionService submissions;
     private final SubmissionValidationService validation;
+    private final AnnualMasterService annualMasters;
+    private final MonthlyMasterService monthlyMasters;
 
     /** 검증·조회와 같은 DB 트랜잭션을 사용하는 명령 의존성을 연결한다.
-     * Args: jdbc DB, mapper JSON, commands 멱등 경계, submissions 조회, validation 검증·적재.
+     * Args: jdbc DB, mapper JSON, commands 멱등 경계, submissions 조회, validation 검증·적재, annualMasters 연간 마스터, monthlyMasters 실적 마스터 발행.
      * Returns: 없음. Raises: 없음. Side Effects: 없음.
      */
     public SubmissionWorkflowService(JdbcClient jdbc, ObjectMapper mapper, CommandExecutor commands,
-            SubmissionService submissions, SubmissionValidationService validation) {
+            SubmissionService submissions, SubmissionValidationService validation, AnnualMasterService annualMasters, MonthlyMasterService monthlyMasters) {
         this.jdbc = jdbc;
         this.mapper = mapper;
         this.commands = commands;
         this.submissions = submissions;
         this.validation = validation;
+        this.annualMasters = annualMasters;
+        this.monthlyMasters = monthlyMasters;
     }
 
     /** 현재 파싱 결과를 검증하고 검증 근거와 선택한 월별 상세를 원자적으로 채택한다.
      * Args: actor 본인 조직 담당자, submissionId 초안 ID, key 멱등키, input 현재 상태 토큰.
-     * Returns: 제출 상세와 빈 검토 변경 배열; 업무 오류는 상세의 blocker로 반환한다.
+     * Returns: 제출 상세와 현재 검토·미답변 검토 ID 배열; 업무 오류는 상세의 blocker로 반환한다.
      * Raises: ApiException 권한·토큰·파싱·초안 상태 오류, DB/직렬화 오류.
      * Side Effects: 조직·제출·계획 잠금, 검증 서비스의 DB 적재, 멱등 응답 저장. 파일 쓰기 없음.
      */
@@ -53,9 +59,10 @@ public class SubmissionWorkflowService {
         return commands.execute(actor, "POST " + route, key, fingerprint(input), () -> {
             Map<String, Object> row = lockDraft(actor, submissionId, input);
             lockAnnualPlan(row);
+            jdbc.sql("SELECT id FROM gap_threshold_guard WHERE id=1 FOR UPDATE").query(Integer.class).single();
             validation.validateLocked(actor, submissionId);
             return new CommandExecutor.Result(200, json(object("submission", submissions.submission(actor, submissionId),
-                    "changedReviewItemIds", List.of(), "answerRequiredReviewItemIds", List.of())),
+                    "changedReviewItemIds", validation.reviewIds(submissionId, false), "answerRequiredReviewItemIds", validation.reviewIds(submissionId, true))),
                     "/api/v1/submissions/" + submissionId);
         });
     }
@@ -73,6 +80,7 @@ public class SubmissionWorkflowService {
         return commands.execute(actor, "POST " + route, key, fingerprint(input), () -> {
             Map<String, Object> row = lockDraft(actor, submissionId, input);
             checkSubmissionWindow(actor, row);
+            jdbc.sql("SELECT id FROM gap_threshold_guard WHERE id=1 FOR UPDATE").query(Integer.class).single();
             validation.assertReadyForSubmit(actor, submissionId);
             int seq = jdbc.sql("SELECT COALESCE(MAX(seq),0)+1 FROM submission WHERE request_id=? AND organization_id=?")
                     .params(row.get("request_id"), row.get("organization_id")).query(Integer.class).single();
@@ -86,11 +94,11 @@ public class SubmissionWorkflowService {
         });
     }
 
-    /** 제출 당시 근거로 연간 제출을 승인하거나 사유와 함께 제출본을 반려한다.
+    /** 제출 당시 근거로 연간·월간 제출을 승인하거나 사유와 함께 제출본을 반려한다.
      * Args: actor 경영기획 담당자, submissionId 제출 ID, key 멱등키, input 상태 토큰·판단·반려 사유.
-     * Returns: 검토된 제출 상세와 빈 masterEffects; 같은 성공 명령은 최초 응답 재전달.
-     * Raises: ApiException 권한·종료 상태·토큰·검증 근거·미지원 월간 승인 충돌, DB 오류.
-     * Side Effects: 사용자 다음 조직·제출·계획 순으로 잠금; 검토 헤더와 멱등 응답만 원자적으로 저장.
+     * Returns: 검토된 제출 상세와 승인 시 연간 또는 월별 마스터 반영 결과; 반려는 빈 masterEffects, 같은 성공 명령은 최초 응답 재전달.
+     * Raises: ApiException 권한·종료 상태·토큰·검증 근거·필수 소명 미수용 충돌, DB 오류.
+     * Side Effects: 사용자 다음 조직·제출·계획 순으로 잠금; 검토 헤더·해당 마스터·멱등 응답을 원자적으로 저장.
      */
     public CommandExecutor.Result decide(Actor actor, String submissionId, String key, DecisionInput input) {
         actor.requireRole("PLANNER");
@@ -101,6 +109,7 @@ public class SubmissionWorkflowService {
                     .param(id(visible.get("organizationId").toString())).query(Long.class).single();
             Map<String, Object> row = jdbc.sql("SELECT * FROM submission WHERE id=? FOR UPDATE")
                     .param(id(submissionId)).query().singleRow();
+            assertIncludedTarget(row);
             if (!"PENDING".equals(row.get("status"))) {
                 throw conflict("INVALID_SUBMISSION_STATE", "검토 대기 중인 제출본만 승인하거나 반려할 수 있습니다.");
             }
@@ -116,12 +125,8 @@ public class SubmissionWorkflowService {
                 Map<String, Object> plan = lockAnnualPlan(row);
                 String type = jdbc.sql("SELECT type FROM submission_request WHERE id=?")
                         .param(row.get("request_id")).query(String.class).single();
-                if (!type.equals("ANNUAL_PLAN")) {
-                    throw conflict("MONTHLY_APPROVAL_UNAVAILABLE", "월간 승인은 공식 마스터 발행 기능 연결 후 사용할 수 있습니다.");
-                }
-                if (!plan.get("status").equals("COLLECTING")) {
-                    throw conflict("ANNUAL_PLAN_LOCKED", "확정된 연간 계획의 승인본은 변경할 수 없습니다.");
-                }
+                if (type.equals("ANNUAL_PLAN") && !plan.get("status").equals("COLLECTING")) throw conflict("ANNUAL_PLAN_LOCKED", "확정된 연간 계획의 승인본은 변경할 수 없습니다.");
+                if (type.equals("MONTHLY_ACTUAL") && !plan.get("status").equals("CONFIRMED")) throw conflict("ANNUAL_PLAN_NOT_CONFIRMED", "월간 승인은 연간 계획 확정 후 가능합니다.");
                 validation.assertReadyForApproval(actor, submissionId);
             }
             int changed = jdbc.sql("""
@@ -130,8 +135,11 @@ public class SubmissionWorkflowService {
                     """).params(input.action().equals("APPROVE") ? "APPROVED" : "REJECTED", id(actor.id()),
                             OffsetDateTime.now(ZoneOffset.UTC), input.note(), id(submissionId)).update();
             if (changed != 1) throw conflict("INVALID_SUBMISSION_STATE", "이미 검토가 완료된 제출본입니다.");
+            List<Map<String, Object>> masterEffects = input.action().equals("APPROVE")
+                    ? (jdbc.sql("SELECT type FROM submission_request WHERE id=?").param(row.get("request_id")).query(String.class).single().equals("ANNUAL_PLAN")
+                        ? List.of(annualMasters.publishAfterApproval(actor, submissionId)) : monthlyMasters.publishAfterApproval(actor, submissionId)) : List.of();
             return new CommandExecutor.Result(200, json(object("submission", submissions.submission(actor, submissionId),
-                    "masterEffects", List.of())), "/api/v1/submissions/" + submissionId);
+                    "masterEffects", masterEffects)), "/api/v1/submissions/" + submissionId);
         });
     }
 
@@ -149,6 +157,7 @@ public class SubmissionWorkflowService {
             throw new ApiException(HttpStatus.NOT_FOUND, "RESOURCE_NOT_FOUND", "자료를 찾을 수 없습니다.");
         }
         Map<String, Object> row = rows.getFirst();
+        assertIncludedTarget(row);
         Map<String, Object> current = submissions.submission(actor, submissionId);
         if (!current.get("stateToken").equals(input.expectedStateToken())) {
             throw conflict("RESOURCE_CHANGED", "최신 제출 상태를 다시 조회하세요.");
@@ -184,7 +193,7 @@ public class SubmissionWorkflowService {
             if (count("""
                     SELECT COUNT(*) FROM request_target t JOIN submission_request r ON r.id=t.request_id
                     WHERE r.annual_plan_id=? AND r.type='ANNUAL_PLAN' AND t.organization_id=?
-                      AND t.confirmed_plan_submission_id IS NOT NULL
+                      AND t.excluded=FALSE AND t.confirmed_plan_submission_id IS NOT NULL
                     """, planId, id(actor.organization().id())) == 0) {
                 throw conflict("PLAN_SOURCE_MISSING", "해당 조직의 고정된 연간 계획본이 없습니다.");
             }
@@ -214,6 +223,18 @@ public class SubmissionWorkflowService {
                 .param(submission.get("request_id")).query(Long.class).single();
         return jdbc.sql("SELECT id,status FROM annual_plan WHERE id=? FOR UPDATE")
                 .param(planId).query().singleRow();
+    }
+
+    /** 제출 요청의 현재 필수 조직에서 제외된 이력에 새 업무 명령을 적용하지 않는다.
+     * Args: submission 잠근 제출 행. Returns: 없음.
+     * Raises: ApiException 대상 제외·소속 누락 시 REQUEST_TARGET_EXCLUDED.
+     * Side Effects: 요청 대상 DB 읽기만 수행하며 과거 제출 이력은 유지한다.
+     */
+    private void assertIncludedTarget(Map<String, Object> submission) {
+        if (count("SELECT COUNT(*) FROM request_target WHERE request_id=? AND organization_id=? AND excluded=FALSE",
+                submission.get("request_id"), submission.get("organization_id")) != 1) {
+            throw conflict("REQUEST_TARGET_EXCLUDED", "현재 제출·승인 대상에서 제외된 조직입니다.");
+        }
     }
 
     /** 상태 명령 입력을 정규 JSON 해시로 묶는다.

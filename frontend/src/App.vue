@@ -28,6 +28,8 @@ function changeRole() {
  */
 function plannerMenuActive(name) {
   if (route.name === name) return true
+  if (route.name === 'planning-annual-master' || route.query.from === 'annual-master') return name === 'planning-requests'
+  if (['planning-monthly-master'].includes(route.name) || ['gap', 'monthly-master'].includes(route.query.from)) return name === 'planning-gap'
   if (!['history', 'submission'].includes(route.name)) return false
   return name === (route.query.from === 'requests' ? 'planning-requests' : 'planning-organizations')
 }
@@ -59,7 +61,7 @@ function plannerMenuActive(name) {
       <div>
       <div v-if="session.actor.role === 'PLANNER'" class="planner-settings">
         <p class="nav-label">설정</p>
-        <button class="nav-item" disabled title="설정 저장은 준비 중입니다"><span class="nav-icon" aria-hidden="true"></span>Gap 기준 · 템플릿</button>
+        <RouterLink to="/planning/gap" class="nav-item"><span class="nav-icon" aria-hidden="true"></span>Gap 기준 · 검토</RouterLink>
         <button class="nav-item" disabled title="조직·권한 편집은 준비 중입니다"><span class="nav-icon" aria-hidden="true"></span>조직 · 권한 관리</button>
       </div>
       <div class="profile"><span class="avatar">{{ session.actor.role === 'PLANNER' ? '기획' : '재무' }}</span><div><strong>{{ session.actor.name }}</strong><small>{{ session.actor.organization?.name || '경영기획팀' }}</small></div></div>

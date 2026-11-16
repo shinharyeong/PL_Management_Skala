@@ -8,6 +8,8 @@ import static org.mockito.Mockito.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.skala.backend.common.ApiException;
 import io.skala.backend.foundation.CommandExecutor;
+import io.skala.backend.master.AnnualMasterService;
+import io.skala.backend.master.MonthlyMasterService;
 import io.skala.backend.security.Actor;
 import io.skala.backend.security.Organization;
 import java.nio.charset.StandardCharsets;
@@ -37,10 +39,11 @@ class SubmissionWorkflowTests {
     private SubmissionService submissions;
     private SubmissionValidationService validation;
     private SubmissionWorkflowService workflow;
+    private AnnualMasterService annualMasters;
     private Actor manager;
     private Actor secondManager;
 
-    /** V1+V2와 독립 합성 조직·초안을 메모리 DB에 준비한다.
+    /** V1+V2+V3와 독립 합성 조직·초안을 메모리 DB에 준비한다.
      * Args: 없음. Returns: 없음. Raises: DB·대역 준비 오류.
      * Side Effects: 테스트 전용 H2 생성·초기화; 원본 Data·파일·운영 DB 접근 없음.
      */
@@ -51,7 +54,10 @@ class SubmissionWorkflowTests {
                 .build();
         new ResourceDatabasePopulator(
                 new ClassPathResource("db/migration/V1__submission_parser_foundation.sql"),
-                new ClassPathResource("db/migration/V2__validated_financial_submissions.sql")).execute(database);
+                new ClassPathResource("db/migration/V2__validated_financial_submissions.sql"),
+                new ClassPathResource("db/migration/V3__annual_plan_masters.sql"),
+                new ClassPathResource("db/migration/V4__monthly_masters.sql"),
+                new ClassPathResource("db/migration/V5__submission_reviews_and_gap_thresholds.sql")).execute(database);
         jdbc = JdbcClient.create(database);
         mapper = new ObjectMapper();
         jdbc.sql("INSERT INTO organization(id,code,name) VALUES (1,'D100','합성 조직'),(2,'D200','다른 조직')").update();
@@ -75,10 +81,12 @@ class SubmissionWorkflowTests {
         secondManager = new Actor("3", "second@example.test", "같은 조직 담당", "ORG_MANAGER", manager.organization());
         submissions = mock(SubmissionService.class);
         validation = mock(SubmissionValidationService.class);
+        annualMasters = mock(AnnualMasterService.class);
+        when(annualMasters.publishAfterApproval(any(), anyString())).thenReturn(Map.of("kind", "ANNUAL_PLAN", "action", "WAITING_INITIAL"));
         when(submissions.submission(any(Actor.class), anyString())).thenAnswer(invocation ->
                 currentView(invocation.getArgument(0), invocation.getArgument(1)));
         var commands = new CommandExecutor(new JdbcTemplate(database), new DataSourceTransactionManager(database));
-        workflow = new SubmissionWorkflowService(jdbc, mapper, commands, submissions, validation);
+        workflow = new SubmissionWorkflowService(jdbc, mapper, commands, submissions, validation, annualMasters, mock(MonthlyMasterService.class));
     }
 
     /** 각 테스트의 메모리 DB 연결을 종료한다.
@@ -381,6 +389,53 @@ class SubmissionWorkflowTests {
                 .isInstanceOf(ApiException.class).extracting("code").isEqualTo("ANNUAL_PLAN_LOCKED");
         assertThat(jdbc.sql("SELECT status FROM submission WHERE id=10").query(String.class).single()).isEqualTo("PENDING");
         verifyNoInteractions(validation);
+    }
+
+    /** 마스터 발행 실패 시 승인 헤더와 부분 발행·멱등 기록이 함께 롤백되는지 검사한다.
+     * Args: 없음. Returns: 없음. Raises: 검증 오류.
+     * Side Effects: H2 트랜잭션에서 승인·합성 마스터 쓰기를 시도한 뒤 롤백한다.
+     */
+    @Test
+    void publicationFailureRollsBackApprovalAndMaster() {
+        makePending(10);
+        Actor planner = planner();
+        when(annualMasters.publishAfterApproval(planner, "10")).thenAnswer(invocation -> {
+            assertThat(jdbc.sql("SELECT status FROM submission WHERE id=10").query(String.class).single()).isEqualTo("APPROVED");
+            jdbc.sql("""
+                    INSERT INTO annual_master(request_id,seq,trigger_submission_id,content_sha256,calculation_version,created_by,created_at)
+                    VALUES (1,1,10,?,'test',1,CURRENT_TIMESTAMP)
+                    """).param("a".repeat(64)).update();
+            throw new IllegalStateException("합성 발행 실패");
+        });
+        assertThatThrownBy(() -> workflow.decide(planner, "10", "publish-rollback-01", decisionInput(planner, "10", "APPROVE", null)))
+                .isInstanceOf(IllegalStateException.class).hasMessage("합성 발행 실패");
+        var row = jdbc.sql("SELECT status,reviewed_by,reviewed_at FROM submission WHERE id=10").query().singleRow();
+        assertThat(row.get("status")).isEqualTo("PENDING");
+        assertThat(row.get("reviewed_by")).isNull();
+        assertThat(row.get("reviewed_at")).isNull();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM annual_master").query(Long.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM idempotency_record").query(Long.class).single()).isZero();
+    }
+
+    /** 제외된 조직의 기존 초안·대기본을 보존하면서 모든 제출 판단 명령을 막는다.
+     * Args: 없음. Returns: 없음. Raises: 검증 오류.
+     * Side Effects: H2 대상 제외 표시와 합성 PENDING 준비만 수행한다.
+     */
+    @Test
+    void excludedTargetCannotValidateSubmitOrReceiveDecision() {
+        jdbc.sql("UPDATE request_target SET excluded=TRUE WHERE request_id=1 AND organization_id=1").update();
+        assertThatThrownBy(() -> workflow.validate(manager, "10", "excluded-validation", input(manager, "10")))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("REQUEST_TARGET_EXCLUDED");
+        assertThatThrownBy(() -> workflow.submit(manager, "10", "excluded-submit", input(manager, "10")))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("REQUEST_TARGET_EXCLUDED");
+        makePending(10);
+        Actor planner = planner();
+        assertThatThrownBy(() -> workflow.decide(planner, "10", "excluded-approve", decisionInput(planner, "10", "APPROVE", null)))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("REQUEST_TARGET_EXCLUDED");
+        assertThatThrownBy(() -> workflow.decide(planner, "10", "excluded-reject", decisionInput(planner, "10", "REJECT", "검토")))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("REQUEST_TARGET_EXCLUDED");
+        verifyNoInteractions(validation, annualMasters);
+        assertThat(jdbc.sql("SELECT status FROM submission WHERE id=10").query(String.class).single()).isEqualTo("PENDING");
     }
 
     /** 독립 기획 계정의 인증 문맥을 만든다.

@@ -10,7 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.springframework.stereotype.Component;
 
-/** 요청 연도의 전체 PLAN을 원본 근거와 대조한다. 파일·DB 접근이나 금액 보정은 하지 않는다. */
+/** 요청 연도의 전체 PLAN 또는 마감월까지 ACTUAL·이후 ESTIMATE를 원본 근거와 대조한다. 파일·DB 접근이나 금액 보정은 하지 않는다. */
 @Component
 public class FinancialValidationRules {
     private final ObjectMapper mapper;
@@ -26,12 +26,21 @@ public class FinancialValidationRules {
      * Side Effects: 메모리에서만 검증하며 원본·파서 JSON·DB를 변경하지 않는다.
      */
     public Map<String, Object> evaluate(JsonNode data, String sourceHash, String organizationCode, int year, String requestType) {
+        return evaluate(data, sourceHash, organizationCode, year, requestType, null);
+    }
+
+    /** 연간 또는 월간 전체 스냅샷을 요청 기간·시나리오의 원본 근거와 대조한다.
+     * Args: data 파서 근거, sourceHash 원본 해시, organizationCode 조직, year 연도, requestType 유형, closingMonth 월간 마감월.
+     * Returns: 적재 가능한 상세·보고값·진단·구성 지문. Raises: IllegalStateException 직렬화 오류.
+     * Side Effects: 메모리 계산만 수행하며 빈칸이나 불명확한 기간을 보정하지 않는다.
+     */
+    public Map<String, Object> evaluate(JsonNode data, String sourceHash, String organizationCode, int year, String requestType, Integer closingMonth) {
         var diagnostics = new ArrayList<Map<String, Object>>();
         var reports = new LinkedHashMap<String, Map<String, Object>>();
         var lines = new ArrayList<Map<String, Object>>();
         var totals = new HashMap<String, BigDecimal>();
         var fingerprints = new ArrayList<String>();
-        if (!"ANNUAL_PLAN".equals(requestType)) issue(diagnostics, "MONTHLY_VALIDATION_UNAVAILABLE", "월간 제출은 확정 계획·Gap 비교 검증 연결이 필요합니다.", null, null, null, null);
+        if (!"ANNUAL_PLAN".equals(requestType) && (!"MONTHLY_ACTUAL".equals(requestType) || closingMonth == null || closingMonth < 1 || closingMonth > 12)) issue(diagnostics, "MONTHLY_PERIOD_REQUIRED", "월간 요청의 마감월을 확인할 수 없습니다.", null, null, null, null);
         if (!data.isObject() || !"financial-submission/1.0".equals(text(data, "adapterVersion"))) {
             issue(diagnostics, "SUBMISSION_ADAPTER_REQUIRED", "업무 적재 근거가 없는 이전 파서 결과입니다. 새 파일로 다시 접수해 주세요.", null, null, null, null);
             return object("reports", List.of(), "lines", List.of(), "diagnostics", diagnostics, "reportValues", List.of(), "fingerprint", "");
@@ -49,7 +58,7 @@ public class FinancialValidationRules {
         }
         for (JsonNode diagnostic : data.path("diagnostics")) {
             if (diagnostic.hasNonNull("year") && diagnostic.path("year").asInt() != year) continue;
-            if (diagnostic.hasNonNull("scenario") && !"PLAN".equals(upper(diagnostic, "scenario"))) continue;
+            if (diagnostic.hasNonNull("scenario") && !scenario(requestType, closingMonth, diagnostic.path("month").asInt()).equals(upper(diagnostic, "scenario"))) continue;
             if (!"ERROR".equals(upper(diagnostic, "severity"))) continue;
             issue(diagnostics, Optional.ofNullable(text(diagnostic, "code")).orElse("ADAPTER_EVIDENCE_ERROR"),
                     Optional.ofNullable(text(diagnostic, "message")).orElse("업무 적재 근거를 확인해 주세요."),
@@ -63,9 +72,9 @@ public class FinancialValidationRules {
             domains.add(domain);
             var months = new HashSet<Integer>();
             for (JsonNode period : sheet.path("periodColumns")) {
-                if (resolved(period.path("status").asText()) && period.path("year").asInt() == year && "PLAN".equals(upper(period, "scenario")) && period.path("month").asInt() >= 1 && period.path("month").asInt() <= 12) months.add(period.path("month").asInt());
+                if (resolved(period.path("status").asText()) && period.path("year").asInt() == year && scenario(requestType, closingMonth, period.path("month").asInt()).equals(upper(period, "scenario")) && period.path("month").asInt() >= 1 && period.path("month").asInt() <= 12) months.add(period.path("month").asInt());
             }
-            if (months.size() != 12) issue(diagnostics, "PLAN_MONTH_HEADERS_INCOMPLETE", "요청 연도의 계획 1~12월 헤더가 모두 확인되어야 합니다.", text(sheet, "name"), null, null, null);
+            if (months.size() != 12) issue(diagnostics, "PLAN_MONTH_HEADERS_INCOMPLETE", "요청 연도·마감월에 맞는 1~12월 시나리오 헤더가 모두 확인되어야 합니다.", text(sheet, "name"), null, null, null);
         }
         if (!domains.containsAll(Set.of("REVENUE", "COST"))) issue(diagnostics, "FINANCIAL_SHEETS_INCOMPLETE", "매출·비용 상세 시트의 업무 근거가 모두 필요합니다.", null, null, null, null);
         var sourceRows = new HashSet<String>();
@@ -86,9 +95,9 @@ public class FinancialValidationRules {
             if (!bounded(line)) issue(diagnostics, "FINANCIAL_FIELD_TOO_LONG", "조직·계정·분류·식별자 길이가 적재 규격을 초과합니다.", sheet, firstSource(line), reportKey, null);
             var byMonth = new TreeMap<Integer, JsonNode>();
             for (JsonNode value : line.path("values")) {
-                if (value.path("year").asInt() != year || !"PLAN".equals(upper(value, "scenario"))) continue;
+                if (value.path("year").asInt() != year || !scenario(requestType, closingMonth, value.path("month").asInt()).equals(upper(value, "scenario"))) continue;
                 int month = value.path("month").asInt();
-                if (month < 1 || month > 12 || byMonth.putIfAbsent(month, value) != null) issue(diagnostics, "DUPLICATE_FINANCIAL_MONTH", "같은 상세 행의 계획 월이 중복되거나 범위를 벗어났습니다.", sheet, text(value, "sourceCell"), reportKey, month);
+                if (month < 1 || month > 12 || byMonth.putIfAbsent(month, value) != null) issue(diagnostics, "DUPLICATE_FINANCIAL_MONTH", "같은 상세 행의 요청 월·시나리오가 중복되거나 범위를 벗어났습니다.", sheet, text(value, "sourceCell"), reportKey, month);
             }
             var values = new ArrayList<Map<String, Object>>();
             for (int month = 1; month <= 12; month++) {
@@ -96,10 +105,10 @@ public class FinancialValidationRules {
                 String cell = value == null ? null : text(value, "sourceCell");
                 BigDecimal amount = value == null ? null : amount(value);
                 if (amount == null || cell == null || !cell.matches("[A-Z]{1,3}[1-9][0-9]{0,6}") || text(value, "sourceRecordId") == null || text(value, "sourceRecordId").length() > 500) {
-                    issue(diagnostics, "PLAN_AMOUNT_UNRESOLVED", "계획 월의 금액·원본 셀을 확인해 주세요. 빈 금액을 0으로 보완하지 않습니다.", sheet, cell, reportKey, month);
+                    issue(diagnostics, "PLAN_AMOUNT_UNRESOLVED", "요청 시나리오의 월별 금액·원본 셀을 확인해 주세요. 빈 금액을 0으로 보완하지 않습니다.", sheet, cell, reportKey, month);
                     continue;
                 }
-                values.add(object("year", year, "month", month, "scenario", "PLAN", "amount", amount,
+                values.add(object("year", year, "month", month, "scenario", scenario(requestType, closingMonth, month), "amount", amount,
                         "sourceCell", cell, "sourceRecordId", text(value, "sourceRecordId")));
             }
             if (diagnostics.size() != before) continue;
@@ -112,14 +121,14 @@ public class FinancialValidationRules {
                 BigDecimal amount = (BigDecimal) value.get("amount");
                 totals.merge(reportKey + ":" + month, amount, BigDecimal::add);
                 totals.merge(kind + "_TOTAL:" + month, amount, BigDecimal::add);
-                fingerprints.add(fingerprint(line, reportKey, month, amount));
+                fingerprints.add(("ANNUAL_PLAN".equals(requestType) ? "" : scenario(requestType, closingMonth, month) + ":") + fingerprint(line, reportKey, month, amount));
             }
         }
         if (lines.isEmpty()) issue(diagnostics, "FINANCIAL_LINES_EMPTY", "적재 가능한 월별 재무 상세가 없습니다.", null, null, null, null);
         for (int month = 1; month <= 12; month++) totals.put("OP:" + month, totals.getOrDefault("REVENUE_TOTAL:" + month, BigDecimal.ZERO).subtract(totals.getOrDefault("COST_TOTAL:" + month, BigDecimal.ZERO)));
         var controls = new HashSet<String>();
         for (JsonNode control : data.path("controlValues")) {
-            if (control.path("year").asInt() != year || !"PLAN".equals(upper(control, "scenario"))) continue;
+            if (control.path("year").asInt() != year || !scenario(requestType, closingMonth, control.path("month").asInt()).equals(upper(control, "scenario"))) continue;
             int month = control.path("month").asInt();
             String key = text(control, "reportItemKey");
             if (key == null) key = text(control, "calculationCode");
@@ -134,7 +143,7 @@ public class FinancialValidationRules {
             }
         }
         for (String key : List.of("REVENUE_TOTAL", "COST_TOTAL", "OP")) {
-            for (int month = 1; month <= 12; month++) if (!controls.contains(key + ":" + month)) issue(diagnostics, "CONTROL_TOTAL_MISSING", "계획 월의 매출·비용·손익 합계 확인 근거가 필요합니다.", null, null, key, month);
+            for (int month = 1; month <= 12; month++) if (!controls.contains(key + ":" + month)) issue(diagnostics, "CONTROL_TOTAL_MISSING", "요청 시나리오의 월별 매출·비용·손익 합계 확인 근거가 필요합니다.", null, null, key, month);
             reports.put(key, object("key", key, "code", key, "name", switch (key) { case "REVENUE_TOTAL" -> "매출 합계"; case "COST_TOTAL" -> "영업비용 합계"; default -> "영업이익"; }, "kind", "DERIVED"));
         }
         for (var report : reports.values()) if (!"DERIVED".equals(report.get("kind"))) {
@@ -142,10 +151,18 @@ public class FinancialValidationRules {
         }
         var reportValues = new ArrayList<Map<String, Object>>();
         boolean complete = diagnostics.stream().noneMatch(item -> "ERROR".equals(item.get("severity")));
-        for (var report : reports.values()) for (int month = 1; month <= 12; month++) reportValues.add(object("reportKey", report.get("key"), "reportItemName", report.get("name"), "kind", report.get("kind"), "year", year, "month", month, "scenario", "PLAN", "valueStatus", complete ? "AVAILABLE" : "UNRESOLVED", "amount", complete ? totals.getOrDefault(report.get("key") + ":" + month, BigDecimal.ZERO).toPlainString() : null));
+        for (var report : reports.values()) for (int month = 1; month <= 12; month++) reportValues.add(object("reportKey", report.get("key"), "reportItemName", report.get("name"), "kind", report.get("kind"), "year", year, "month", month, "scenario", scenario(requestType, closingMonth, month), "valueStatus", complete ? "AVAILABLE" : "UNRESOLVED", "amount", complete ? totals.getOrDefault(report.get("key") + ":" + month, BigDecimal.ZERO).toPlainString() : null));
         Collections.sort(fingerprints);
         return object("reports", new ArrayList<>(reports.values()), "lines", lines, "diagnostics", diagnostics,
                 "reportValues", reportValues, "fingerprint", hash(json(fingerprints).getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /** 요청의 각 월에 반드시 존재해야 하는 시나리오를 정한다.
+     * Args: type 요청 유형, closingMonth 월간 마감월, month 값의 월. Returns: PLAN/ACTUAL/ESTIMATE.
+     * Raises: 없음. Side Effects: 없음; 월간 마감월 누락은 별도 진단으로 차단한다.
+     */
+    private String scenario(String type, Integer closingMonth, int month) {
+        return "ANNUAL_PLAN".equals(type) ? "PLAN" : closingMonth != null && month <= closingMonth ? "ACTUAL" : "ESTIMATE";
     }
 
     /** 조직·보고 확인 상태를 읽는다. Args: status 상태. Returns: 확인 여부. Raises: 없음. Side Effects: 없음. */
@@ -198,7 +215,7 @@ public class FinancialValidationRules {
      * Side Effects: 없음. 중복 개수는 호출자의 정렬 목록에서 보존한다.
      */
     private String fingerprint(JsonNode line, String report, int month, BigDecimal amount) {
-        String description = Optional.ofNullable(text(line, "description")).orElse("").replaceAll("\\[ID:[^\\]]+\\]", "").replaceAll("\\s+", " ").strip();
+        String description = io.skala.backend.review.ReviewComparisonService.normalizedDescription(text(line, "description"));
         return json(object("report", report, "month", month, "amount", amount.stripTrailingZeros().toPlainString(),
                 "detailId", text(line, "detailId"), "account", line.path("account"), "team", text(line, "teamCode"), "task", text(line, "taskCode"), "description", description,
                 "managementCategory", text(line, "managementCategory"), "actualBasis", text(line, "actualBasis"), "costType", text(line, "costType")));

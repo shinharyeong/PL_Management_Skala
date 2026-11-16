@@ -10,6 +10,8 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import io.skala.backend.common.ApiException;
 import io.skala.backend.foundation.CommandExecutor;
 import io.skala.backend.security.Actor;
+import io.skala.backend.review.ReviewComparisonService;
+import io.skala.backend.review.ReviewService;
 import io.skala.backend.security.Organization;
 import java.time.OffsetDateTime;
 import java.util.Map;
@@ -59,7 +61,10 @@ class SubmissionRuleTests {
                 .build();
         new ResourceDatabasePopulator(new ClassPathResource(
                 "db/migration/V1__submission_parser_foundation.sql"), new ClassPathResource(
-                "db/migration/V2__validated_financial_submissions.sql")).execute(database);
+                "db/migration/V2__validated_financial_submissions.sql"), new ClassPathResource(
+                "db/migration/V3__annual_plan_masters.sql"), new ClassPathResource(
+                "db/migration/V4__monthly_masters.sql"), new ClassPathResource(
+                "db/migration/V5__submission_reviews_and_gap_thresholds.sql")).execute(database);
         jdbc = JdbcClient.create(database);
         jdbc.sql("""
                 INSERT INTO organization (id, code, name, active)
@@ -78,8 +83,10 @@ class SubmissionRuleTests {
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         CommandExecutor commands = new CommandExecutor(new JdbcTemplate(database),
                 new DataSourceTransactionManager(database));
+        var comparisons = new ReviewComparisonService(jdbc, mapper);
+        var reviews = new ReviewService(jdbc, commands, comparisons);
         service = new SubmissionService(jdbc, mapper, commands,
-                new SubmissionValidationService(jdbc, mapper, new FinancialValidationRules(mapper)));
+                new SubmissionValidationService(jdbc, mapper, new FinancialValidationRules(mapper), comparisons, reviews));
         firstRequestId = createAnnualRequest(2030);
         secondRequestId = createAnnualRequest(2031);
     }

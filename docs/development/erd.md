@@ -5,7 +5,7 @@
 | 항목 | 내용 |
 | --- | --- |
 | 설계 버전 | 0.2 · 2026-11-16 |
-| 상태 | 사용자 합의와 실제 수식 조사를 반영한 논리 ERD. DB·API·마이그레이션은 미구현 |
+| 상태 | 논리 ERD v0.2와 V1~V5 물리 구현 연결. API 0.9-draft 39개 중 36개 경로 구현. 실제 실행 검증은 [로컬 환경](local-environment.md)에서 별도 관리 |
 | 적용 대상 | 조직별 연간 계획·월간 실적/추정의 전체 제출, 금액 수정 소명, 손익 Gap, 승인, 월별 마스터 |
 | 관련 계약 | [DB 매핑](db-mapping.md), [현재 파서 출력 계약](../../parser/docs/development/output-contract.md) |
 | 관련 업무 문서 | [도메인 규칙](../domain-rules.md), [업무 흐름도](../flow.md) |
@@ -13,9 +13,9 @@
 
 합의한 업무 규칙과 논리 스키마는 이 문서, 파서 필드 연결은 [DB 매핑](db-mapping.md), 현재 파서의 반환값은 [출력 계약](../../parser/docs/development/output-contract.md)을 기준으로 한다. [도메인 규칙](../domain-rules.md)과 [업무 흐름도](../flow.md)는 이 설계를 요약한다. 직선 SVG는 이 문서의 테이블·필드·핵심 관계를 표현한다.
 
-이전 ERD는 Git 이력에서 확인한다. 이 문서 변경에는 DB 마이그레이션, 파서 구현 변경, 원본 데이터나 실행 산출물이 포함되지 않는다. 기존 파서의 기술 마스터 생성·평가와 서비스의 승인 마스터 발행은 서로 다른 기능이다.
+이전 ERD는 Git 이력에서 확인한다. 아래 논리 ERD와 V3~V5의 물리 구현 차이는 문서 끝의 구현 확장 절에서 관리한다. 원본 데이터나 실행 산출물은 문서에 포함하지 않는다. 기존 파서의 기술 마스터 생성·평가와 서비스의 승인 마스터 발행은 서로 다른 기능이다.
 
-`bigint`, `varchar`, `numeric`, `timestamptz`는 논리 타입 표기다. DB 제품, 문자열 길이, 금액 정밀도, 물리 인덱스 문법은 구현 시 확정한다. 금액은 원 단위 정밀 십진수이며 이진 부동소수점을 사용하지 않는다.
+`bigint`, `varchar`, `numeric`, `timestamptz`는 논리 타입 표기다. 현재 제품은 PostgreSQL이며 상세 금액은 NUMERIC(30,6)이다. 문자열 길이·집계 정밀도·인덱스와 논리 도식의 차이는 Flyway V1~V5 및 하단 구현 확장을 기준으로 한다. 금액은 원 단위 정밀 십진수이며 이진 부동소수점을 사용하지 않는다.
 
 ### 초안 대비 반영한 변경
 
@@ -27,10 +27,10 @@
 | 재제출 | 조직의 전체 스냅샷을 새 제출본으로 보존. 숫자를 바꾸지 않는 소명 보완은 같은 제출본의 소명 회차로 처리 |
 | 제출 대상과 연간 계획 | `request_target`에 필수 조직을 고정하고, 연간 확정 시 조직별 승인 계획본 참조를 고정 |
 | 월별 마스터 | 최초에는 전 조직 승인 필요. 이후 새로 승인된 조직만 참조를 교체하고 나머지 조직의 기존 승인본 유지 |
-| 파서 경계 | 원본 추출·정규화와 DB 적재·수정 감지·승인 처리를 구분. 후자는 구현 전 설계 |
-| 도식 | 17개 테이블·141개 필드·27개 핵심 관계. 수평·수직 직선 SVG를 기본 도식으로 사용 |
+| 파서 경계 | 원본 추출·정규화와 서비스의 DB 적재·수정 감지·승인 처리를 구분. V1~V5와 API 0.9에서 연결 |
+| 도식 | 19개 테이블·154개 필드·33개 핵심 관계. 수평·수직 직선 SVG를 기본 도식으로 사용 |
 
-이번 문서 동기화는 설계 v0.2를 관련 계약에 반영한 것이다. 물리 DB 변경이나 파서 출력 계약 버전 변경을 뜻하지 않는다.
+기존 설계 v0.2 위에 V3 연간 PLAN 마스터, V4 월간 ACTUAL 마스터, V5 수정/Gap 소명·기준 이력을 물리 스키마로 연결한다. 연간 확정은 기존 계획·대상 참조를 사용한다. 파서 표준 출력 계약과 직선 SVG는 유지한다.
 
 ## 1. 확정한 업무 경계
 
@@ -65,7 +65,7 @@
 
 ## 3. 전체 논리 ERD
 
-17개 테이블이다. 행위자 FK는 아래 컬럼에 표시하되 관계선은 업무 관계 중심으로 그린다. `NULL` 허용과 복합 UNIQUE는 뒤의 제약 표가 기준이다.
+기존 월간 업무 논리 설계 17개와 V3 연간 마스터 확장 2개를 합쳐 19개 테이블이다. 행위자 FK는 아래 컬럼에 표시하되 관계선은 업무 관계 중심으로 그린다. `NULL` 허용과 복합 UNIQUE는 뒤의 제약 표가 기준이다.
 
 모든 연결선을 수평·수직 직선으로 배치한 SVG를 기본 도식으로 사용한다. 숫자 표기로 카디널리티를 표시하며, 원본을 열어 확대하면 전체 컬럼을 확인할 수 있다.
 
@@ -106,6 +106,12 @@ erDiagram
     organization ||--o{ master_source : contributes
     submission ||--o{ master_source : approved_source
 
+    submission_request ||--o{ annual_master : publishes_plan
+    submission ||--o{ annual_master : triggers_plan
+    annual_master |o--o{ annual_master : follows_plan_version
+    annual_master ||--|{ annual_master_source : freezes_plan
+    organization ||--o{ annual_master_source : contributes_plan
+    submission ||--o{ annual_master_source : supplies_plan
     organization {
         bigint id PK
         varchar code UK
@@ -142,6 +148,7 @@ erDiagram
         bigint request_id PK, FK
         bigint organization_id PK, FK
         bigint confirmed_plan_submission_id FK "annual target only, nullable"
+        boolean excluded "default false; legacy demo correction"
     }
     submission {
         bigint id PK
@@ -266,6 +273,22 @@ erDiagram
         timestamptz reviewed_at "nullable"
         text review_note "nullable"
         bigint inherited_from_id FK "nullable"
+    }
+    annual_master {
+        bigint id PK
+        bigint request_id FK "annual PLAN request"
+        int seq
+        bigint previous_master_id FK "nullable for first version"
+        bigint trigger_submission_id FK
+        char content_sha256
+        varchar calculation_version
+        bigint created_by FK
+        timestamptz created_at
+    }
+    annual_master_source {
+        bigint master_id PK, FK
+        bigint organization_id PK, FK
+        bigint submission_id FK
     }
     master_version {
         bigint id PK
@@ -408,7 +431,7 @@ baseline_amount == 0:
 
 상세 fact에서 매출·비용을 집계하고 OP를 계산하는 경로를 공식 값으로 사용한다. 원본 답안지의 합계·OP는 정합성 검증에 사용한다. 같은 합계의 상세·소계·답안지 OP를 함께 더하지 않는다. 단위 정규화 후의 숫자를 비교하며 원본 캐시의 최신성이 증명됐다고 주장하지 않는다.
 
-`parser/`의 표준 레코드에는 원본 상세 ID·수정번호와 업무필드 검증 결과가 있으며, 별도 benchmark에는 수정본 선택·기술 마스터 생성·평가 기능이 있다. 이 결과가 서비스의 제출 승인·요청별 완전성·`report_item_id` 매핑을 대신하지 않는다. 공식 승인 마스터 DB와 적재 어댑터는 구현 전이며 구체적인 연결과 추가 요구는 [DB 매핑](db-mapping.md)에서 관리한다.
+`parser/`의 표준 레코드에는 원본 상세 ID·수정번호와 업무필드 검증 결과가 있으며, 별도 benchmark에는 수정본 선택·기술 마스터 생성·평가 기능이 있다. 이 결과가 서비스의 제출 승인·요청별 완전성·`report_item_id` 매핑을 대신하지 않는다. 현재 서비스의 적재 어댑터와 V1~V5는 요청별 검증·수정/Gap 소명·연간 확정·연간/월간 승인 마스터를 연결한다. 파서의 기술 마스터와 별개이며 구체적인 연결과 논리·물리 차이는 [DB 매핑](db-mapping.md) 및 아래 구현 확장에서 관리한다.
 
 ## 9. 승인과 마스터 발행
 
@@ -468,4 +491,28 @@ baseline_amount == 0:
 | DRAFT 작성 중 기준 변경 | 재검증 후 소명을 확인하고 제출 |
 | 승인본 재파싱·분류 변경 시도 | 기존 제출본과 마스터 불변 |
 
-남은 항목은 DB 제품·금액 정밀도, 양식별 필수 범위와 안정적인 상세 비교 키의 실제 구현, 로그인 방식, 마감·리마인드 정책이다. 기간 중 조직 신설·폐지·코드 변경은 현재 필수 조직 집합을 임의로 바꾸지 않으며 별도 업무 정책이 필요하다. 연간 계획/월간 실적 동시 제출 완화, 매출·비용 자체에 대한 별도 Gap 기준, 미지원 양식·`.xlsb` 처리는 이번 합의로 추가 확정하지 않는다.
+현재 PostgreSQL과 상세 NUMERIC(30,6), 지원 양식의 필수 기간·분류 검증 및 의미·금액 다중집합 비교를 구현한다. 추가 양식의 매핑·필수 범위·정규화, 운영 로그인, 마감·리마인드 및 운영 규모의 성능·보관 정책은 별도 확인 대상이다. 기간 중 조직 신설·폐지·코드 변경은 현재 필수 조직 집합을 임의로 바꾸지 않으며 별도 업무 정책이 필요하다. 연간 계획/월간 실적 동시 제출 완화, 매출·비용 자체에 대한 별도 Gap 기준, 미지원 양식·`.xlsb` 처리는 이번 합의로 추가 확정하지 않는다.
+
+## 10. 구현 확장: 연간 PLAN 마스터(V3)
+
+| 테이블·필드 | 구현 제약·책임 |
+| --- | --- |
+| `request_target.excluded` | NOT NULL DEFAULT FALSE. 제외된 대상의 FK·제출 이력을 유지하되 신규 제출·승인·대상 집계·최초 발행에서 제외 |
+| `annual_master` | 연간 요청별 UNIQUE(request_id,seq), 양수 seq. 이전 버전·발행을 촉발한 승인 제출·작성자·시각·계산 정책·내용 지문 보존 |
+| `annual_master_source` | PK(master_id,organization_id), UNIQUE(master_id,submission_id). 같은 연간 요청·조직의 검증된 APPROVED 전체 스냅샷 하나 |
+
+처음에는 모든 비제외 대상 조직의 최신 완료본이 승인되어야 발행한다. 이후에는 이전 source 전체를 복사하고 방금 승인한 조직만 교체한다. 다른 조직의 새 검토 대기·반려는 이전 승인본을 유지한다. 보고 OP뿐 아니라 검증 당시 상세 의미·금액 지문으로 변경을 판정하며 같으면 기존 버전을 반환한다. `financial_value`를 중복 적재하지 않으며 이전 마스터의 source는 불변이다.
+
+승인 헤더·마스터/source·멱등 응답은 같은 트랜잭션에 저장한다. 연간 계획 잠금이 다른 조직의 동시 승인을 직렬화한다. 조회는 고정 source의 검증 객체와 원 금액을 대조하고 BigDecimal로 합산한다. 확정 계획 참조와 Contingency는 발행으로 설정하지 않는다.
+
+D100/D200 제외와 누락된 17개 사업조직 대상 보정은 local,demo의 수집 중이며 확정·발행 전인 요청에 한정한 기존 체험 자료 정정이다. 일반 조직 비활성화가 과거 대상 집합을 바꾸는 정책은 아니다. 확정·발행 이후 대상은 이 보정에서도 변경하지 않는다.
+
+## 11. 구현 확장: 월 실적·소명(V4~V5)
+
+V4는 `master_version`·`master_source`를 생성한다. 마스터 월은 고정 `request_id`의 월에서 얻으며 별도 중복 컬럼을 두지 않는다. 버전은 `(request_id, seq)` UNIQUE이고 `previous_master_id`, `trigger_submission_id`, `content_sha256`, `calculation_version`, 생성자·시각을 보존한다. source의 물리 PK는 `(master_id, organization_id)`다. 월별 의미 지문은 해당 ACTUAL 월의 원천 구성만 사용하고 이후 월의 추정이나 마감 안내 메타데이터가 바뀌었다고 과거 마스터를 새로 발행하지 않는다.
+
+V5는 `gap_threshold`·`review_item`·`gap_comparison`·`review_explanation`을 생성한다. 검토 칸은 `(submission_id, report_item_id, year, month, scenario)` UNIQUE다. `source_fingerprint`·`context_fingerprint`·`current_round`·`active`를 두어 검증 문맥이 같은 초안 답변만 유지하고 새 비교의 답변으로 과거 답변을 잘못 채택하지 않는다. Gap 비교는 물리 ID와 `(review_item_id,basis)` UNIQUE를 함께 사용한다. 소명은 `(review_item_id,round)` UNIQUE이고 이전 수용 회차를 `inherited_from_id`로 참조한다.
+
+직전 제출 ID는 `submission.previous_submission_id`, 확정 계획·기준 ID·정책은 불변 `submission_validation` 객체의 `comparisonContext`에 고정한다. 같은 정보를 submission 컬럼과 객체에 중복 저장하지 않는다. 기준 동시 적용은 업무 금액이 없는 단일행 기술 테이블 `gap_threshold_guard`로 직렬화한다. 이는 도식의 업무 엔티티 수에 포함하지 않는다. 검토 집계·차액·비율은 상세 `NUMERIC(30,6)`의 여러 행 합계를 수용하도록 더 넓은 정밀도로 저장한다. 세부 물리 타입은 V5가 기준이다.
+
+연간 확정은 기존 `annual_plan`·`request_target.confirmed_plan_submission_id`를 사용한다. 확정 계획 참조·전사 Contingency·확정자/시각·요청 CLOSED가 같은 트랜잭션에서 저장된다. 월간 승인과 영향 월 마스터 발행도 같은 트랜잭션에 포함된다. ACTUAL만 월 마스터에 들어가며 ESTIMATE는 검증·소명 범위에만 남긴다.

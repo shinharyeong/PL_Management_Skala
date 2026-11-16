@@ -6,7 +6,7 @@
 
 호출 관계 열은 프로젝트 내부의 직접 호출을 중심으로 정리한다. 외부 JDK·Spring API 호출 전체를 나열하지 않으며, 프레임워크 진입점과 DB·HTTP·프로세스 경계는 각 타입 설명 및 부작용에 명시한다. 같은 이름의 오버로드는 호출 대상 이름을 공유한다. 테스트 표는 검증 범위를 설명하며 실행 결과를 주장하지 않는다.
 
-서비스 [API 계약](api-contract.md)은 0.7-draft이며 전체 설계 35개 중 18개를 구현했다. 개발 전용 /api/dev 2개 경로는 제외한다. 최초 연간 PLAN의 검증·적재·최종 제출과 적재값·보고 집계·정확한 원본 셀 조회를 연결한다. 파싱 성공만으로는 DRAFT/NOT_RUN이며 명시적 검증 후 최종 제출이 PENDING을 만든다. 연간 승인·반려를 지원한다. 변경 소명·월간 비교/승인·연간 확정·공식 마스터는 후속 범위이며 준비되지 않은 업무는 차단한다.
+서비스 경로와 DTO는 [API 계약](api-contract.md)을 따른다. 파싱 성공만으로는 DRAFT/NOT_RUN이며 명시적 검증과 필수 답변 완료 후 최종 제출이 PENDING을 만든다. 연간 PLAN 재제출의 수정 소명, 월간 ACTUAL/ESTIMATE 검증·OP Gap·소명 수용/보완, 연간 확정 및 승인 마스터 발행을 연결한다. 승인·해당 마스터 발행·멱등 응답은 하나의 DB 트랜잭션이며 원본·기존 제출·과거 마스터는 보존한다.
 
 관련 문서: [프런트 흐름·함수](frontend-guide.md), [로컬 실행·검증](local-environment.md), [demo·파싱 후보 계약](demo-api.md). 개발 세션과 후보 조회는 아래 각 타입 표에 포함한다.
 
@@ -29,6 +29,23 @@ flowchart TD
     WC --> WF[SubmissionWorkflowService]
     WF --> X
     WF --> VS[SubmissionValidationService]
+    WF --> AM[AnnualMasterService.publishAfterApproval]
+    WF --> MM[MonthlyMasterService.publishAfterApproval]
+    MM --> D
+    VS --> RC[ReviewComparisonService]
+    VS --> RS[ReviewService]
+    S --> RVC[ReviewController]
+    RVC --> RS
+    RS --> X
+    RS --> RC
+    S --> GC[GapThresholdController]
+    GC --> GS[GapThresholdService]
+    GS --> X
+    GS --> RC
+    RC --> D
+    S --> AMC[AnnualMasterController]
+    AMC --> AM
+    AM --> D
     VS --> VR[FinancialValidationRules.evaluate]
     VS --> D
     S --> FC[FinancialController]
@@ -107,7 +124,7 @@ SecurityConfiguration이 local 보안 체인에서만 생성한다. 성공은 �
 | 시그니처 | 역할·입력·출력 | 예외·부작용 | 호출 관계 |
 | --- | --- | --- | --- |
 | `LocalBearerAuthenticationFilter(Environment environment, ActorResolver actors, SecurityProblemHandler problems)` | 환경 설정의 개발 인증 정보를 검사하고 토큰 다이제스트만 보관한다.<br>**입력:** environment는 app.local-auth 설정, actors는 DB 사용자 조회, problems는 공통 인증 오류 출력기다. 이메일이나 토큰이 없으면 해당 자격은 비활성이다.<br>**출력:** 생성자이므로 반환값이 없다. | **예외:** 제공된 토큰이 32자 미만·공백 포함·서로 같으면 IllegalArgumentException.<br>**부작용:** 환경 설정을 읽고 메모리에서 해시를 계산한다. 토큰을 로깅하지 않는다. | `LocalBearerAuthenticationFilter.configuredDigest` |
-| `protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException` | 기존 두 자격 또는 demo 허용 사업부 자격을 검증한다.<br>**입력:** HTTP 교환·뒤 필터.<br>**출력:** 인증 후 진행, 실패 시 401. | **예외:** 뒤 필터의 ServletException/IOException·DB 오류.<br>**부작용:** SecurityContext 설정. 추가 조직은 토큰 없는 고정 Actor principal을 사용한다. | `LocalBearerAuthenticationFilter.digest`, `DemoAccounts.actorForOrganizationToken`, `ActorResolver.resolveEmail`, `SecurityProblemHandler.commence` |
+| `protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException` | local 자격 또는 demo 허용 사업부의 고정 자격을 검증한다. demo에서는 레거시 조직 이메일로 우회하지 않는다.<br>**입력:** HTTP 교환·뒤 필터.<br>**출력:** 인증 후 진행, 실패 시 401. | **예외:** 뒤 필터의 ServletException/IOException·DB 오류.<br>**부작용:** SecurityContext 설정. 추가 조직은 토큰 없는 고정 Actor principal을 사용한다. | `LocalBearerAuthenticationFilter.digest`, `DemoAccounts.actorForOrganizationToken`, `ActorResolver.resolveEmail`, `SecurityProblemHandler.commence` |
 | `private static byte[] configuredDigest(String token)` | 제공된 개발 토큰의 최소 형식을 검사한다.<br>**입력:** token은 환경 설정에서 읽은 값이다.<br>**출력:** 없거나 빈 값이면 null, 유효하면 SHA-256 다이제스트. | **예외:** 32자 미만 또는 공백이 섞이면 IllegalArgumentException.<br>**부작용:** 메모리에서만 검사하며 값 자체를 오류에 넣지 않는다. | `LocalBearerAuthenticationFilter.digest` |
 | `private static byte[] digest(String token)` | 토큰 비교에 사용할 일정 길이의 다이제스트를 만든다.<br>**입력:** token은 비교 대상 문자열이다.<br>**출력:** UTF-8 입력의 SHA-256 바이트 배열. | **예외:** JVM의 필수 SHA-256 구현이 없으면 IllegalStateException.<br>**부작용:** 메모리에서 해시만 계산하고 원본을 보관하지 않는다. | 내부 명시 호출 없음; 외부 API/값 처리 |
 | `LocalBearerAuthenticationFilter(Environment environment, ActorResolver actors, SecurityProblemHandler problems, DemoAccounts demoAccounts)` | 기존 local 자격과 선택적 demo 사업부 자격을 구성한다.<br>**입력:** 환경·DB 조회·오류 처리·demo 자격 또는 null.<br>**출력:** 없음. | **예외:** 잘못된 기존 토큰.<br>**부작용:** 환경 읽기·메모리 다이제스트 생성. | `LocalBearerAuthenticationFilter.configuredDigest` |
@@ -288,6 +305,8 @@ SubmissionController와 서비스 테스트에서 호출한다. SQL/DTO 보조 �
 | --- | --- | --- | --- |
 | `FinancialValidationRules(mapper)` | JSON 직렬화기 → 반환 없음 | 없음; 의존성 보관만 | 생성자 주입 |
 | `evaluate(data, sourceHash, organizationCode, year, requestType)` | 내부 적재 근거·원본 해시·인증 조직·요청 연도/종류 → 보고 분류·유효 상세·진단·보고값·구성 지문 | 직렬화 오류; 메모리 검증만, 원본 JSON 불변 | `resolved`, `domain`, `text`, `upper`, `amount`, `controlAmount`, `bounded`, `fingerprint`, `firstSource`, `sourceSheet`, `sourceCell`, `issue`, `json` |
+| `evaluate(data, sourceHash, organizationCode, year, requestType, closingMonth)` | 요청 문맥·nullable 마감월 → 전체 12개월 근거·진단·보고값·지문 | 월 누락/시나리오/금액/조직/대조 불일치는 진단; 메모리 검증만 | `scenario`, 기존 순수 검증 helper |
+| `scenario(type, closingMonth, month)` | 요청 종류·마감월·값의 월 → PLAN/ACTUAL/ESTIMATE | 없음; 잘못된 마감월은 evaluate에서 별도 차단 | 없음 |
 | `resolved(status)` | 조직·보고 상태 → RESOLVED 여부 | 없음; 부작용 없음 | 없음 |
 | `domain(value)` | 원본 도메인 → REVENUE/COST | 없음; 부작용 없음 | 없음 |
 | `text(node, field)` | nullable scalar → 문자열/null | 없음; 부작용 없음 | 없음 |
@@ -303,19 +322,22 @@ SubmissionController와 서비스 테스트에서 호출한다. SQL/DTO 보조 �
 | `issue(items, code, message, sheet, cell, reportKey, month)` | 확인 위치·원인 → 반환 없음 | 없음; 메모리 ERROR 진단 목록 추가 | `ApiData.object` |
 | `json(value)` | 내부 자료 → JSON 문자열 | IllegalStateException; 부작용 없음 | ObjectMapper |
 
-`evaluate`는 요청 연도의 PLAN 1~12월, 조직, 보고 분류, 업무키, 중복 위치/식별자/월, 원 금액의 NUMERIC(30,6) 적합성, 원본 보고 말단·매출·비용·OP 합계를 확인한다. ERROR가 하나라도 있으면 보고값을 UNRESOLVED/null로 반환한다. 합계 캐시와 상세 합계의 차이가 0 초과·0.00001원 이하인 경우만 근거를 보존한 WARNING으로 구분한다. 일부 상세를 적재 가능으로 분리해도 이를 전체 제출 가능으로 판단하지 않는다.
+`evaluate`는 연간 PLAN 1~12월 또는 월간 ACTUAL 1~마감월·ESTIMATE 나머지 월, 조직, 보고 분류, 업무키, 중복 위치/식별자/월, 원 금액의 NUMERIC(30,6) 적합성, 원본 보고 말단·매출·비용·OP 합계를 확인한다. ERROR가 하나라도 있으면 보고값을 UNRESOLVED/null로 반환한다. 합계 캐시와 상세 합계의 차이가 0 초과·0.00001원 이하인 경우만 근거를 보존한 WARNING으로 구분한다. 일부 상세를 적재 가능으로 분리해도 이를 전체 제출 가능으로 판단하지 않는다.
 
 ### [SubmissionValidationService.java](../../backend/src/main/java/io/skala/backend/submission/SubmissionValidationService.java)
 
 | 메서드·생성자 | 목적·Args → Returns | Raises·Side Effects | 주요 내부 호출 |
 | --- | --- | --- | --- |
-| `SubmissionValidationService(jdbc, mapper, rules)` | DB·JSON·순수 규칙 연결 → 반환 없음 | 없음; 의존성 보관만 | 생성자 주입 |
-| `validateLocked(actor, submissionId)` | 잠긴 본인 초안 → 반환 없음 | 권한·상태·저장 오류; 현재 상세/금액·검증 참조 교체 및 불변 결과 객체 추가 | `accessible`, `result`, `rules.evaluate`, `previous`, `validationResult`, `reportId`, `accountId`, `insert`, `json`, `blocker` |
+| `SubmissionValidationService(jdbc, mapper, rules, comparisons, reviews)` | DB·JSON·순수 규칙 연결 → 반환 없음 | 없음; 의존성 보관만 | 생성자 주입 |
+| `validateLocked(actor, submissionId)` | 잠긴 본인 초안 → 반환 없음 | 권한·상태·저장 오류; 현재 상세/금액·검증 참조 교체 및 불변 결과 객체 추가 | `accessible`, `result`, `rules.evaluate`, `comparisons.context/prepare`, `reportId`, `accountId`, `insert`, `json` |
 | `assertReadyForSubmit(actor, submissionId)` | 잠긴 초안 → 반환 없음 | 문맥 변경·제출 불가 409; 읽기만 | `accessible`, `readiness`, `conflict` |
-| `assertReadyForApproval(actor, submissionId)` | 기획자·잠긴 제출 → 제출 당시 정책·완전성·원본/파싱 참조·적재 건수 검사, 반환 없음. | 권한·근거 부재/불일치/미완료 409; DB 읽기만 수행하고 최신 정책 재평가 없음. | `accessible`, `rows`, `objectResult`, `nullableId`, JdbcClient |
-| `readiness(submissionRow)` | 내부 제출 ID → 준비 상태·검증 현재성·차단 사유 | 저장 손상; DB 읽기, 금액·소명 생성 없음 | `row`, `rows`, `objectResult`, `nullableId`, `previous`, `blocker` |
-| `validationFingerprint(submissionId)` | 제출 → 검증 결과 참조·직전 제출 문맥 JSON | 조회 오류; DB 읽기 | `rows`, `row`, `previous`, `json` |
-| `comparisonContext(submissionId)` | 제출 → 고정 비교본·정책 DTO | 저장 손상; DB 읽기 | `validationResult`, `stringNode` |
+| `assertReadyForApproval(actor, submissionId)` | 기획자·잠긴 제출 → 제출 당시 정책·완전성·원본/파싱 참조·적재 건수·필수 소명 수용 검사, 반환 없음. | 권한·근거 부재/불일치/미완료 409; DB 읽기만 수행하고 최신 정책 재평가 없음. | `accessible`, `rows`, `objectResult`, `nullableId`, JdbcClient |
+| `readiness(submissionRow)` | 내부 제출 ID → 준비 상태·검증 현재성·필수/미답변/미수용 수·canSubmit/canApprove·차단 사유 | 저장 손상; DB 읽기, 금액·소명 생성 없음 | `row`, `rows`, `objectResult`, `comparisons.context`, `reviews.counts`, `blocker` |
+| `validationFingerprint(submissionId)` | 제출 → 검증 결과 참조·비교 문맥·소명 현재 회차 JSON | 조회 오류; DB 읽기 | `rows`, `row`, `comparisons.context`, `comparisonContext`, `reviews.revision`, `json` |
+| `comparisonContext(submissionId)` | 제출 → 고정 직전본·계획본·ACTUAL/ESTIMATE 기준 ID·정책 | 저장 손상; DB 읽기 | `validationResult`, `legacyContext` |
+| `legacyContext(snapshot)` | 기존 연간 검증 JSON/null → 기존 범위의 비교 문맥 | 없음; 메모리 변환 | `stringNode` |
+| `policy(row)` | 요청 문맥 → annual-plan/1.0 또는 monthly-actual/1.0 | 없음; 메모리 변환 | 없음 |
+| `reviewIds(submissionId, unanswered)` | 제출·미답변 한정 여부 → 현재 검토 ID 목록 | DB 오류; 읽기 | `reviews.ids` |
 | `diagnostics(submissionId)` | 제출 → 현재 검증 진단 | 저장 손상; STALE이면 옛 진단 대신 재검증 진단 | `validationResult`, `readiness`, `row`, `blocker` |
 | `financialValues(actor, submissionId, query)` | 행위자·제출·필터 → 실제 적재 금액·전체 요약·cursor | 권한·NOT_RUN/STALE·필터 오류; read-only REPEATABLE_READ | `accessible`, `currentResult`, `checkFilters`, `filterValue`, `limit`, `scope`, `ApiData.offset/cursor` |
 | `reportValues(actor, submissionId, query)` | 행위자·제출·필터 → 검증 스냅샷 집계 페이지 | 권한·NOT_RUN/STALE·필터 오류; read-only REPEATABLE_READ | `accessible`, `currentResult`, `checkFilters`, `limit`, `scope`, `ApiData.offset/cursor` |
@@ -324,7 +346,6 @@ SubmissionController와 서비스 테스트에서 호출한다. SQL/DTO 보조 �
 | `currentResult(row)` | 내부 제출 → 현재 검증 JSON | 409 VALIDATION_REQUIRED/VALIDATION_STALE; DB 읽기 | `readiness`, `validationResult`, `conflict` |
 | `reportId(report)` | 확인한 보고 분류 → DB ID | 분류 충돌; 없는 보고 항목만 INSERT | `rows`, `insert`, `conflict` |
 | `accountId(line)` | 원본 계정 → ID/null | DB 오류; 유형·코드·표시명 조합 재사용/INSERT | `rows`, `insert` |
-| `previous(row)` | 제출 문맥 → 같은 요청의 직전 최종 제출 ID/null | DB 오류; DRAFT 제외·반려 포함 조회 | `rows` |
 | `accessible(actor, submissionId)` | 행위자·제출 → 권한 확인 내부 행 | 다른 조직/없는 제출 404; DB 읽기 | `row`, `actor.canAccessOrganization` |
 | `row(submissionId)` | ID → 제출·요청·파싱 문맥 | 없는 제출 404; DB 읽기 | `rows`, `ApiData.id` |
 | `validationResult(submissionId)` | ID → 현재 검증 객체/null | 저장 손상; DB 읽기 | `rows`, `objectResult` |
@@ -412,20 +433,22 @@ local & demo 프로필에서만 활성화한다. 환경의 기존 두 자격과 
 | `public Actor actorForOrganizationToken(String candidate)` | 추가 토큰과 DB의 고정 역할·조직을 확인한다.<br>**입력:** Bearer 후보.<br>**출력:** 허용 Actor 또는 null. | **예외:** 불일치 BadCredentialsException·해시/DB 오류.<br>**부작용:** 메모리 비교·DB 읽기. | `DemoAccounts.digest`, `DemoAccounts.actor(role, code)` |
 | `public Actor actor(String role, String organizationCode)` | 선택 계정의 역할·조직·활성을 대조한다.<br>**입력:** 역할·생략 가능한 코드.<br>**출력:** 토큰 없는 Actor. | **예외:** 잘못된 선택 400, 계정 충돌·DB 오류.<br>**부작용:** DB 읽기; 소속 변경 없음. | `DemoAccounts.selectedOrganization`, `DemoAccounts.email`, `DemoAccounts.organizationEmail`, `Actor.Actor` |
 | `public List<Organization> organizations(String role)` | 활성 허용 조직 선택 목록을 제공한다.<br>**입력:** 검증된 역할.<br>**출력:** D100 다음 17개 사업부 순서, 기획자는 빈 목록. | **예외:** DB 오류.<br>**부작용:** DB 읽기; 토큰·이메일 미노출. | `DemoAccounts.organizationEmail` |
-| `private String selectedOrganization(String role, String code)` | 역할·코드를 허용 목록에 제한한다.<br>**입력:** 역할·선택 코드.<br>**출력:** null, D100 또는 허용 F코드. | **예외:** 잘못된 선택 400.<br>**부작용:** 없음. | `ApiException.ApiException` |
+| `private String selectedOrganization(String role, String code)` | 역할·코드를 허용 목록에 제한한다.<br>**입력:** 역할·선택 코드.<br>**출력:** null 또는 허용 F코드(기본 F10). | **예외:** 잘못된 선택 400.<br>**부작용:** 없음. | `ApiException.ApiException` |
 | `private String randomToken(SecureRandom random)` | 다른 개발 자격과 독립된 256비트 Bearer를 발급한다.<br>**입력:** JVM 암호학적 난수 생성기.<br>**출력:** URL 안전 Base64. | **예외:** 없음.<br>**부작용:** 메모리 난수 생성; 출력·영속 저장 없음. | 내부 명시 호출 없음; SecureRandom/Base64 |
 | `private byte[] digest(String value)` | 토큰 비교 다이제스트를 만든다.<br>**입력:** Bearer 후보.<br>**출력:** SHA-256 바이트. | **예외:** 필수 해시 실패.<br>**부작용:** 메모리 계산만 수행. | 내부 명시 호출 없음 |
 
 ### [DemoBootstrap.java](../../backend/src/main/java/io/skala/backend/demo/DemoBootstrap.java)
 
-local & demo의 ApplicationRunner 진입점이다. 기존 사용자·조직·요청을 덮어쓰지 않고 합성 자료와 2027 연간 요청을 준비한다.
+local & demo의 ApplicationRunner 진입점이다. 17개 사업조직·계정과 2027 연간 요청을 준비한다. 과거 D100/D200은 행과 이력을 보존하며 비활성화하고 확정·발행 전 수집 요청에서만 제외한다.
 
 | 시그니처 | 역할·입력·출력 | 예외·부작용 | 호출 관계 |
 | --- | --- | --- | --- |
 | `public DemoBootstrap(JdbcClient jdbc, TransactionTemplate transactions, DemoAccounts accounts, SubmissionService submissions)` | 부트스트랩 의존성을 받는다.<br>**입력:** jdbc DB, transactions 트랜잭션, accounts 개발 계정, submissions 업무 서비스.<br>**출력:** 없음. | **예외:** 없음.<br>**부작용:** 없음. | 내부 명시 호출 없음; 외부 API/값 처리 |
-| `public void run(ApplicationArguments arguments)` | 기본 2027 요청을 확인한 뒤 17개 사업부를 추가한다.<br>**입력:** 시작 인자(미사용).<br>**출력:** 없음. | **예외:** 기존 자료 충돌·업무/DB 오류.<br>**부작용:** 없던 조직·사용자만 INSERT. 기존 이름·소속·요청 대상은 유지하며 2026 요청은 만들지 않는다. | `DemoAccounts.email`, `DemoAccounts.actor`, `DemoAccounts.organizationEmail`, `DemoBootstrap.organization`, `DemoBootstrap.user`, `SubmissionService.createRequest` |
+| `public void run(ApplicationArguments arguments)` | 17개 사업부를 준비하고 기존 D 데모를 비활성화한 뒤 기본 2027 요청과 수집 대상만 보정한다.<br>**입력:** 시작 인자(미사용).<br>**출력:** 없음. | **예외:** 기존 자료 충돌·업무/DB 오류.<br>**부작용:** 없던 사업조직·사용자는 INSERT, D100/D200 소속 계정·조직은 inactive. 확정·발행 전 수집 요청만 제외/누락 대상 보정하고 2026 요청을 자동 생성하지 않는다. | `DemoAccounts.email`, `DemoAccounts.actor`, `DemoAccounts.organizationEmail`, `DemoBootstrap.organization`, `DemoBootstrap.user`, `retireLegacyOrganizations`, `reconcileCollectingTargets`, `SubmissionService.createRequest` |
 | `private long organization(String code, String name)` | 동일한 조직은 재사용하고 코드 충돌은 덮어쓰지 않는다.<br>**입력:** code 합성 코드, name 합성 이름.<br>**출력:** 조직 ID. | **예외:** IllegalStateException 기존 이름·활성 상태 충돌, DB 오류.<br>**부작용:** 없던 조직만 INSERT. | 내부 명시 호출 없음; 외부 API/값 처리 |
 | `private void user(String email, String role, String name, Long organizationId)` | 허용 이메일의 기존 역할·조직·이름을 보존한다.<br>**입력:** 이메일·역할·표시명·조직 ID.<br>**출력:** 없음. | **예외:** 계정 충돌·DB 오류.<br>**부작용:** 없던 사용자만 INSERT. | 내부 명시 호출 없음; JDBC |
+| `private void retireLegacyOrganizations()` | 입력·반환 없음. 기존 D100/D200과 소속 계정을 비활성화. | DB 오류. 기존 행·FK·제출 원본은 보존하며 active만 변경. | JdbcClient |
+| `private void reconcileCollectingTargets()` | 입력·반환 없음. 확정·마스터 발행 전 COLLECTING 요청만 보정. | DB 오류. D 대상을 제외하고 누락 사업조직 대상 INSERT. | JdbcClient, `DemoAccounts.ORGANIZATION_CODES` |
 
 ### [DemoTemplateService.java](../../backend/src/main/java/io/skala/backend/demo/DemoTemplateService.java)
 
@@ -446,7 +469,7 @@ DemoController.template이 호출한다. 조직 담당자의 연간 요청 권�
 
 ### [DemoController.java](../../backend/src/main/java/io/skala/backend/demo/DemoController.java)
 
-/api/dev의 개발 전용 MVC 진입점이다. session은 Origin·Host를 검사하고 template은 인증된 조직 범위를 확인한다. 서비스 API 35개 집계에는 포함하지 않는다.
+/api/dev의 개발 전용 MVC 진입점이다. session은 Origin·Host를 검사하고 template은 인증된 조직 범위를 확인한다. 서비스 API 39개 집계에는 포함하지 않는다.
 
 | 시그니처 | 역할·입력·출력 | 예외·부작용 | 호출 관계 |
 | --- | --- | --- | --- |
@@ -548,8 +571,8 @@ JUnit이 @BeforeEach/@AfterEach 준비·정리와 @Test/@ParameterizedTest를 �
 | `private String requestId()` | 합성 연간 요청 ID를 조회한다.<br>**입력:** 없음.<br>**출력:** 요청 ID 문자열. | **예외:** DB 오류.<br>**부작용:** 메모리 DB 읽기. | 내부 명시 호출 없음; 외부 API/값 처리 |
 | `private byte[] template(String requestId) throws Exception` | 인증된 합성 양식 응답을 메모리에 받는다.<br>**입력:** requestId 요청.<br>**출력:** XLSX 바이트. | **예외:** HTTP/검증 오류.<br>**부작용:** 메모리 HTTP·DB 읽기. | 내부 명시 호출 없음; 외부 API/값 처리 |
 | `private String upload(String requestId, byte[] bytes) throws Exception` | 실제 업로드 API로 합성 원본을 접수한다.<br>**입력:** requestId 요청, bytes 메모리 양식.<br>**출력:** DRAFT ID. | **예외:** HTTP/검증 오류.<br>**부작용:** 메모리 DB에 원본·작업 등록. | 내부 명시 호출 없음; 외부 API/값 처리 |
-| `void organizationSelectionKeepsEachTokenAndExistingRequestIsolated() throws Exception` | 별도 토큰·기존 D100 및 요청 대상 두 개 보존을 확인한다.<br>**입력/출력:** 없음. | **예외:** HTTP/DB/검증 오류.<br>**부작용:** 메모리 HTTP·DB 읽기. | `DemoIntegrationTests.organizationSession`, `DemoIntegrationTests.requestId` |
-| `void addedOrganizationsUploadThroughNormalRequestAndSubmissionApis() throws Exception` | 새 요청 19개 대상·F10 접수·F12 조회 차단을 확인한다.<br>**입력/출력:** 없음. | **예외:** HTTP/DB/검증 오류.<br>**부작용:** 메모리 요청·초안 생성 후 롤백. | `DemoIntegrationTests.organizationSession` |
+| `void organizationSelectionKeepsEachTokenAndExistingRequestIsolated() throws Exception` | 별도 조직 토큰·기본 F10과 17개 사업조직 요청 대상을 확인한다.<br>**입력/출력:** 없음. | **예외:** HTTP/DB/검증 오류.<br>**부작용:** 메모리 HTTP·DB 읽기. | `DemoIntegrationTests.organizationSession`, `DemoIntegrationTests.requestId` |
+| `void addedOrganizationsUploadThroughNormalRequestAndSubmissionApis() throws Exception` | 새 요청 17개 대상·F10 접수·F12 조회 차단을 확인한다.<br>**입력/출력:** 없음. | **예외:** HTTP/DB/검증 오류.<br>**부작용:** 메모리 요청·초안 생성 후 롤백. | `DemoIntegrationTests.organizationSession` |
 | `void invalidOrganizationSelectionAndInactiveCredentialsAreRejected() throws Exception` | 잘못된 선택 400·비활성 자격 401을 확인한다.<br>**입력/출력:** 없음. | **예외:** HTTP/DB/검증 오류.<br>**부작용:** 메모리 계정 비활성 후 롤백. | `DemoIntegrationTests.organizationSession` |
 | `void issuedOrganizationTokenCannotFollowChangedRoleOrOrganization() throws Exception` | 발급 후 소속·기획 역할·조직 코드 변경으로 권한이 전이되지 않음을 확인한다.<br>**입력/출력:** 없음. | **예외:** HTTP/DB/검증 오류.<br>**부작용:** 메모리 사용자·조직 변경 후 롤백. | `DemoIntegrationTests.organizationSession` |
 | `private JsonNode organizationSession(String code) throws Exception` | 허용 Origin에서 조직 세션을 메모리로 받는다.<br>**입력:** 코드.<br>**출력:** 세션 JSON. | **예외:** HTTP/JSON/검증 오류.<br>**부작용:** 메모리 HTTP·DB 읽기, 토큰 출력·파일 저장 없음. | 내부 명시 호출 없음; MockMvc |
@@ -589,7 +612,7 @@ JUnit이 @BeforeEach/@AfterEach 준비·정리와 @Test/@ParameterizedTest를 �
 | `void decisionsEnforceRoleInputStateAndToken() throws Exception` | 입력/반환 없음. 기획자 권한·JSON 입력·PENDING 상태·최신 토큰을 HTTP에서 검사. | HTTP·검증 오류. H2 합성 초안·대기본만 생성하며 잘못된 판단은 상태 보존. | `createRequest`, `upload`, `workbook`, `pendingSubmission`, `decisionBody`, `decision`, `submissionView`, MockMvc |
 | `void missingFrozenValidationBlocksApprovalButAllowsRejection() throws Exception` | 입력/반환 없음. 검증 근거 없는 대기본의 승인은 차단하고 사유 있는 반려는 허용. | HTTP·검증 오류. H2 검증 참조 제거로 손상 모사 후 반려 기록 저장. | `createRequest`, `pendingSubmission`, `decisionBody`, `decision`, `submissionView`, JdbcClient |
 | `void changedFinancialRowsCannotPassFrozenApprovalCheck() throws Exception` | 입력/반환 없음. 검증 스냅샷과 실제 적재 건수가 다르면 승인되지 않는지 확인. | HTTP·검증 오류. H2 합성 금융값 한 건 제거; 파일·외부 DB 접근 없음. | `createRequest`, `pendingSubmission`, `decisionBody`, `decision`, `submissionView`, JdbcClient |
-| `void monthlyApprovalIsExplicitlyBlockedUntilMasterPublicationExists() throws Exception` | 입력/반환 없음. 마스터 미구현 월간 승인은 차단하되 제출본 오류 반려는 허용. | HTTP·검증 오류. H2 합성 요청 유형을 변경하고 반려 기록 저장. | `createRequest`, `pendingSubmission`, `decisionBody`, `decision`, JdbcClient |
+| `void monthlyApprovalRequiresConfirmedPlanAndMatchingMonthlyValidation() throws Exception` | 입력/반환 없음. 연간 미확정 월간 승인은 차단하되 제출본 오류 반려는 허용. | HTTP·검증 오류. H2 합성 요청 유형을 변경하고 반려 기록 저장. | `createRequest`, `pendingSubmission`, `decisionBody`, `decision`, JdbcClient |
 | `private String pendingSubmission(String request, String keyPrefix) throws Exception` | 요청 ID·멱등키 접두사 → PENDING 제출 ID. 전체 합성 파일의 접수·검증·최종 제출 준비. | HTTP·검증 오류. H2 원본·검증·금융값·제출 기록 생성. | `upload`, `workbook`, `seedAdapter`, `workflow` |
 | `private JsonNode submissionView(String id) throws Exception` | 제출 ID → 기획자에게 보이는 현재 상세 JSON. | HTTP·JSON 오류. H2 읽기만 수행. | MockMvc, ObjectMapper |
 | `private String decisionBody(String id, String action, String note) throws Exception` | 제출 ID·판단·반려 사유/null → 최신 토큰과 허용 필드의 JSON 본문. | HTTP·JSON 오류. 현재 제출 읽기만 수행. | `submissionView`, ObjectMapper |
@@ -618,14 +641,14 @@ JUnit이 @BeforeEach/@AfterEach 준비·정리와 @Test/@ParameterizedTest를 �
 
 ### [SubmissionWorkflowService.java](../../backend/src/main/java/io/skala/backend/submission/SubmissionWorkflowService.java)
 
-`SubmissionWorkflowController → CommandExecutor → 조직·제출·연간 계획 잠금 → SubmissionValidationService → SubmissionService` 순서다. 같은 연도의 검증은 계획 잠금으로 공통 항목의 최초 생성도 직렬화한다. 검증·최종 제출·경영기획 판단을 분리한다. 연간 승인/반려는 기존 검토 컬럼만 갱신하며 마스터를 생성하지 않는다. V2 마이그레이션은 기존 원본·초안을 수정하지 않고 금융 4테이블과 검증 근거를 추가한다. 세부 Args·Returns·Raises·Side Effects의 기준은 코드 Javadoc이다.
+`SubmissionWorkflowController → CommandExecutor → 조직·제출·연간 계획 잠금 → SubmissionValidationService → SubmissionService` 순서다. 같은 연도의 검증은 계획 잠금으로 공통 항목의 최초 생성도 직렬화한다. 검증·최종 제출·경영기획 판단을 분리한다. 승인은 검증·필수 소명 수용을 확인한 뒤 헤더와 연간 또는 월별 마스터를 같은 트랜잭션으로 저장한다. 반려는 마스터를 바꾸지 않는다. 검증·제출은 annual_plan 다음 gap_threshold_guard를 잠가 기준 적용과의 경합을 직렬화한다. V2 마이그레이션은 기존 원본·초안을 수정하지 않고 금융 4테이블과 검증 근거를 추가한다. 세부 Args·Returns·Raises·Side Effects의 기준은 코드 Javadoc이다.
 
 | 시그니처 | 역할·입출력 | 예외·부작용 | 호출 관계 |
 | --- | --- | --- | --- |
-| `public SubmissionWorkflowService(JdbcClient jdbc, ObjectMapper mapper, CommandExecutor commands, SubmissionService submissions, SubmissionValidationService validation)` | 같은 DB를 사용하는 명령·검증·조회 의존성 연결. 반환 없음. | 예외·외부 부작용 없음. | 생성자 주입 |
-| `public CommandExecutor.Result validate(Actor actor, String submissionId, String key, StateInput input)` | 초안·기대 토큰 → 검증된 제출 DTO와 빈 변경 배열. 회차 미발급. | 권한·토큰·상태·DB/JSON 오류. 검증·월 상세·멱등 응답을 동일 트랜잭션에서 저장. | `lockDraft`, `lockAnnualPlan`, `validation.validateLocked`, `submissions.submission`, `fingerprint`, `json` |
+| `public SubmissionWorkflowService(JdbcClient jdbc, ObjectMapper mapper, CommandExecutor commands, SubmissionService submissions, SubmissionValidationService validation, AnnualMasterService annualMasters, MonthlyMasterService monthlyMasters)` | 같은 DB를 사용하는 명령·검증·조회 의존성 연결. 반환 없음. | 예외·외부 부작용 없음. | 생성자 주입 |
+| `public CommandExecutor.Result validate(Actor actor, String submissionId, String key, StateInput input)` | 초안·기대 토큰 → 검증된 제출 DTO와 현재 검토·필수 미답변 ID 배열. 회차 미발급. | 권한·토큰·상태·DB/JSON 오류. 검증·월 상세·멱등 응답을 동일 트랜잭션에서 저장. | `lockDraft`, `lockAnnualPlan`, `validation.validateLocked`, `submissions.submission`, `fingerprint`, `json` |
 | `public CommandExecutor.Result submit(Actor actor, String submissionId, String key, StateInput input)` | 초안·기대 토큰 → 양수 회차가 있는 PENDING DTO/멱등 재전달. | 검증·기준·요청·조직 대기 조건 오류. 제출자·시각·회차와 멱등 응답 원자 갱신. | `lockDraft`, `checkSubmissionWindow`, `validation.assertReadyForSubmit`, `submissions.submission` |
-| `public CommandExecutor.Result decide(Actor actor, String submissionId, String key, DecisionInput input)` | 기획자·상태 토큰·판단 → 제출 상세와 빈 masterEffects 또는 멱등 재전달. | 권한·최신 회차·상태·토큰·검증 오류. 조직→제출→계획 잠금과 검토 헤더/멱등 응답 원자 저장. | `CommandExecutor.execute`, `lockAnnualPlan`, `count`, `validation.assertReadyForApproval`, `submissions.submission` |
+| `public CommandExecutor.Result decide(Actor actor, String submissionId, String key, DecisionInput input)` | 기획자·상태 토큰·판단 → 제출 상세와 승인 마스터 효과(반려는 빈 배열) 또는 멱등 재전달. | 권한·최신 회차·상태·토큰·검증 오류. 조직→제출→계획 잠금과 검토 헤더/연간 또는 월별 마스터/멱등 응답 원자 저장. | `CommandExecutor.execute`, `lockAnnualPlan`, `count`, `validation.assertReadyForApproval`, `submissions.submission`, `assertIncludedTarget`, `AnnualMasterService.publishAfterApproval`, `MonthlyMasterService.publishAfterApproval` |
 | `private Map<String, Object> lockDraft(Actor actor, String submissionId, StateInput input)` | 조회 권한·토큰·DRAFT·SUCCEEDED 확인 → 잠근 제출 행. | 권한·상태·토큰·파싱 오류. 조직→제출 행 잠금만 수행. | `submissions.submission`, `conflict` |
 | `private void checkSubmissionWindow(Actor actor, Map<String, Object> submission)` | 잠근 제출 → 열린 요청·연간 조건·조직 PENDING·다른 기간 반려 제한 검사. 반환 없음. | 업무 충돌. 계획→요청 잠금과 DB 읽기. | `lockAnnualPlan`, `count`, `conflict` |
 | `private Map<String, Object> lockAnnualPlan(Map<String, Object> submission)` | 조직·제출이 잠긴 행 → 잠근 계획 id/status. | DB 조회·잠금 오류. 같은 연도의 공통 항목 생성·상태 검사를 직렬화하며 DB 값 변경 없음. | JdbcClient |
@@ -638,6 +661,8 @@ JUnit이 @BeforeEach/@AfterEach 준비·정리와 @Test/@ParameterizedTest를 �
 | `static DecisionInput fromJson(JsonNode input)` | 문자열 타입·허용 필드·승인 note 부재 확인 → 판단 DTO. | 잘못된 구조/필드/타입 400; 부작용 없음. | Jackson, `DecisionInput`, `invalidDecision` |
 
 `StateInput(expectedStateToken)`은 `@NotBlank` 입력 record이며 직접 작성한 메서드는 없다.
+
+| `private void assertIncludedTarget(Map<String,Object> submission)` | 잠근 제출 행 → 반환 없음. 비제외 대상 소속을 검사. | 대상 제외는 REQUEST_TARGET_EXCLUDED. DB 읽기만 수행. | `count`, `conflict` |
 
 ### [SubmissionWorkflowController.java](../../backend/src/main/java/io/skala/backend/submission/SubmissionWorkflowController.java)
 
@@ -655,7 +680,7 @@ JUnit이 @BeforeEach/@AfterEach 준비·정리와 @Test/@ParameterizedTest를 �
 
 | 시그니처 | 역할·입출력 | 예외·부작용 | 호출 관계 |
 | --- | --- | --- | --- |
-| `void prepare()` | 입력/반환 없음. V1+V2·조직·초안·대역 준비. | DB/대역 준비 오류. 독립 메모리 H2만 생성. | `seedDraft`, `currentView`, `CommandExecutor`, `SubmissionWorkflowService` |
+| `void prepare()` | 입력/반환 없음. V1+V2+V3·조직·초안·검증 및 마스터 대역 준비. | DB/대역 준비 오류. 독립 메모리 H2만 생성. | `seedDraft`, `currentView`, `CommandExecutor`, `SubmissionWorkflowService` |
 | `void close()` | 입력/반환 없음. 테스트 DB 종료. | DB 종료 오류. 메모리 자원 해제. | EmbeddedDatabase |
 | `void validationKeepsDraftAndDoesNotConsumeSequence() throws Exception` | 입력/반환 없음. 검증 명령과 회차 미발급 검사. | JSON/검증 오류. 메모리 멱등 응답 저장. | `workflow.validate`, `input` |
 | `void finalSubmissionIsPendingAndIdempotent() throws Exception` | 입력/반환 없음. 최종 제출·재전달·제출 후 잠금 검사. | JSON/검증 오류. 메모리 초안 갱신. | `workflow.submit`, `workflow.validate`, `input` |
@@ -717,3 +742,384 @@ JUnit이 @BeforeEach/@AfterEach 준비·정리와 @Test/@ParameterizedTest를 �
 ## 갱신 확인
 
 메서드 추가·삭제·시그니처 변경 시 해당 타입 표를 갱신한다. 상태·권한·DB/프로세스/HTTP 부작용이 바뀌면 코드 Javadoc과 이 문서의 예외·부작용·주요 호출 흐름도 함께 확인한다. 함수의 실제 계약은 각 코드의 Javadoc을 기준으로 하며, 테스트 실행 건수와 함수 개수를 혼동하지 않는다.
+
+## 연간 계획 마스터
+
+### [AnnualMasterController.java](../../backend/src/main/java/io/skala/backend/master/AnnualMasterController.java)
+
+모든 GET은 서버에서 확인한 `PLANNER` 권한만 허용한다. 컨트롤러는 발행하지 않으며, 최초 및 후속 발행은 승인 명령 내부의 `publishAfterApproval`에서만 수행한다.
+
+| 시그니처 | 역할·입출력 | 예외·부작용 | 호출 관계 |
+| --- | --- | --- | --- |
+| `AnnualMasterController(AnnualMasterService service, ActorResolver actors)` | 조회·인증 의존성 연결 → 반환 없음. | 없음. | 생성자 |
+| `Map<String,Object> status(String requestId, Map<String,String> query)` | 요청 ID·빈 쿼리 → 최신 필수 조직 승인 현황·마스터 라벨. | 인증·권한·필터·404 오류. DB 읽기. | `actors.current`, `service.status` |
+| `Map<String,Object> list(Map<String,String> query)` | 필수 requestId 및 limit·cursor → 발행 이력 페이지. | 인증·권한·필터·404 오류. DB 읽기. | `actors.current`, `service.list` |
+| `Map<String,Object> detail(String masterId, Map<String,String> query)` | 고정 버전 ID·빈 쿼리 → 출처·12개월·연간 합계. | 인증·권한·필터·404·근거 오류. DB 읽기. | `actors.current`, `service.detail` |
+| `Map<String,Object> reportValues(String masterId, Map<String,String> query)` | 버전 및 organizationId·month·limit·cursor → 보고값 페이지. | 인증·권한·필터·404·근거 오류. DB 읽기. | `actors.current`, `service.reportValues` |
+
+### [AnnualMasterService.java](../../backend/src/main/java/io/skala/backend/master/AnnualMasterService.java)
+
+마스터는 금액을 복제하지 않고 `annual_master_source`로 승인 제출본 조합을 고정한다. 최초 발행은 `request_target.excluded=false`인 전 조직의 최신 완료 회차가 승인되어야 한다. 후속 발행은 이전 마스터의 조합에서 승인된 한 조직만 교체하며, 다른 조직의 새 대기·반려본은 섞지 않는다. 저장된 검증 지문이 같은 조합은 `UNCHANGED`로 처리한다. 전 조직 대기 여부와 무관하게 대상 집합 자체가 달라졌다면 `MASTER_TARGET_MISMATCH`로 차단한다.
+
+| 시그니처 | 역할·입출력 | 예외·부작용 | 호출 관계 |
+| --- | --- | --- | --- |
+| `AnnualMasterService(JdbcClient jdbc, ObjectMapper mapper)` | DB·JSON 의존성 연결 → 반환 없음. | 없음. | 생성자 |
+| `Map<String,Object> publishAfterApproval(Actor actor, String submissionId)` | 기획자·방금 승인한 최신 완료 제출 → `ANNUAL_PLAN` 효과. | 권한·상태·근거 오류 및 트랜잭션 부재. 연간 계획 잠금, 마스터·출처 INSERT; 호출 승인과 원자적 롤백. | `annualRequest`, `targets`, `latest`, `source`, `effect`, JdbcClient |
+| `Map<String,Object> status(Actor actor, String requestId, Map<String,String> query)` | 기획자·요청·빈 필터 → 발행 현황. | 권한·입력·404. REPEATABLE_READ DB 읽기. | `checkQuery`, `annualRequest`, `targets`, `latest`, `approvedCount`, `version` |
+| `Map<String,Object> list(Actor actor, Map<String,String> query)` | 기획자·요청 필터 → seq DESC/id DESC 이력 페이지. 페이지 사이 신규 발행은 스냅샷으로 고정하지 않음. | 권한·입력·커서·404. REPEATABLE_READ DB 읽기. | `checkQuery`, `annualRequest`, `limit`, `summary`, `ApiData.offset/cursor` |
+| `Map<String,Object> detail(Actor actor, String masterId, Map<String,String> query)` | 기획자·고정 버전 → 출처·전사 및 조직별 12개월·연간 금액·이익률·조직 기여율. | 권한·입력·404·근거 오류. REPEATABLE_READ에서 고정 출처 전체를 한 번 조회. | `sources`, `profitSummaries`, `summary` |
+| `Map<String,Object> reportValues(Actor actor, String masterId, Map<String,String> query)` | 기획자·버전·조직/월 필터 → 고정 항목 그리드의 정확한 십진 문자열 페이지. | 권한·입력·커서·404·근거 오류. REPEATABLE_READ DB 읽기. | `sources`, `aggregate`, `integer`, `limit`, `ApiData.offset/cursor` |
+| `List<Map<String,Object>> targets(Object requestId)` | 요청 PK → 제외되지 않은 대상 및 각 최신 완료 회차. | DB 오류. 읽기만 수행. | JdbcClient |
+| `Map<String,Object> annualRequest(String requestId)` | 연간 요청 ID → 연도 포함 요청 행. | 입력·404·월간 요청 오류. DB 읽기. | `one`, `ApiData.id` |
+| `Map<String,Object> latest(Object requestId)` | 요청 PK → 최신 마스터 또는 null. | DB 오류. 읽기만 수행. | `rows` |
+| `List<Source> sources(Map<String,Object> master, Map<String,Object> request)` | 버전·요청 → 고정 제출 참조의 검증된 출처 목록. | 근거 누락·발행 조합 지문 불일치 오류. DB 읽기. | `rows`, `source`, `reportMetadata`, `contentHash` |
+| `String contentHash(Map<String,Object> request, List<Source> sources)` | 요청·출처 → 조직 ID 순 의미 지문의 SHA-256. | 없음. 메모리 계산. 발행 및 조회가 같은 계산을 사용한다. | `ApiData.hash`, Stream |
+| `Map<String,Map<String,Object>> reportMetadata()` | 없음 → 보고 ID별 코드·종류. | DB 오류. 한 발행·조회 범위에서 한 번 읽어 모든 조직에 공유한다. | `rows` |
+| `Source source(long submissionId, long organizationId, Map<String,Object> request, Map<String,Map<String,Object>> metadata)` | 고정 제출·기대 조직·요청·호출 범위의 항목 메타 → 의미 지문·공개 출처·보고값. | `MASTER_SOURCE_INVALID`: 승인/정책/시도/해시/이전본/건수/기간/그리드/정확한 적재 합계 불일치. DB 읽기·메모리 대조만 수행. | `rows`, ObjectMapper, BigDecimal |
+| `List<Map<String,Object>> aggregate(List<Source> sources, Long organizationId)` | 검증 출처·선택 조직/null → 전 출처 항목 합집합의 동일 그리드. | 동일 항목 코드·종류 불일치. 메모리 집계; 검증된 출처에 없는 항목만 0. | BigDecimal |
+| `Map<String,Object> profitSummaries(List<Source> sources)` | 검증한 고정 출처 → 전사 totals·months와 출처 메타를 유지한 organizations. 보고값을 한 번 순회하여 전사·조직 월 금액을 함께 수집. | 없음. 메모리 계산만 수행하며 DB 재조회 없음. | `emptyMonthlyAmounts`, `profitSummary` |
+| `BigDecimal[][] emptyMonthlyAmounts()` | 없음 → 월별 매출·비용 12×2의 정확한 0 초기값. | 없음. 메모리 배열 생성만 수행. | Arrays.fill |
+| `Map<String,Object> profitSummary(BigDecimal[][] amounts, BigDecimal[][] company)` | 조직 또는 전사 월 금액, 조직이면 전사 금액/전사 자체이면 null → 연간·월별 손익 및 비율. 연간 비율은 연간 금액으로 계산. | 없음. 메모리 계산만 수행. | `totals`, `percentage` |
+| `Map<String,Object> totals(BigDecimal revenue, BigDecimal cost)` | 매출·비용 → 반올림하지 않은 매출·비용·손익 문자열 및 소수 2자리 영업이익률. 매출 0이면 비율 null. | 없음. | `ApiData.object`, BigDecimal, `percentage` |
+| `String percentage(BigDecimal numerator, BigDecimal denominator)` | 분자·같은 기간의 분모 → ×100 후 소수 2자리 HALF_UP 문자열. 분모 0이면 null. 음수·100 초과 값은 보정하지 않음. | 없음. 부작용 없음. | BigDecimal.divide |
+| `Map<String,Object> summary(Map<String,Object> request, Map<String,Object> master)` | 요청·마스터 → 공통 헤더, 작성자 `{id,name}`. | DB 오류. 작성자 이름 읽기. | `version`, `textId`, `one`, `ApiData.instant` |
+| `Map<String,Object> effect(Map<String,Object> request, List<Map<String,Object>> targets, Map<String,Object> master, String action)` | 요청·대상·nullable 버전·작업 결과 → 승인 응답 효과. | 없음. | `approvedCount`, `version`, `textId` |
+| `long approvedCount(List<Map<String,Object>> targets)` | 대상 목록 → 최신 완료 회차 승인 수. | 없음. | Stream |
+| `String version(Map<String,Object> request, Map<String,Object> master)` | 연도·회차 → `master-YYYY-PLAN-NN`. | 없음. | `number`, String.format |
+| `String textId(Object value)` | nullable DB ID → nullable 문자열. | 없음. | Object.toString |
+| `long number(Object value)` | JDBC 정수 → long. | 잘못된 DB 타입. 부작용 없음. | Number.longValue |
+| `void checkQuery(Map<String,String> query, Set<String> allowed)` | 외부 쿼리·허용 키 → 반환 없음. | 미지원 키·빈 값 오류. 부작용 없음. | `invalid` |
+| `int limit(Map<String,String> query)` | 페이지 필터 → 기본 50, 1~100. | 입력 오류. 부작용 없음. | `integer` |
+| `int integer(String value, int min, int max)` | 정수 문자열·범위 → 정규 십진 정수. | 입력 오류. 부작용 없음. | `invalid` |
+| `Map<String,Object> one(String sql, Object... params)` | 내부 SQL·바인딩 → 필수 한 행. | `RESOURCE_NOT_FOUND`, DB 오류. 읽기만 수행. | `rows` |
+| `List<Map<String,Object>> rows(String sql, Object... params)` | 내부 SQL·바인딩 → 행 목록. | DB 오류. 읽기만 수행. | JdbcClient |
+| `ApiException invalid(String message)` | 공개 설명 → `INVALID_REQUEST` 400. | 없음. | ApiException |
+| `ApiException conflict(String code, String message)` | 코드·공개 설명 → 409. | 없음. | ApiException |
+| `ApiException invalidSource()` | 없음 → `MASTER_SOURCE_INVALID` 409. | 없음. | `conflict` |
+
+`Source` record의 자동 생성 접근자는 메모리 값만 반환한다. 조회는 명시적인 마스터 출처를 사용하며 현재 요청 대상/최신 제출로 과거 버전을 다시 구성하지 않는다. 상세의 `organizations`는 `sources`의 조직 ID·코드·이름·제출 ID·회차 라벨과 동일한 메타데이터에 `totals`, `months`를 추가한다. 전사·조직의 `operatingMargin`은 같은 기간의 영업이익/매출×100이며, 조직의 `operatingProfitShare`는 같은 기간 조직 영업이익/전사 영업이익×100이다. 전사에는 기여율 필드가 없고 0 분모는 null이다. 연간 계획 `CONFIRMED`, Contingency, 월간 마스터, 매출총이익·당기순이익·ACTUAL·ESTIMATE는 이 클래스에서 생성하지 않는다.
+
+### [AnnualMasterTests.java](../../backend/src/test/java/io/skala/backend/master/AnnualMasterTests.java)
+
+모든 테스트는 V1~V3의 독립 H2와 합성 근거를 사용한다. 운영 DB·`Data/`·실제 승인 상태는 변경하지 않는다.
+
+| 시그니처 | 역할·입출력 | 예외·부작용 | 호출 관계 |
+| --- | --- | --- | --- |
+| `void prepare()` | 없음 → H2·서비스·기획자·보고항목 준비. | DB 오류. 메모리 행 생성. | EmbeddedDatabaseBuilder, ResourceDatabasePopulator |
+| `void close()` | 없음 → 메모리 DB 종료. | DB 오류. 메모리 해제. | database.shutdown |
+| `void waitsForEveryBusinessOrganizationThenPublishesExactAnnualTotals()` | 없음 → 16/17 대기·마지막 발행·큰 십진수·17개 조직 출처/연간/12개월 합계·계획 미확정 검사. | 검증 오류. H2 합성 승인·마스터 생성. | `organization`, `submission`, `publish`, `approve`, `assertOrganizationBreakdown`, `service.status/detail` |
+| `void semanticNoOpAndRetryDoNotPublishAnotherVersion()` | 없음 → 의미 동일 재승인·재호출의 무발행 검사. | 검증 오류. H2만 사용. | `submission`, `publish`, `count` |
+| `void replacementKeepsOtherOrganizationsFrozenAndOldMasterImmutable()` | 없음 → 한 조직 교체·다른 반려본 제외·구버전 불변 검사. | 검증 오류. H2만 사용. | `submission`, `publish`, `service.detail` |
+| `void marginsAndSharesPreserveNegativeAmountsAndHalfUpRounding()` | 없음 → 매출 0 전사 이익률 null, 음수 매출·손익·전사 분모, 소수 2자리 HALF_UP, 음수 및 100 초과 기여율 검사. | 검증 오류. H2 합성 마스터 후 읽기. | `publish`, `service.detail`, `assertOrganizationBreakdown` |
+| `void zeroCompanyProfitLeavesEveryOrganizationShareNull()` | 없음 → 전사 영업이익 0에서 모든 조직의 월·연 기여율 null, 0 매출 조직 이익률 null, 적자 부호 검사. | 검증 오류. H2 합성 마스터 후 읽기. | `publish`, `service.detail`, `assertOrganizationBreakdown` |
+| `void latestRejectedSubmissionBlocksInitialPublication()` | 없음 → 최신 반려가 과거 승인보다 우선함 확인. | 검증 오류. H2만 사용. | `submission`, `publish` |
+| `void excludedTargetsAreSkippedAndLaterMembershipChangesConflict()` | 없음 → 제외 대상·발행 후 대상 집합 충돌 검사. | 검증 오류. H2 플래그 변경. | `publish`, `count` |
+| `void inconsistentFrozenAmountsRollBackApprovalAndPublication()` | 없음 → 고정 적재 금액 손상 시 승인·마스터 원자 롤백 검사. | 검증 오류. H2 합성 금액만 변경. | `approve`, `count` |
+| `void missingFrozenSourceBlocksDetailAndReportValues()` | 없음 → 고정 출처 누락을 정상 부분 합계로 반환하지 않는지 검사. | 검증 오류. H2 합성 출처 한 행 삭제 후 조회만 수행. | `publish`, `service.detail/reportValues` |
+| `void replacedFrozenSourceWithDifferentValidContentBlocksReads()` | 없음 → 다른 유효 승인본으로 참조를 바꿔도 발행 지문과 다르면 조회·후속 발행을 차단하는지 검사. | 검증 오류. H2 합성 참조만 변경. | `publish`, `service.detail/reportValues` |
+| `void concurrentFinalApprovalsCreateOneVersion() throws Exception` | 없음 → 동시 마지막 승인에서 단일 최초 버전 검사. | 스레드·검증 오류. 제한된 두 스레드·H2만 사용. | `simultaneousApproval`, `count` |
+| `void readContractsValidateRoleFiltersAndCursorScope()` | 없음 → 기획자 권한·엄격 필터·조직 범위 커서·파생 보고항목 검사. | 검증 오류. H2 읽기. | `service.detail/reportValues/list` |
+| `void publicationRequiresApprovalTransaction()` | 없음 → 트랜잭션 없는 발행 차단 검사. | 검증 오류. 저장 없음. | `service.publishAfterApproval` |
+| `String simultaneousApproval(String submissionId, CountDownLatch ready, CountDownLatch start)` | 제출·시작 동기화 래치 → 발행 효과 이름. | 대기 중단. 메모리 승인 트랜잭션. | `approve` |
+| `Map<String,Object> approve(String submissionId)` | 제출 → 승인 및 발행 결과. | DB·업무 오류. 연간 계획 잠금·승인·발행 원자 반영. | TransactionTemplate, `publishAfterApproval` |
+| `Map<String,Object> publish(String submissionId)` | 승인 제출 → 발행 결과. | DB·업무 오류. 메모리 발행 트랜잭션. | TransactionTemplate, `publishAfterApproval` |
+| `long count()` | 없음 → 마스터 수. | DB 오류. 읽기. | JdbcClient |
+| `void assertOrganizationBreakdown(Map<String,Object> detail)` | 상세 → 반환 없음. 조직별 출처 정합성과 조직 금액의 12개월/연간 합계가 전사와 같은지 검사. | 검증 오류. 메모리 JSON만 대조하며 비율은 합산하지 않음. | ObjectMapper, BigDecimal |
+| `void organization(long id)` | 조직 ID → 반환 없음. | DB 오류. 합성 사업조직·고정 대상 INSERT. | JdbcClient |
+| `void submission(long submissionId, long organizationId, int seq, String status, String revenue, String cost)` | 제출 메타·금액 → 반환 없음. | DB·JSON 오류. 정확한 12개월 상세와 검증 근거를 메모리 DB에 합성. | ObjectMapper, JdbcClient, `ApiData.hash` |
+
+### 사업조직 범위와 승인 발행 경계 회귀 테스트 추가
+
+| 메서드 | 목적·Args·Returns | Raises·Side Effects | 호출 관계 |
+| --- | --- | --- | --- |
+| `SubmissionWorkflowTests.publicationFailureRollsBackApprovalAndMaster()` | 입력·반환 없음. 발행 부분 쓰기 후 실패가 승인·멱등 응답까지 롤백하는지 검증 | 검증 오류. 합성 H2 트랜잭션만 사용 | `workflow.decide`, `annualMasters.publishAfterApproval` 대역 |
+| `SubmissionWorkflowTests.excludedTargetCannotValidateSubmitOrReceiveDecision()` | 입력·반환 없음. 제외 대상의 검증·제출·승인·반려 차단 | 검증 오류. H2 대상 표시 및 PENDING 준비 | `workflow.validate`, `submit`, `decide` |
+| `DemoIntegrationTests.bootstrapRetiresLegacyDemoOrganizationsWithoutDeletingHistory()` | 입력·반환 없음. 데모 비활성·대상 제외와 이력 보존·멱등 보정 검증 | 검증/DB 오류. 합성 H2만 변경 | `DemoBootstrap.run` |
+| `DemoIntegrationTests.bootstrapPreservesConfirmedPlanTargets()` | 입력·반환 없음. 확정 요청 대상 불변 검증 | 검증/DB 오류. H2 합성 확정 상태 준비 | `DemoBootstrap.run` |
+| `DemoIntegrationTests.bootstrapPreservesPublishedMasterTargets()` | 입력·반환 없음. 발행된 수집 요청 대상 불변 검증 | 검증/DB 오류. H2 합성 발행본 준비 | `DemoBootstrap.run` |
+| `LocalBearerAuthenticationFilterTest.demoOrganizationTokenUsesFixedBusinessActorInsteadOfLegacyEmail()` | 입력·반환 없음. 환경 토큰의 F10 고정 인증 검증 | Servlet/검증 오류. 모의 HTTP·메모리 인증만 사용 | `doFilterInternal`, `DemoAccounts.actorForOrganizationToken` |
+| `LocalBearerAuthenticationFilterTest.demoTokenWithoutFixedActorCannotFallBackToConfiguredEmail()` | 입력·반환 없음. 비활성 F10 토큰이 레거시 D 계정으로 우회하지 못함을 검증 | Servlet/검증 오류. 모의 HTTP·메모리 인증만 사용 | `doFilterInternal` |
+
+### [BusinessWorkbookMasterTests.java](../../backend/src/test/java/io/skala/backend/master/BusinessWorkbookMasterTests.java)
+
+`business.workbook.path` 속성이 있을 때만 읽기 전용 원본 18개로 실행하는 선택 검사다. 전용 H2에 17개 제출본·실제 Python 파싱·승인·연간 마스터를 구성하며 PostgreSQL에 연결하지 않는다. 함수별 상세 Args·Returns·Raises·Side Effects는 아래와 코드 Javadoc을 따른다.
+
+호출 흐름: `originalBusinessWorkbooksPublishAnExactAnnualMasterAfterEveryApproval` → `sourcePath/prepareOrganizations` → HTTP 업로드·실제 `ParsingWorker.runNext` → `view/command` 검증·최종 제출 → `numericCells/compareSourceValues` → `approveEveryOrganization` → `compareMasterReference/compareOrganizationSummaries/compareReportValues`. 모든 호출은 메모리에서 계산하고 결과 파일을 직접 생성하지 않는다.
+
+| 메서드 | 목적·Args·Returns | Raises·Side Effects |
+| --- | --- | --- |
+| `originalBusinessWorkbooksPublishAnExactAnnualMasterAfterEveryApproval()` | 속성의 원본 폴더 → 반환 없음. 실제 전체 제출부터 마스터까지 및 SHA 불변 검사 | 읽기·파싱·HTTP·DB·대조 오류. Python -B 프로세스 및 전용 H2만 변경 |
+| `prepareOrganizations(entries)` | manifest 17개 조직 → 반환 없음. 조직·기획·담당 계정 준비 | DB·중복 오류. H2 INSERT |
+| `compareSourceValues(submissionId,cells,reports,months,organizationMonths)` | 제출 ID·독립 숫자 셀·전사/해당 조직 누적 맵 → 반환 없음. 12,036셀의 원 단위 환산 대조 | 원본·DB·금액 불일치. DB 읽기·메모리 합산 |
+| `approveEveryOrganization(submissions,requestId)` | 제출 ID 목록·요청 → 마스터 ID. 16개 대기·마지막 발행·멱등 확인 | HTTP·검증 오류. H2의 승인·마스터 생성 |
+| `compareMasterReference(master,cells,months)` | 마스터 DTO·독립 전체 원본 셀·월 기대값 → 반환 없음. 36개 월 합계와 연합계 대조 | 누락·합계 불일치. 메모리 계산만 수행 |
+| `compareOrganizationSummaries(master,organizationAmounts)` | 마스터 DTO·원본별 독립 월 기대값 → 반환 없음. 17개 고정 출처 메타·조직 월/연 금액·전사로의 합산 대조 | 조직·출처·월·금액 불일치. 메모리 계산만 수행 |
+| `compareReportValues(masterId,reports,months)` | 마스터·보고항목/월 기대값 → 반환 없음. 1,836개 보고값과 조직 필터 확인 | HTTP·대조 오류. H2 GET |
+| `referenceTotals(cells,sheet,startColumn,firstRow,count)` | 독립 셀·시트·범위 → 월별 천원 환산 합계 | 필수 셀 누락. 메모리 계산만 수행 |
+| `column(number)` | 1부터의 열 번호 → Excel 열 문자 | 없음. 외부 부작용 없음 |
+| `numericCells(path)` | XLSX 경로 → 시트!셀의 BigDecimal 맵 | ZIP·XML 읽기 오류. 원본 읽기만 수행 |
+| `sourcePath(directory,filename)` | 허용 원본 폴더·파일명 → 범위 확인한 실제 경로 | 경로 밖·없는 파일 오류. 경로 읽기만 수행 |
+| `managerEmail(code)` | 조직 코드 → 합성 이메일 | 없음. 외부 부작용 없음 |
+| `asUser(email,role)` | 합성 이메일·역할 → 모의 HTTP 인증 후처리기 | 없음. 요청의 메모리 인증 문맥만 설정 |
+| `json(actions,expected)` | 모의 응답·기대 상태 → JSON 트리 | 상태·JSON 오류. 응답 읽기만 수행 |
+| `view(id,email,role)` | 제출·합성 사용자 → 상세 JSON | HTTP·JSON 오류. H2 GET |
+| `command(id,action,email,role,body)` | 제출·명령·사용자·본문 → 명령 JSON | HTTP·JSON 오류. 검증·제출 등 H2 업무 변경 |
+| `read(path)` | 조회 경로 → 기획자 GET JSON | HTTP·JSON 오류. H2 읽기 |
+
+## 연간 확정과 월간 ACTUAL 마스터
+
+### [AnnualPlanService.java](../../backend/src/main/java/io/skala/backend/master/AnnualPlanService.java)
+
+확정은 사용자에게 받은 원 단위 Contingency와 모든 필수 조직의 최신 완료 승인본을 함께 고정한다. 자동 확정·기본 금액·월별 배분은 없다. `AnnualMasterService.validatedPlanReports(requestId, selected)`는 지정한 조직별 승인 참조의 기존 연간 근거 검증을 재사용하며 원본·금융값을 변경하지 않는다.
+
+| 함수 | Args → Returns | Raises·Side Effects·호출 |
+| --- | --- | --- |
+| `AnnualPlanService(jdbc,mapper,commands,annualMasters)` | DB·JSON·명령·근거 검증 → 인스턴스 | 없음. 의존성 보관만 수행 |
+| `get(actor,year,query)` | PLANNER·연도·빈 쿼리 → AnnualPlanView | 권한·입력·404. REPEATABLE_READ 읽기; `plan`, `view` |
+| `confirm(actor,key,year,input)` | PLANNER·멱등키·연도·토큰/금액 → CommandExecutor.Result | 토큰·전원 승인·고정 근거·상태 오류. 계획 잠금 → 참조/Contingency/확정자·시각/CONFIRMED/요청 CLOSED/멱등 응답 원자 저장 |
+| `confirmed(year)` | 연도 → ConfirmedPlan(계획·조직별 참조·PLAN 보고값) | 미확정·참조누락·근거 오류. 고정 참조 읽기; `validatedPlanReports` |
+| `view(plan)` | 계획 행 → 후보·확정 참조·상태 토큰 DTO | DB·JSON 오류. 후보의 상태·ID·원본hash·검증키까지 토큰에 포함; `candidates` |
+| `candidates(plan)` | 연간 요청 행 → 제외되지 않은 대상의 최신 완료 제출 | DB 오류. DRAFT 제외·조직 ID 순 읽기 |
+| `plan(year)` | 연도 → 연간 요청 및 확정자 포함 계획 | 404·DB 오류. 읽기 |
+| `year(value)` | 연도 문자열 → 2000~9999 정수 | 입력 오류. 부작용 없음 |
+| `contingency(value)` | 명시적 금액 문자열 → 0 이상 NUMERIC(30,6) | null·음수·정밀도·형식 오류. 부작용 없음 |
+| `json(value)` | DTO → JSON | 직렬화 오류. 메모리 처리 |
+| `number(value)` | JDBC 정수 → long | 타입 오류. 부작용 없음 |
+| `textId(value)` | nullable ID → 문자열/null | 없음. 부작용 없음 |
+| `invalid(message)` | 공개 설명 → INVALID_REQUEST 400 | 없음. 부작용 없음 |
+| `conflict(code,message)` | 코드·설명 → 409 | 없음. 부작용 없음 |
+| `ConfirmInput.read(input)` | HTTP JSON → 토큰·Contingency 입력 | 객체·정확히 2필드·문자열 타입 검사. 숫자를 문자열로 자동 강제변환하지 않음. 외부 부작용 없음 |
+
+`ConfirmInput`, `ConfirmedPlan`의 자동 생성 접근자는 메모리 값만 반환한다. 확정 후보 누락은 `PLAN_APPROVALS_INCOMPLETE`와 `organizationId[ID]` 필드 오류로 전달한다.
+
+### [AnnualPlanController.java](../../backend/src/main/java/io/skala/backend/master/AnnualPlanController.java)
+
+| 함수 | Args → Returns | Raises·Side Effects·호출 |
+| --- | --- | --- |
+| `AnnualPlanController(service,actors)` | 계획·인증 → 인스턴스 | 없음. 의존성 연결 |
+| `get(year,query)` | 경로 연도·빈 쿼리 → 계획 | 인증·권한·입력·404. `actors.current` → `service.get`, DB 읽기 |
+| `confirm(year,key,input,query)` | 연도·멱등키·금액/토큰·빈 쿼리 → JSON 명령응답 | 인증·입력·상태 오류. `service.confirm`; 재전달 헤더 복원 |
+
+### [MonthlyMasterService.java](../../backend/src/main/java/io/skala/backend/master/MonthlyMasterService.java)
+
+`master_version`과 `master_source`는 V4에서 추가한다. 최초 발행은 고정 월 요청의 전 조직 최신 완료 승인을 요구한다. 후속 승인은 기존 전체 조합에서 해당 조직만 교체한다. 승인본의 ACTUAL 1~요청월 중 요청이 있는 월을 오름차순으로 처리하며 승인과 모든 영향 월 발행이 하나의 트랜잭션이다. 해당 월의 원천 구성으로 지문을 계산하므로 다른 월 금액·ESTIMATE·행 위치·파일명·소명·수정차수만 바뀌어서는 이전 월 버전이 생기지 않는다. 설명의 운영 메타는 `ReviewComparisonService.normalizedDescription`으로 동일하게 정규화한다.
+
+| 함수 | Args → Returns | Raises·Side Effects·호출 |
+| --- | --- | --- |
+| `MonthlyMasterService(jdbc,mapper,plans)` | DB·JSON·확정 계획 → 인스턴스 | 없음. 연결만 수행 |
+| `publishAfterApproval(actor,submissionId)` | PLANNER·방금 승인한 최신 완료본 → MasterEffect 목록 | 트랜잭션 부재·권한·상태·근거 오류. 연간 계획 잠금·확정 계획 검증·월 순 발행; `publish` |
+| `periods(actor,query)` | PLANNER·year → 12개월 상태·최신 totals·annualContingency | 권한·입력·근거 오류. REPEATABLE_READ 읽기; 미발행 totals는 null |
+| `list(actor,query)` | PLANNER·year/month·limit/cursor → 최신순 버전 페이지 | 권한·입력·범위 커서 오류. REPEATABLE_READ 읽기 |
+| `detail(actor,masterId,query)` | PLANNER·고정 버전·빈 쿼리 → 실적/계획/Gap 상세 | 권한·입력·404·근거 오류. REPEATABLE_READ에서 고정 참조 조회 |
+| `reportValues(actor,masterId,query)` | 버전·organizationId/reportItemId·페이지 → ACTUAL 보고값 | 권한·입력·커서·근거 오류. 다른 연월·ESTIMATE 필터 거절; `sources`, `aggregate` |
+| `publish(actor,trigger,request,plan,metadata,cache)` | 승인 출처·영향 월·확정 근거 → 월 효과 | 대상 집합·근거 오류. 최초 전원 승인 또는 고정 조합 단일 교체 후 변경이면 새 버전·전체 참조 INSERT |
+| `sources(master,request,plan,metadata,cache)` | 고정 버전·월·기준 → 검증 출처 목록 | 출처 누락·월 지문 불일치. DB 읽기·호출 캐시 갱신 |
+| `cached(id,plan,metadata,cache)` | 제출 ID·기준·캐시 → 검증 출처 | 근거 오류. 동일 승인 명령의 여러 영향 월에서 최초 검증만 DB 읽기 |
+| `source(submissionId,plan,metadata)` | 승인 제출·확정 계획·보고 메타 → ACTUAL 보고값·월별 의미 지문 | 정책/파싱시도/원본hash/이전본/계획본/건수/월그리드/금액 불일치. 모든 line의 ACTUAL 1~요청월 필수, 누락을 0으로 보완하지 않음 |
+| `factFingerprint(fact)` | 적재 상세 → 위치·수정차수를 제외한 원천 의미 JSON | JSON 오류. 메모리 정규화; 계정·팀·과제·진짜 설명·금액 보존 |
+| `contentHash(request,sources)` | 월 요청·검증 출처 → 조직 ID 순 해당 월 지문의 SHA-256 | 전체 월 근거 누락. 메모리 계산 |
+| `detail(master,request,plan,metadata)` | 고정 버전·월·확정 계획 → sources/totals/planTotals/comparisons/organizations | 근거 오류. 고정 출처 조회·메모리 계산 |
+| `money(reports,month,org)` | 검증 보고값·월·조직 → 매출·비용 배열 | 누락·중복 근거. 메모리 읽기 |
+| `comparison(actual,plan,company,companyPlan)` | 실제/계획 매출·비용 및 선택적 전사 기준 → totals·planTotals·comparisons | 없음. Gap=ACTUAL−PLAN, 비율=Gap/abs(PLAN)×100, Contingency 차감 없음 |
+| `totals(amounts,company)` | 매출·비용·선택적 전사 → OP·이익률·조직기여율 포함 DTO | 없음. 정확한 금액 문자열; 비율만 HALF_UP |
+| `percent(numerator,denominator)` | 분자·분모 → 소수2자리 비율 또는 null | 없음. 분모 0은 null, 부호·100% 초과 보존 |
+| `aggregate(sources,month,org)` | 고정 출처·월·조직/null → 동일 보고 그리드 | 같은 코드의 보고 ID 불일치. 메모리 합계; 완전한 검증 후 없는 항목만 0 |
+| `targets(requestId)` | 월 요청 → 제외되지 않은 대상 및 최신 완료 회차 | DB 오류. 읽기 |
+| `missing(targets)` | 대상 → 미승인 공개 조직목록 | 없음. 메모리 변환 |
+| `approvedCount(targets)` | 대상 → 최신 완료 승인 조직 수 | 없음. 메모리 집계 |
+| `effect(request,targets,master,action)` | 월·대상·nullable버전·결과 → kind=MONTHLY_ACTUAL 효과 | 없음. 메모리 DTO |
+| `summary(request,master)` | 연월·버전 → MasterSummary | 없음. 메모리 DTO |
+| `label(request,master)` | 연월·회차 → master-YYYY-MM-NN | 없음. 메모리 문자열 |
+| `latest(requestId)` | 요청 → 최신 버전/null | DB 오류. 읽기 |
+| `request(requestId)` | ID → 월간 요청·연도 | 404·종류 오류. DB 읽기 |
+| `submission(submissionId)` | ID → 월간 제출·조직·기간·파싱 메타 | 404·종류 오류. DB 읽기 |
+| `metadata()` | 없음 → 보고 ID별 코드·종류 | DB 오류. 읽기, 호출 범위에서 공유 |
+| `query(query,allowed)` | 외부 조회·허용 키 → 반환 없음 | 미지원·빈 필터 오류. 부작용 없음 |
+| `limit(query)` | 조회 → 기본50, 1~100 | 입력 오류. `range` |
+| `range(value,min,max)` | 정규 십진 문자열·범위 → int | 입력 오류. 부작용 없음 |
+| `integer(value)` | JDBC 정수 → int | 타입 오류. 부작용 없음 |
+| `number(value)` | JDBC 정수 → long | 타입 오류. 부작용 없음 |
+| `textId(value)` | nullable ID → 문자열/null | 없음. 부작용 없음 |
+| `nullable(value)` | JSON nullable ID → 문자열/null | 없음. 부작용 없음 |
+| `json(value)` | DTO → JSON | 직렬화 오류. 메모리 처리 |
+| `one(sql,params)` | 내부 SQL·바인딩 → 필수 행 | 404·DB 오류. 읽기 |
+| `rows(sql,params)` | 내부 SQL·바인딩 → 행목록 | DB 오류. 읽기 |
+| `invalid(message)` | 설명 → 400 | 없음. 오류 객체 생성 |
+| `conflict(code,message)` | 코드·설명 → 409 | 없음. 오류 객체 생성 |
+| `invalidSource()` | 없음 → MASTER_SOURCE_INVALID 409 | 없음. 오류 객체 생성 |
+
+`Source`의 자동 접근자는 메모리 값만 반환한다. `comparisons`의 revenue/cost/operatingProfit은 각각 baselineAmount·currentAmount·gapAmount·gapRate를 제공한다. `organizations`는 고정 source 메타와 planSubmissionId를 유지하며 같은 조직의 계획만 비교한다. annualContingency는 연간 전사 금액으로만 표시한다.
+
+### [MonthlyMasterController.java](../../backend/src/main/java/io/skala/backend/master/MonthlyMasterController.java)
+
+| 함수 | Args → Returns | Raises·Side Effects·호출 |
+| --- | --- | --- |
+| `MonthlyMasterController(service,actors)` | 월 서비스·인증 → 인스턴스 | 없음. 연결만 수행 |
+| `periods(query)` | year → 12개월 현황 | 인증·권한·입력·근거 오류. `service.periods`, DB 읽기 |
+| `list(query)` | year/month/페이지 → 버전목록 | 인증·권한·입력 오류. `service.list`, DB 읽기 |
+| `detail(masterId,query)` | 고정 ID·빈 쿼리 → 상세 | 인증·권한·입력·404·근거 오류. `service.detail`, DB 읽기 |
+| `reportValues(masterId,query)` | 고정 ID·조직/항목/페이지 → 보고값 | 인증·권한·입력·404·근거 오류. `service.reportValues`, DB 읽기 |
+
+### [AnnualPlanMonthlyMasterTests.java](../../backend/src/test/java/io/skala/backend/master/AnnualPlanMonthlyMasterTests.java)
+
+| 함수 | Args → Returns | Raises·Side Effects·호출 |
+| --- | --- | --- |
+| `prepare()` | 없음 → V1~V4·2조직·승인 연간계획 준비 | DB/JSON 오류. 독립 H2에 합성 자료만 생성 |
+| `close()` | 없음 → DB 종료 | DB 오류. 메모리 해제 |
+| `confirmationPinsSourcesContingencyAndClosedRequestIdempotently()` | 없음 → 명시적 문자열금액·참조·닫힘·멱등 검사 | 검증 오류. 합성 확정 |
+| `confirmationRejectsStaleIncompleteAndDamagedCandidatesWithoutPartialWrites()` | 없음 → 오래된 토큰·최신대기·적재손상 확정 차단 | 검증 오류. H2 후보·금액만 변경, 확정 롤백 검사 |
+| `firstPublicationWaitsForEveryoneAndKeepsActualPlanAndContingencySeparate()` | 없음 → 최초 전원대기·정확한 실제/계획/Gap·별도Contingency·ACTUAL전용 검사 | 검증 오류. 합성 승인·발행·조회 |
+| `laterSnapshotUpdatesPastActualOnlyAndPreservesOtherFrozenSourcesAndOldVersion()` | 없음 → 후속월 과거ACTUAL 갱신·다른조직대기본 보존·과거버전 불변·다른월/ESTIMATE 무영향 검사 | 검증 오류. 합성 후속 승인 |
+| `missingActualOrBrokenSourceNeverBecomesZeroAndRollsBackApproval()` | 없음 → ACTUAL 누락 시 승인 롤백·부분합 차단 | 검증 오류. 합성 금융셀 삭제 후 실패 원자성 검사 |
+| `concurrentLastApprovalsAndRetryCreateOnlyOneVersion()` | 없음 → 동시 마지막 승인·재호출 단일 발행 검사 | 스레드·검증 오류. 제한된 두 H2 트랜잭션 |
+| `plannerOnlyQueriesRejectForeignCursorsAndEstimateFilters()` | 없음 → 권한·조직범위커서·ESTIMATE거절·고정출처누락 차단 | 검증 오류. 합성 발행 후 조회·출처 손상 |
+| `confirmPlan()` | 없음 → 명시적 합성금액1000000으로 확정 | 업무오류. H2만 갱신 |
+| `approve(id)` | 제출 → 효과목록 | 업무오류. 같은 H2트랜잭션의 승인·발행 |
+| `publish(id)` | 승인제출 → 효과목록 | 업무오류. H2 발행 트랜잭션 |
+| `simultaneous(id,ready,start)` | 제출·래치 → 결과명 | 대기중단·업무오류. 제한된 동시 승인 |
+| `request(id,month)` | ID·0이면연간/그외월 → 반환없음 | DB오류. 합성 고정 대상 INSERT |
+| `submission(id,org,request,seq,status,revenue,cost,overrides)` | 제출메타·기본/월별금액 → 반환없음 | DB/JSON오류. 12개월 PLAN 또는 ACTUAL/ESTIMATE와 검증객체 합성 |
+| `json(value)` | 합성값 → JSON | 직렬화오류. 메모리 처리 |
+
+
+## 수정·Gap·소명과 기준 관리 — V5
+
+V5는 `review_item`, `gap_comparison`, `review_explanation`, `gap_threshold`와 경합 직렬화를 위한 단일행 `gap_threshold_guard`를 추가한다. 업무 임계값 기본행은 만들지 않는다. 검토 합계는 NUMERIC(48,6), 차액은 NUMERIC(49,6), 표시 Gap률은 NUMERIC(60,8)이며 원천 금액은 기존 NUMERIC(30,6)를 유지한다. 초과 판정은 반올림한 Gap률이 아닌 BigDecimal 교차곱으로 한다.
+
+`SubmissionWorkflowService.validate → SubmissionValidationService.validateLocked → FinancialValidationRules.evaluate → 원천 적재 → ReviewComparisonService.context/prepare`가 검토 항목을 구성한다. `ReviewService.answer`는 제출 전 필수 답변을 기록하고, 제출 후 `decide`가 수용 또는 보완 회차를 연다. `SubmissionValidationService.assertReadyForApproval`은 필수 수용을 확인한다. 승인과 소명 판단은 모두 조직→제출 잠금으로 경합을 처리한다. DRAFT 비교 문맥 변경은 재검증을 요구하고 PENDING의 기준은 고정한다. 닫힌 요청의 기존 PENDING 검토는 허용한다.
+
+### [ReviewComparisonService.java](../../backend/src/main/java/io/skala/backend/review/ReviewComparisonService.java)
+
+| 함수 | Args → Returns | Raises·Side Effects·호출 |
+| --- | --- | --- |
+| `ReviewComparisonService(jdbc,mapper)` | DB·JSON → 인스턴스 | 없음. 의존성 연결만 |
+| `context(submissionId)` | 제출 ID → 직전 완료본·확정 계획·시나리오별 기준 ID·정책 | DB 오류. 같은 요청 직전본 우선, 없으면 직전 월; DRAFT 제외·반려 포함. 읽기만 |
+| `currentContext(submissionId)` | 초안 → 저장 문맥과 현재 문맥 일치 여부 | DB 오류. JSON 손상은 false; `context`, 저장 검증 읽기 |
+| `prepare(submissionId,context,complete)` | 잠긴 초안·문맥·재무 완전성 → 비교 차단 진단 | DB/JSON 오류. 해당 DRAFT의 현재 검토 활성 상태·비교·회차만 갱신. `cells`, `complete`, `comparisons`, `inherited`, `save` |
+| `comparisons(row,current,context,override,diagnostics)` | 제출·OP 칸·고정 문맥·nullable 후보 기준·진단 → 비교 목록 | DB 오류. 읽기 및 호출 범위 캐시 생성; 캐시 오버로드 호출 |
+| `comparisons(row,current,context,override,diagnostics,cellCache,completeCache)` | 동일 입력·호출 범위 캐시 → PLAN/PREVIOUS 비교 | DB 오류. 기준본 원천·완전성 반복 평가 축소; `addComparison`. 1월 최초 추정만 PLAN 대체 |
+| `addComparison(result,basis,baselineId,scenario,current,context,override,diagnostics,cellCache,completeCache)` | 고정 기준과 OP → 반환 없음 | DB 오류. 확인된 비교 또는 BASELINE_MISSING/GAP_THRESHOLD_MISSING 진단 추가; `exceeds` |
+| `exceeds(baseline,current,percent,amount)` | 정확 십진 기준/현재/비율/금액 → 초과 여부 | 없음. 기준 0은 현재 비0 여부; 나머지는 절대 비율·금액 모두 엄격 초과. 부작용 없음 |
+| `cells(submissionId)` | 제출 → 보고 항목·연월·시나리오별 Cell 맵 | DB/JSON 오류. 상세 다중집합·OP 매출/비용 근거·정확 합계 읽기. `attributes`, `key` |
+| `attributes(fact)` | 원천행 → 상세ID·종류·계정·팀·과제·분류·거래 의미 | 없음. 위치·수정차수는 제외; `normalizedDescription` |
+| `normalizedDescription(description)` | 원본 설명 → 비교할 설명 | 없음. 확인된 선두 마감 안내와 정확한 ID/수정 메타만 제거; 일반 거래 괄호 문구 보존. 메모리 처리 |
+| `save(submissionId,cell,present,change,gap,context,comparisons,inherited)` | 검토 칸·변경/Gap·문맥·수용 출처 → 반환 없음 | DB 오류. 같은 문맥은 답변 유지, 바뀐 문맥은 새 회차; 기존 회차 보존. 현재 초안 비교행만 교체 |
+| `inherited(previousId,cell)` | 직전본·현재 칸 → 같은 원천 지문의 수용 회차/null | DB 오류. 같은 보고 항목·연월·시나리오·원천 다중집합만 이어받음. 읽기 |
+| `expected(row,cell)` | 요청 문맥·칸 → 현재 전체 스냅샷 포함 여부 | 없음. ESTIMATE→ACTUAL 전환을 삭제 수정으로 만들지 않음 |
+| `submission(id)` | 제출 ID → 제출·요청·계획 연도 문맥 | DB 오류. 읽기 |
+| `complete(id)` | 기준 제출 → 파싱·정책·검증·원천·보고값 무결성 여부 | DB 오류; 검증/JSON 손상은 false. 보존 parser payload를 순수 규칙으로 재평가하고 다음 helper와 대조. 파일 접근 없음 |
+| `intactFacts(submissionId,expected,snapshot)` | 기준 제출·재평가 근거·검증 스냅샷 → 원천 정확 다중집합 동일 여부 | DB/JSON/숫자 오류. 위치·식별·계정·팀/과제·설명·월/시나리오·금액·건수 읽기 대조; 상쇄 변조도 거절 |
+| `integritySignature(fact)` | 원천 셀 → 위치 포함 정확 금액 JSON | 숫자/JSON 오류. 숫자 표현만 정규화; 메모리 처리 |
+| `intactReports(row,expected,snapshot)` | 제출·재평가·고정 보고값 → 조직/항목/기간/합계 그리드 일치 여부 | DB/숫자 오류. 전체 보고 메타 읽기·메모리 비교 |
+| `latestThresholdId(scenario)` | ACTUAL/ESTIMATE → 최신 ID/null | DB 오류. 읽기 |
+| `key(report,year,month,scenario)` | 칸 차원 → 내부 조회키 | 없음. 메모리 문자열 |
+| `diagnostic(code,message)` | 규정 코드·설명 → 비교 ERROR 진단 | 없음. 메모리 객체 |
+| `json(value)` | 값 → JSON | IllegalStateException 직렬화 실패. 외부 부작용 없음 |
+| `number(value)` | JDBC 정수 → long | 타입 오류. 부작용 없음 |
+| `nullableId(value)` | nullable ID → Long/null | 입력 오류. 부작용 없음 |
+| `decimal(value)` | 문자열/JDBC 십진수 → BigDecimal | 형식 오류. 반올림 없음 |
+| `rows(sql,params)` | 고정 SQL·값 → 목록 | DB 오류. 읽기 |
+| `one(sql,params)` | 고정 SQL·값 → 필수행 | DB 오류. 읽기 |
+| `insert(sql,params)` | 고정 INSERT·값 → 생성 ID | DB 오류. 현재 트랜잭션 삽입 |
+
+`Cell`의 자동 접근자는 값만 반환한다. 같은 합계의 원천 변경과 신규 보고 항목 추가도 CHANGE이며 자동 파생 OP 변경만으로 CHANGE를 중복 생성하지 않는다. 기존 보고 항목의 원천이 통째로 사라졌을 때 선택 제거 근거가 없으면 REQUIRED_REPORT_ITEM_REMOVED로 차단한다. 확인할 기준이 없는 경우 실제 0원으로 대체하지 않는다.
+
+### [ReviewService.java](../../backend/src/main/java/io/skala/backend/review/ReviewService.java)
+
+| 함수 | Args → Returns | Raises·Side Effects·호출 |
+| --- | --- | --- |
+| `ReviewService(jdbc,commands,comparisons)` | DB·명령·비교 → 인스턴스 | 없음. 연결만 |
+| `counts(submissionId)` | 제출 → required/unanswered/pendingReview 수 | DB 오류. active 현재 회차 중 CHANGE 또는 Gap만 집계; 읽기 |
+| `revision(submissionId)` | 제출 → 검토 문맥·현재 회차 상태 문자열 | DB/JSON 오류. 제출 stateToken에 소명 변경 연결; 읽기 |
+| `ids(submissionId,unanswered)` | 제출·미답변 한정 여부 → 검토 ID 목록 | DB 오류. 읽기 |
+| `list(actor,query)` | 권한·필터 → 목록·커서 | 입력/커서 오류. 조직 권한 먼저 적용; REPEATABLE_READ 읽기, `view` |
+| `get(actor,reviewId)` | 권한·검토 ID → 전체 상세 | 범위 밖/없는 항목 404. REPEATABLE_READ 읽기, `accessible`, `view` |
+| `evidence(actor,reviewId,query)` | 검토·CHANGE/GAP·basis·페이지 → 전후 합계·차액·다중집합 근거 | 잘못된 비교 선택 422, 권한/페이지 오류. REPEATABLE_READ 읽기, `comparisons.cells`, `evidenceItems` |
+| `evidenceItems(items,side,submission,cell)` | 결과·전후 방향·제출·칸 → 반환 없음 | JSON 오류. semanticAttributes·표시 groupKey·정확 금액·원본 주소를 메모리 목록에 추가 |
+| `answer(actor,reviewId,key,input)` | 소유 조직·검토·멱등키·기대토큰/회차/답변 → 상세 명령응답 | 권한/회차/잠금/문맥/토큰 충돌. DRAFT 답변 또는 PENDING 보완 미답변만 저장; 같은 답변자·내용 재전송은 시각 보존. `commands.execute`, `lock` |
+| `decide(actor,reviewId,key,input)` | PLANNER·검토·키·토큰/회차/ACCEPT 또는 REQUEST_CHANGES → 상세응답 | 권한/입력/회차/상태 충돌. ACCEPT 메타 기록 또는 이전 REJECTED+새 미답변 회차 원자 생성 |
+| `lock(actor,reviewId)` | 행위자·검토 → 최신 내부행 | 권한/제외 대상/초안 문맥 충돌. 조직→제출→검토 잠금; 종료 제출과 승인 경합 방지 |
+| `view(row,detail)` | 내부행·상세 여부 → ReviewItemView | DB 오류. 목록 현재 회차, 상세 전체 회차·고정 비교; `current`, `token`, `explanation` |
+| `explanation(e)` | 회차 → 행위자·시각·이어받은 버전 포함 DTO | DB 오류. 직접 출처와 실제 YYYY-PLAN-NN/연월 버전 표시; 읽기 |
+| `actor(id)` | nullable 사용자 ID → ActorRef/null | DB 오류. 읽기 |
+| `current(row)` | 검토 → 현재 회차 | DB 오류. 읽기 |
+| `token(row)` | 검토 → 현재 상태·회차 해시 | DB/JSON 오류. 읽기 |
+| `assertToken(row,expected)` | 검토·기대값 → 반환 없음 | RESOURCE_CHANGED 409. 읽기 |
+| `round(row,round)` | 검토·기대회차 → 반환 없음 | EXPLANATION_ROUND_CHANGED 409. 부작용 없음 |
+| `accessible(actor,reviewId)` | 권한·ID → 내부행 | 범위 밖/없는 항목 404. 읽기 |
+| `checkQuery(query,allowed)` | 필터·허용키 → 반환 없음 | INVALID_REQUEST 400. 부작용 없음 |
+| `filter(key,value)` | 허용 필터 → 타입 검증값 | 입력 오류. 부작용 없음 |
+| `limit(query)` | 페이지 필터 → 1~100 | 입력 오류. 부작용 없음 |
+| `scope(actor,query,name)` | 권한·필터·조회명 → 커서 범위 | JSON 오류. 메모리 처리 |
+| `fingerprint(value)` | 입력 → SHA256 | JSON 오류. 부작용 없음 |
+| `result(value)` | DTO → 200 명령응답 | JSON 오류. 부작용 없음 |
+| `rows(sql,params)` | 고정 SQL·값 → 행목록 | DB 오류. 읽기 |
+| `number(value)` | JDBC 정수 → long | 타입 오류. 부작용 없음 |
+| `nullable(value)` | nullable 정수 → Long/null | 타입 오류. 부작용 없음 |
+| `invalid(message)` | 설명 → 400 예외 | 없음. 객체 생성만 |
+| `conflict(code,message)` | 코드·설명 → 409 예외 | 없음. 객체 생성만 |
+| `selection()` | 없음 → INVALID_COMPARISON_SELECTION 422 | 없음. 객체 생성만 |
+
+`AnswerInput`·`DecisionInput`은 Bean Validation으로 필수 문자열·양수 회차·최대 4,000자 답변/사유를 제한한다. 자동 record 접근자는 외부 부작용이 없다. 클라이언트는 검토자·시각·수용 상태·회차 증가·이어받은 출처를 지정하지 못한다.
+
+### [ReviewController.java](../../backend/src/main/java/io/skala/backend/review/ReviewController.java)
+
+| 함수 | Args → Returns | Raises·Side Effects·호출 |
+| --- | --- | --- |
+| `ReviewController(service,actors)` | 검토·인증 → 인스턴스 | 없음. 연결만 |
+| `list(query)` | 필터 → 검토 페이지 | 인증/입력 오류. `service.list`, 읽기 |
+| `get(reviewId,query)` | 검토·빈 쿼리 → 상세 | 인증/권한/입력/404. `service.get`, 읽기 |
+| `evidence(reviewId,query)` | 검토·비교 선택 → 근거 페이지 | 인증/권한/비교 선택/커서 오류. `service.evidence`, 읽기 |
+| `answer(reviewId,key,input,query)` | 검토·키·답변·빈 쿼리 → HTTP JSON | 입력/권한/상태 충돌. `service.answer`, DB 명령 |
+| `decide(reviewId,key,input,query)` | 검토·키·판단·빈 쿼리 → HTTP JSON | 입력/권한/상태 충돌. `service.decide`, DB 명령 |
+| `response(result)` | 명령결과 → JSON 응답 | 없음. Idempotency-Replayed 헤더 복원 |
+
+### [GapThresholdService.java](../../backend/src/main/java/io/skala/backend/review/GapThresholdService.java)
+
+| 함수 | Args → Returns | Raises·Side Effects·호출 |
+| --- | --- | --- |
+| `GapThresholdService(jdbc,commands,comparisons,reviews,mapper)` | DB·명령·비교·표시·JSON → 인스턴스 | 없음. 연결만 |
+| `current(actor)` | 인증 사용자 → nullable ACTUAL/ESTIMATE 기준·stateToken | DB/JSON 오류. REPEATABLE_READ 읽기; `latest`, `view`, `fingerprint` |
+| `apply(actor,key,input)` | PLANNER·멱등키·기대토큰/시나리오/기준 문자열 → 생성 Threshold | 권한/입력/토큰 충돌. `commands.execute` 안 guard 잠금, 기존 기준 UPDATE 없이 새 이력·멱등 응답 INSERT; 201/Location 없음 |
+| `preview(actor,input)` | PLANNER·월 요청·시나리오·후보 기준 → 평가/초과/제외 칸·조직 수·기준 제출 목록·시각 | 권한/입력 오류. REPEATABLE_READ; 최신 완료본 전체 OP를 금융값·고정 문맥으로 재구성, 중복 집계/상태 쓰기 없음 |
+| `fixedContext(submission)` | 제출 → 저장된 비교 문맥/null | DB 오류; JSON 손상은 null. 읽기 |
+| `latest(scenario)` | 구분 → 최신 기준행/null | DB 오류. 읽기 |
+| `view(row)` | 기준행 → 금액 문자열·행위자·시각 DTO | DB 오류. `reviews.actor`, 읽기 |
+| `validate(scenario,percent,amount)` | 구분·십진 문자열 → 반환 없음 | 종류/정밀도/음수/형식 오류 400. `decimal`; 부작용 없음 |
+| `decimal(input)` | 0 이상 십진 문자열 → NUMERIC(30,6) 적합 BigDecimal | 정수24자리·소수6자리 초과/형식 오류. 반올림 없음 |
+| `rows(sql,params)` | 고정 SQL·값 → 행목록 | DB 오류. 읽기 |
+| `fingerprint(value)` | DTO → SHA256 | JSON 오류. 부작용 없음 |
+| `invalid(message)` | 설명 → 400 예외 | 없음. 객체 생성만 |
+
+`ApplyInput`·`PreviewInput`의 필드는 Bean Validation의 필수 문자열이며 자동 접근자는 값만 반환한다. preview는 해당 요청 최신 완료본의 저장 정책·비교 문맥·기준 근거가 불완전하면 excludedItemCount와 원인별 exclusions로 표시한다. 기존 미초과 때문에 review_item이 없던 OP도 평가하며 기존 기준·소명·승인을 수정하지 않는다.
+
+### [GapThresholdController.java](../../backend/src/main/java/io/skala/backend/review/GapThresholdController.java)
+
+| 함수 | Args → Returns | Raises·Side Effects·호출 |
+| --- | --- | --- |
+| `GapThresholdController(service,actors,reviews)` | 기준·인증·쿼리 검증 → 인스턴스 | 없음. 연결만 |
+| `current(query)` | 빈 쿼리 → 현재 기준 쌍 | 인증/입력 오류. GET `/gap-thresholds/current`, `service.current`, 읽기 |
+| `preview(input,query)` | 후보·빈 쿼리 → 영향 수치 | 권한/입력 오류. POST `/preview`, 멱등키 없는 읽기 전용 계산 |
+| `apply(key,input,query)` | 키·기준·빈 쿼리 → 201 또는 멱등 재전달 | 권한/입력/상태 충돌. POST `/gap-thresholds`, `service.apply`, 헤더 복원 |
+
+### 수정·월간 검토 회귀 테스트 추가
+
+| 테스트 함수 | Args → Returns | Raises·Side Effects·검증 범위 |
+| --- | --- | --- |
+| `FinancialValidationRulesTest.monthlyScenarioSelectionRequiresEveryActualAndEstimateMonth()` | 없음 → 없음 | 검증 실패. 메모리 JSON; 요청 연도의 ACTUAL/ESTIMATE 선택·전체 월 필수·누락을 0으로 보완하지 않음 |
+| `FinancialValidationRulesTest.closingMetadataDoesNotChangeFingerprintButBusinessDescriptionDoes()` | 없음 → 없음 | 검증 실패. 메모리 JSON; 마감·수정 메타 제외와 실제 거래 설명 보존 |
+| `SubmissionIntegrationTests.rejectionPreservesHistoryAndAmountChangesStillRequireExplanation()` | 없음 → 없음 | HTTP/DB/JSON 오류. 합성 H2; 재제출 변경 소명·권한·멱등·전후 근거·승인 전 수용 필수·보완 새 회차·지난 회차 거절·승인 후 재요청 거절 |
+| `SubmissionIntegrationTests.monthlyActualGapUsesFixedPlanAndRequiresAcceptedExplanation()` | 없음 → 없음 | HTTP/DB/JSON 오류. 합성 H2; 고정 계획 대비 월 실적 Gap·DRAFT 기준 변경 STALE/재검증·PENDING 기준 고정·수용 후 월마스터 CREATED·미리보기 |
+| `SubmissionIntegrationTests.offsettingSourceChangesRequireExplanationAndRemovedReportBlocks()` | 없음 → 없음 | HTTP/검증 오류. 합성 H2; 전후 합계 0차액이어도 원천 추가/상쇄 CHANGE, 파생 OP 중복 수정 없음, 통째 보고항목 삭제 차단 |
+| `SubmissionIntegrationTests.addedReportRequiresExplanationAndBaselineIntegrityDetectsOffsettingMutation()` | 없음 → 없음 | HTTP/DB/검증 오류. 합성 H2; 신규 보고항목 추가 CHANGE·기준 원본 금액 변조 및 파싱 시도 변경 검출 |
+| `SubmissionIntegrationTests.adapter(submission)` | 제출 → 합성 adapter JSON | DB/JSON 오류. H2 읽기 |
+| `SubmissionIntegrationTests.saveAdapter(submission,parsed)` | 제출·합성 근거 → 없음 | DB/JSON 오류. 테스트 H2 payload만 변경 |
+| `SubmissionIntegrationTests.reviewView(reviewId)` | 항목 → 상세 JSON | HTTP/JSON 오류. H2 읽기 |
+| `SubmissionIntegrationTests.answerReview(reviewId,answer,key)` | 항목·답변·키 → 없음 | HTTP 오류. 최신 회차 답변을 합성 H2에 저장 |
+| `SubmissionIntegrationTests.reviewDecision(reviewId,action,note,key)` | 항목·판단·사유·키 → 검증 가능한 응답 | HTTP 오류. 합성 소명 판단 |
+| `SubmissionIntegrationTests.applyThreshold(scenario,percent,amount,key)` | 기준 문자열·키 → 없음 | HTTP 오류. 현재 토큰으로 합성 기준 적용 |
+| `ReviewComparisonRulesTest.strictAndThresholdsAndZeroBaselinePreserveExactDecimals()` | 없음 → 없음 | 검증 실패. DB 없는 메모리 계산; strict AND·음수 기준·기준 0 특례·큰 십진수 경계 |
+| `ReviewComparisonRulesTest.onlyExactGeneratedMetadataIsRemoved()` | 없음 → 없음 | 검증 실패. 메모리 문자열; 확인된 생성 메타만 제거하고 거래의 마감/ID 괄호 보존 |
+| `ReviewComparisonRulesTest.exceeds(baseline,current,percent,amount)` | 테스트 십진 문자열 → 초과 여부 | 형식 오류. 메모리 계산 helper |
+
+2026-11-16 통합 검증 기록: 부모 에이전트가 기존 승인된 backend 빌드 경로에서 전체 Java 테스트를 실행하여 **총 133개 중 132개 통과, 1개 건너뜀, 실패·오류 0개**를 확인했다. 건너뛴 1개는 명시적으로 켜야 하는 기본 더미 원본 검증이다. 이 기록은 이 문서의 테스트 함수 명세와 별개인 해당 실행 결과이며, 이후 실제 PostgreSQL·01 시나리오 17조직 검증 결과를 대신하지 않는다. 코드 작성 담당자는 빌드·실DB 변경·커밋·푸시·PR을 실행하지 않았다.

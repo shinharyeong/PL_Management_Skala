@@ -9,7 +9,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** 명시한 local+demo에서만 합성 조직·사용자·연간 수집 요청을 처음 한 번 준비한다. */
+/** 명시한 local+demo에서만 사업 조직·담당자와 연간 수집 요청을 준비하고 과거 데모 조직은 비활성화한다. */
 @Component
 @Profile("local & demo")
 public class DemoBootstrap implements ApplicationRunner {
@@ -29,17 +29,22 @@ public class DemoBootstrap implements ApplicationRunner {
         this.submissions = submissions;
     }
 
-    /** 기존 자료·요청 대상을 변경하지 않고 기본 체험과 17개 사업부 계정을 준비한다.
+    /** 17개 사업부를 준비하고 이력을 보존한 채 미확정·미발행 연간 요청에서 과거 데모 대상을 제외한다.
      * Args: arguments 시작 인자이며 사용하지 않음. Returns: 없음.
-     * Raises: IllegalStateException 기존 자료 충돌, 업무/DB 오류. Side Effects: 없던 DB 행만 생성.
+     * Raises: IllegalStateException 기존 자료 충돌, 업무/DB 오류.
+     * Side Effects: 하나의 DB 트랜잭션에서 사업 조직·계정·기본 요청 생성, 과거 데모 비활성화, 수집 대상 보정.
      */
     @Override
     public void run(ApplicationArguments arguments) {
         transactions.executeWithoutResult(transaction -> {
-            long organization = organization("D100", "네트워크인프라부문");
-            long other = organization("D200", "미디어사업부");
             user(accounts.email("PLANNER"), "PLANNER", "경영기획 담당자 (데모)", null);
-            user(accounts.email("ORG_MANAGER"), "ORG_MANAGER", "조직 담당자 (데모)", organization);
+            for (int index = 0; index < DemoAccounts.ORGANIZATION_CODES.size(); index++) {
+                String code = DemoAccounts.ORGANIZATION_CODES.get(index);
+                String name = "사업부" + (index + 1);
+                long organizationId = organization(code, name);
+                user(accounts.organizationEmail(code), "ORG_MANAGER", name + " 담당자 (데모)", organizationId);
+            }
+            retireLegacyOrganizations();
             var planner = accounts.actor("PLANNER");
             var existing = jdbc.sql("SELECT id,type,requested_by FROM submission_request WHERE period_key='2027-PLAN'")
                     .query().listOfRows();
@@ -49,20 +54,50 @@ public class DemoBootstrap implements ApplicationRunner {
                                 "체험용 2027 연간 계획입니다. 합성 양식을 내려받아 파싱을 확인하세요.", null));
             } else {
                 var request = existing.getFirst();
-                long targets = jdbc.sql("SELECT COUNT(*) FROM request_target WHERE request_id=? AND organization_id IN (?,?)")
-                        .params(request.get("id"), organization, other).query(Long.class).single();
                 if (!"ANNUAL_PLAN".equals(request.get("type"))
-                        || !planner.id().equals(request.get("requested_by").toString()) || targets != 2) {
+                        || !planner.id().equals(request.get("requested_by").toString())) {
                     throw new IllegalStateException("기존 2027 요청을 데모 요청으로 변경할 수 없습니다.");
                 }
             }
-            for (int index = 0; index < DemoAccounts.ORGANIZATION_CODES.size(); index++) {
-                String code = DemoAccounts.ORGANIZATION_CODES.get(index);
-                String name = "사업부" + (index + 1);
-                long organizationId = organization(code, name);
-                user(accounts.organizationEmail(code), "ORG_MANAGER", name + " 담당자 (데모)", organizationId);
-            }
+            reconcileCollectingTargets();
         });
+    }
+
+    /** 과거 체험 조직과 그 소속 계정의 접근을 막고 원본·제출·외래 키는 보존한다.
+     * Args: 없음. Returns: 없음. Raises: DB 오류.
+     * Side Effects: 기존 D100/D200 조직 및 소속 사용자 active를 FALSE로 변경하며 행은 삭제하지 않는다.
+     */
+    private void retireLegacyOrganizations() {
+        jdbc.sql("""
+                UPDATE app_user SET active=FALSE
+                WHERE active=TRUE AND organization_id IN (SELECT id FROM organization WHERE code IN ('D100','D200'))
+                """).update();
+        jdbc.sql("UPDATE organization SET active=FALSE WHERE active=TRUE AND code IN ('D100','D200')").update();
+    }
+
+    /** 미확정·미발행 연간 요청에서 과거 데모 대상만 제외하고 누락된 사업 조직 대상을 추가한다.
+     * Args: 없음. Returns: 없음. Raises: DB 오류.
+     * Side Effects: 수집 중 요청의 대상에만 UPDATE/INSERT; 제출·원본·확정 계획·발행 마스터는 변경하지 않는다.
+     */
+    private void reconcileCollectingTargets() {
+        var requests = jdbc.sql("""
+                SELECT r.id FROM submission_request r JOIN annual_plan p ON p.id=r.annual_plan_id
+                WHERE r.type='ANNUAL_PLAN' AND p.status='COLLECTING'
+                  AND NOT EXISTS (SELECT 1 FROM annual_master m WHERE m.request_id=r.id)
+                """).query(Long.class).list();
+        for (Long requestId : requests) {
+            jdbc.sql("""
+                    UPDATE request_target SET excluded=TRUE WHERE request_id=? AND excluded=FALSE
+                    AND organization_id IN (SELECT id FROM organization WHERE code IN ('D100','D200'))
+                    """).param(requestId).update();
+            for (String code : DemoAccounts.ORGANIZATION_CODES) {
+                jdbc.sql("""
+                        INSERT INTO request_target(request_id,organization_id)
+                        SELECT ?,o.id FROM organization o WHERE o.code=? AND o.active=TRUE
+                        AND NOT EXISTS (SELECT 1 FROM request_target t WHERE t.request_id=? AND t.organization_id=o.id)
+                        """).params(requestId, code, requestId).update();
+            }
+        }
     }
 
     /** 동일한 조직은 재사용하고 코드 충돌은 덮어쓰지 않는다.

@@ -24,18 +24,18 @@ import org.springframework.stereotype.Component;
 @Component
 @Profile("local & demo")
 public class DemoAccounts {
+    public static final String DEFAULT_ORGANIZATION_CODE = "F10";
     public static final List<String> ORGANIZATION_CODES = List.of(
             "F10", "F12", "F20", "F40", "F39", "F50", "F16", "F13", "F25",
             "F43", "F42", "F44", "F73", "F38", "F66", "F36", "F37");
     private final JdbcClient jdbc;
     private final String plannerEmail;
-    private final String organizationEmail;
     private final String plannerToken;
     private final String organizationToken;
     private final Map<String, String> organizationTokens = new LinkedHashMap<>();
     private final Map<String, byte[]> organizationDigests = new LinkedHashMap<>();
 
-    /** 개발 체험용 두 자격을 검증하고 허용 사업부별 임시 자격을 발급한다.
+    /** 환경 자격을 검증하고 F10에 환경 토큰, 나머지 사업부에 임시 토큰을 고정한다.
      * Args: jdbc DB, environment 서버 환경. Returns: 없음.
      * Raises: IllegalStateException 누락·충돌 자격·필수 암호화 실패.
      * Side Effects: 환경 읽기·메모리 난수/다이제스트 생성; 토큰 출력·DB 저장 없음. 재시작하면 추가 자격은 만료된다.
@@ -43,11 +43,11 @@ public class DemoAccounts {
     public DemoAccounts(JdbcClient jdbc, Environment environment) {
         this.jdbc = jdbc;
         plannerEmail = required(environment, "app.local-auth.planner-email");
-        organizationEmail = required(environment, "app.local-auth.organization-email");
+        String configuredOrganizationEmail = required(environment, "app.local-auth.organization-email");
         plannerToken = required(environment, "app.local-auth.planner-token");
         organizationToken = required(environment, "app.local-auth.organization-token");
-        if (plannerEmail.equalsIgnoreCase(organizationEmail) || plannerEmail.length() > 320
-                || organizationEmail.length() > 320 || plannerToken.equals(organizationToken)
+        if (plannerEmail.equalsIgnoreCase(configuredOrganizationEmail) || plannerEmail.length() > 320
+                || configuredOrganizationEmail.length() > 320 || plannerToken.equals(organizationToken)
                 || plannerToken.length() < 32 || organizationToken.length() < 32
                 || plannerToken.chars().anyMatch(Character::isWhitespace)
                 || organizationToken.chars().anyMatch(Character::isWhitespace)) {
@@ -55,24 +55,23 @@ public class DemoAccounts {
         }
         SecureRandom random = new SecureRandom();
         for (String code : ORGANIZATION_CODES) {
-            if (plannerEmail.equalsIgnoreCase(organizationEmail(code))
-                    || organizationEmail.equalsIgnoreCase(organizationEmail(code))) {
+            if (plannerEmail.equalsIgnoreCase(organizationEmail(code))) {
                 throw new IllegalStateException("설정 이메일과 사업부 체험 이메일이 충돌합니다.");
             }
-            String value = randomToken(random);
+            String value = code.equals(DEFAULT_ORGANIZATION_CODE) ? organizationToken : randomToken(random);
             organizationTokens.put(code, value);
             organizationDigests.put(code, digest(value));
         }
     }
 
-    /** 선택한 체험 역할의 설정 이메일을 반환한다.
+    /** 기획자는 설정 이메일, 기본 담당자는 F10 전용 이메일을 반환한다.
      * Args: role PLANNER/ORG_MANAGER. Returns: 이메일.
      * Raises: IllegalArgumentException 미지원 역할. Side Effects: 없음.
      */
     public String email(String role) {
         return switch (role) {
             case "PLANNER" -> plannerEmail;
-            case "ORG_MANAGER" -> organizationEmail;
+            case "ORG_MANAGER" -> organizationEmail(DEFAULT_ORGANIZATION_CODE);
             default -> throw new IllegalArgumentException("지원하지 않는 체험 역할입니다.");
         };
     }
@@ -100,15 +99,15 @@ public class DemoAccounts {
 
     /** 선택한 허용 조직에 고정된 개발 자격만 반환한다.
      * Args: role 체험 역할, organizationCode 생략 가능한 조직 코드.
-     * Returns: 기존 두 토큰 또는 시작 시 난수로 발급한 사업부별 토큰.
+     * Returns: 기획자·F10의 환경 토큰 또는 시작 시 난수로 발급한 나머지 사업부 토큰.
      * Raises: ApiException 잘못된 역할·조직 조합. Side Effects: 없음; 토큰 로깅 금지.
      */
     public String token(String role, String organizationCode) {
         String code = selectedOrganization(role, organizationCode);
-        return code == null || code.equals("D100") ? token(role) : organizationTokens.get(code);
+        return code == null ? token(role) : organizationTokens.get(code);
     }
 
-    /** 추가 사업부 토큰을 비교하고 고정 역할·조직과 현재 DB 계정이 같은지 재검증한다.
+    /** F10 환경 토큰과 나머지 사업부 토큰을 고정 역할·조직의 현재 DB 계정에 대조한다.
      * Args: candidate Bearer 후보 문자열. Returns: 일치하는 허용 Actor 또는 null.
      * Raises: BadCredentialsException 계정·역할·조직·활성 불일치, IllegalStateException 필수 해시 실패, DB 오류.
      * Side Effects: 메모리 비교·DB 읽기; 이전 토큰으로 변경된 소속이나 기획 권한을 얻을 수 없다.
@@ -127,7 +126,7 @@ public class DemoAccounts {
         }
     }
 
-    /** 설정 이메일의 활성 DB 역할·조직이 체험 계약과 같은지 다시 확인한다.
+    /** 기본 체험 계정의 활성 DB 역할·조직이 기획자 또는 F10 계약과 같은지 다시 확인한다.
      * Args: role 체험 역할. Returns: 토큰이 없는 Actor.
      * Raises: IllegalStateException 사용자·조직 충돌, DB 오류. Side Effects: DB 읽기.
      */
@@ -143,7 +142,7 @@ public class DemoAccounts {
      */
     public Actor actor(String role, String organizationCode) {
         String code = selectedOrganization(role, organizationCode);
-        String selectedEmail = code == null || code.equals("D100") ? email(role) : organizationEmail(code);
+        String selectedEmail = code == null ? email(role) : organizationEmail(code);
         var rows = jdbc.sql("""
                 SELECT u.id,u.email,u.name,u.role,u.organization_id,u.active,
                        o.code AS organization_code,o.name AS organization_name,o.active AS organization_active
@@ -163,7 +162,7 @@ public class DemoAccounts {
     }
 
     /** 조직 담당자에게만 활성 허용 계정의 조직 선택 목록을 반환한다.
-     * Args: role 검증된 체험 역할. Returns: D100 다음 사업부1~17 순서의 활성 조직 목록; 기획자는 빈 목록.
+     * Args: role 검증된 체험 역할. Returns: 사업부1~17 순서의 활성 조직 목록; 기획자는 빈 목록.
      * Raises: DB 오류. Side Effects: DB 읽기; 이메일·토큰은 반환하지 않는다.
      */
     public List<Organization> organizations(String role) {
@@ -172,12 +171,9 @@ public class DemoAccounts {
                 SELECT o.id,o.code,o.name,u.email FROM app_user u JOIN organization o ON o.id=u.organization_id
                 WHERE u.role='ORG_MANAGER' AND u.active=TRUE AND o.active=TRUE
                 """).query().listOfRows();
-        var codes = new ArrayList<String>();
-        codes.add("D100");
-        codes.addAll(ORGANIZATION_CODES);
         var result = new ArrayList<Organization>();
-        for (String code : codes) {
-            String expectedEmail = code.equals("D100") ? organizationEmail : organizationEmail(code);
+        for (String code : ORGANIZATION_CODES) {
+            String expectedEmail = organizationEmail(code);
             for (var row : rows) {
                 if (code.equals(row.get("code")) && expectedEmail.equals(row.get("email"))) {
                     result.add(new Organization(row.get("id").toString(), code, row.get("name").toString()));
@@ -189,14 +185,14 @@ public class DemoAccounts {
 
     /** 역할과 명시적 조직 선택을 허용 목록에 제한한다.
      * Args: role PLANNER/ORG_MANAGER, code 생략 가능한 조직 코드.
-     * Returns: 기획자는 null, 기본 담당자는 D100, 추가 담당자는 허용 코드.
+     * Returns: 기획자는 null, 기본 담당자는 F10, 명시한 담당자는 허용 사업부 코드.
      * Raises: ApiException 기획자의 조직 지정 또는 알 수 없는 역할·코드에 대한 400.
      * Side Effects: 없음.
      */
     private String selectedOrganization(String role, String code) {
         if ("PLANNER".equals(role) && code == null) return null;
         if ("ORG_MANAGER".equals(role)) {
-            if (code == null || code.equals("D100")) return "D100";
+            if (code == null) return DEFAULT_ORGANIZATION_CODE;
             if (ORGANIZATION_CODES.contains(code)) return code;
         }
         throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "체험 역할과 조직 선택을 확인하세요.");

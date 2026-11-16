@@ -3,7 +3,7 @@
 ## 적용 범위
 
 이 문서는 구현된 개발 체험 API와 읽기 전용 파싱 미리보기 계약을 설명한다.
-업무 API의 연간 검증·최종 제출·적재 조회·승인·반려는 [API 명세](api-contract.md)에 연결되어 있다. 수정 소명·연간 확정·공식 마스터는 후속 범위다.
+업무 API의 연간 검증·최종 제출·적재 조회·승인·반려는 [API 명세](api-contract.md)에 연결되어 있다. 사업 조직 전원 승인 시 연간 계획 마스터를 자동 발행한다. 수정 소명·Contingency를 포함한 연간 확정은 후속 범위다.
 `SUCCEEDED`는 파서 실행 결과이며, 업무 검증·승인 성공을 뜻하지 않는다.
 파싱 직후 제출은 `DRAFT`, 업무 검증은 `NOT_RUN`, `readiness.canSubmit=false`다. 이후 담당자가 업무 검증을 실행하고 조건을 충족한 초안을 명시적으로 제출하면 PENDING이 된다. 개발 양식 API가 업무 검증을 자동으로 통과시키지는 않는다.
 
@@ -19,25 +19,28 @@
 
 | 종류 | 내용 |
 | --- | --- |
-| 기본 조직 | D100 네트워크인프라부문, D200 미디어사업부 |
-| 추가 조직 | 사업부1~17: F10, F12, F20, F40, F39, F50, F16, F13, F25, F43, F42, F44, F73, F38, F66, F36, F37 순서 |
-| 사용자 | 환경의 PLANNER 1명·D100 ORG_MANAGER 1명과 추가 사업부별 ORG_MANAGER 17명. 추가 이메일은 `demo-f10@example.test` 형식 |
+| 사업 조직 | 사업부1~17: F10, F12, F20, F40, F39, F50, F16, F13, F25, F43, F42, F44, F73, F38, F66, F36, F37 순서 |
+| 사용자 | 환경의 PLANNER 1명과 사업부별 ORG_MANAGER 17명. 담당자 이메일은 `demo-f10@example.test` 형식 |
+| 기본 조직 담당자 | F10 사업부1의 `demo-f10@example.test` |
 | 연간 요청 | 2027 ANNUAL_PLAN, 연간 계획 COLLECTING, 요청 OPEN |
-| 요청 대상 | 요청 생성 시점의 활성 조직 전체. 기본 요청 처리 후 추가 17개 조직을 준비하며 기존 대상은 바꾸지 않음 |
+| 요청 대상 | 17개 사업 조직을 먼저 준비한 뒤 요청 생성 시점의 활성 조직 전체를 등록. 초기 DB에서는 17개 |
 
 요청은 기존 `SubmissionService.createRequest`와 고정 멱등키를 사용해 만든다.
-재시작 시 동일한 조직·사용자·요청을 재사용한다. 기존 이름·역할·조직·활성 상태가 충돌하면
-시작을 실패시키며 기존 데이터를 덮어쓰지 않는다. 기존 요청은 생성자·유형·두 조직의 대상 등록을
-확인하고 상태를 다시 열거나 변경하지 않는다. 제출·승인·마스터 행은 만들지 않는다.
-빈 DB에서는 기본 2027 요청의 대상이 D100·D200 두 조직으로 고정된다. 추가 조직을 준비한 뒤
-새 요청을 생성하면 활성 조직 19개가 대상이다. D100·D200를 제외하거나 기존 요청에 17개를
-끼워 넣지 않는다. 2026 요청은 자동 생성하지 않으며 기획자 업무 API로 명시적으로 생성한다.
+재시작 시 동일한 조직·사용자·요청을 재사용한다. 기존 사업 조직·사용자의 이름·역할·조직·활성 상태가
+충돌하면 시작을 실패시키며 해당 계정을 덮어쓰지 않는다. 기본 2027 요청은 생성자·유형을 확인하며
+닫힌 요청을 다시 열지 않는다. 제출·승인·마스터 행은 부트스트랩에서 만들지 않는다.
+
+기존 D100·D200 조직과 소속 계정은 비활성화하며 새 DB에는 생성하지 않는다. 기존 제출·원본·대상 행을
+삭제하지 않아 이력의 참조를 보존한다. 아직 COLLECTING이고 발행된 연간 마스터가 없는 연간 요청은
+D100·D200 대상을 `excluded=true`로 제외하고 누락된 17개 사업 조직 대상을 추가한다. 확정 계획이나
+이미 마스터를 발행한 요청의 대상 구성은 바꾸지 않는다. 이 보정은 재시작해도 중복 대상을 만들지 않는다.
+2026 요청은 자동 생성하지 않으며 기획자 업무 API로 명시적으로 생성한다.
 조직·계정 상수는 검토한 `Data/dummy/manifest_baseline.json`의 코드·이름을 반영한 값이며
 서버 기동 시 Data 경로에 접근하지 않는다.
 
 | 설정 | 의미 |
 | --- | --- |
-| `app.local-auth.planner-email` / `organization-email` | 서로 다른 개발 사용자 이메일 |
+| `app.local-auth.planner-email` / `organization-email` | 서로 다른 개발 사용자 이메일. demo 담당자는 F10 전용 이메일로 고정하며 `organization-email`은 local-only 인증에서 사용 |
 | `app.local-auth.planner-token` / `organization-token` | 서로 다른 공백 없는 32자 이상 개발 Bearer |
 | `app.demo.frontend-origin` | 허용하는 루프백 HTTP Origin의 쉼표 구분 목록 |
 | `APP_DEMO_FRONTEND_ORIGIN` | Compose 및 `application-demo.yml`의 Origin 환경변수 |
@@ -63,14 +66,14 @@ Host: localhost:5173
 ```
 
 `role`은 `PLANNER` 또는 `ORG_MANAGER`다. 조직 담당자는 선택적인 `organizationCode`를 보낼 수 있다.
-생략하면 기존 D100이며, `{"role":"ORG_MANAGER","organizationCode":"F10"}`은 사업부1을 선택한다.
-허용 코드는 D100과 위의 17개 사업부 코드뿐이다. D200는 연결된 담당자가 없어 선택할 수 없다.
+생략하면 F10이며, `{"role":"ORG_MANAGER","organizationCode":"F10"}`은 사업부1을 선택한다.
+허용 코드는 위의 17개 사업부 코드뿐이다. D100·D200는 선택할 수 없다.
 기획자의 조직 지정, 빈 문자열, 허용 목록 밖 코드는 400 `INVALID_REQUEST`다.
 
 응답은 `token` 문자열, 현재 DB의 `actor`, `organizations` 배열이다.
 `actor`는 `id`, `email`, `name`, `role`, `organization`을 가지며 기획자의 `organization`은 null이다.
 담당자의 `organization`은 `id`, `code`, `name`이다. 모든 ID는 문자열이다.
-`organizations` 각 항목은 `id, code, name`이며 조직 담당자에게 D100 다음 사업부1~17 순서의
+`organizations` 각 항목은 `id, code, name`이며 조직 담당자에게 사업부1~17 순서의
 활성 허용 계정만 제공한다. 기획자는 빈 배열을 받는다. 목록 조회용 GET은 추가하지 않는다.
 조직 전환은 새 계정 세션을 선택하는 동작이며 기존 사용자의 DB 소속이나 이전 토큰의 조직을 바꾸지 않는다.
 
@@ -79,12 +82,12 @@ Origin·Host 헤더는 각각 하나만 있어야 하고 허용 목록과 정확
 JSON 외 Content-Type은 415다. 응답은 `private, no-store`이며 쿠키를 만들지 않는다.
 프런트엔드는 토큰을 메모리에만 보관하고 이후 요청의 `Authorization: Bearer …`에 전달한다.
 브라우저를 새로고침하면 역할을 다시 선택한다.
-기존 PLANNER·D100 토큰은 환경 설정을 그대로 사용한다. 추가 17개 토큰은 서버 시작 시
+PLANNER·F10 토큰은 환경 설정을 사용한다. 나머지 16개 사업부 토큰은 서버 시작 시
 `SecureRandom`의 32바이트로 각각 발급해 메모리에만 보관한다. 다른 역할의 공개된 토큰에서
 파생하지 않으며 SHA-256 다이제스트를 constant-time 비교한다. 추가 토큰은 백엔드 재시작 시
 만료되므로 조직을 다시 선택해야 한다. 매 요청에서 고정한 ORG_MANAGER 역할·조직 코드와
 현재 DB 활성 상태를 확인한다. 소속·역할·코드가 바뀐 이전 토큰은 401이며 새 권한으로 전이되지 않는다.
-인증된 추가 조직 Actor도 업무 조회 직전에 사용자 ID·역할·조직 ID·코드를 재검증한다.
+인증된 사업 조직 Actor도 업무 조회 직전에 사용자 ID·역할·조직 ID·코드를 재검증한다.
 
 기본 더미의 원래 파일명은 업로드 계약명과 다르다. 업무 접수 API는 계속
 `F10_2026-PLAN.xlsx`처럼 선택 조직·요청 기간과 정확히 일치하는 multipart 파일명을 요구한다.
@@ -98,7 +101,7 @@ JSON 외 Content-Type은 415다. 응답은 `private, no-store`이며 쿠키를 �
 다른 유형은 422 `DEMO_TEMPLATE_UNSUPPORTED_REQUEST`, 기획자는 403,
 없는 요청·대상 외 요청은 기존 조회 계약에 따라 처리한다.
 
-응답은 XLSX attachment이며 파일명은 조직과 요청 연도에서 결정한다. 예: `D100_2027-PLAN.xlsx`.
+응답은 XLSX attachment이며 파일명은 조직과 요청 연도에서 결정한다. 예: `F10_2027-PLAN.xlsx`.
 양식은 `매출`, `비용`, `조직코드`, `예산코드`, `보고` 5개 시트다.
 매출·비용 상세에는 1~12월 PLAN, 단위 원, 합성 상세 ID·개정번호와 코드 근거를 포함한다.
 금액은 0과 소수 정밀도를 확인하는 합성 값이다. 보고 시트는 요청 조직·연도의 12개월 헤더와
@@ -182,8 +185,8 @@ Python 경계에서는 선택 필드로 받되 존재하면 0 이상의 Java int
 | --- | --- |
 | `demo/DemoAccounts` 생성자, `required`, `email`, `organizationEmail`, `token` 오버로드, `actor` 오버로드 | 기존 자격·허용 코드 검증 → 고정 역할·조직의 DB Actor. DB·파일 쓰기 없음 |
 | `DemoAccounts.selectedOrganization`, `organizations` | 선택 역할·코드 검증 및 활성 허용 계정 목록. 기획자는 빈 목록; 기존 소속을 수정하지 않음 |
-| `DemoAccounts.randomToken`, `digest`, `actorForOrganizationToken` | 시작 시 17개 난수 자격 발급 → 다이제스트 비교 → 고정 역할·조직 재확인. 메모리·DB 읽기만 사용 |
-| `demo/DemoBootstrap` 생성자, `run`, `organization`, `user` | ApplicationRunner → 합성 자료 검사/INSERT → `SubmissionService.createRequest`. 하나의 트랜잭션, 충돌 시 실패 |
+| `DemoAccounts.randomToken`, `digest`, `actorForOrganizationToken` | F10 환경 토큰과 시작 시 16개 난수 자격 등록 → 다이제스트 비교 → 고정 역할·조직 재확인. 메모리·DB 읽기만 사용 |
+| `demo/DemoBootstrap` 생성자, `run`, `organization`, `user`, `retireLegacyOrganizations`, `reconcileCollectingTargets` | ApplicationRunner → 17개 사업 조직·계정 준비 → 기존 D100/D200 비활성화 → 기본 요청 생성/확인 → 미발행 수집 요청 대상 보정. 하나의 트랜잭션, 충돌 시 실패. 기존 제출·원본은 보존 |
 | `demo/DemoController` 생성자, `session`, `template` | 환경 Origin 검증 → 세션 헤더·역할 검사 또는 인증 양식 서비스 호출. 세션은 읽기만, 양식은 메모리 생성 |
 | `demo/DemoTemplateService` 생성자, `generate`, `workbook` | 인증 조직·연간 요청 → 파일명·OOXML 바이트. 요청 DB 읽기; 디스크 접근 없음 |
 | `DemoTemplateService.worksheetTypes`, `financialSheet`, `reportSheet`, `worksheet`, `text`, `column`, `xml` | 고정 합성 템플릿·12개월 보고 수식/캐시 XML 구성·문자 이스케이프. 메모리만 사용 |
@@ -192,7 +195,7 @@ Python 경계에서는 선택 필드로 받되 존재하면 0 이상의 Java int
 | `ParsedRecordsService.project`, `emptySummary`, `text`, `integer`, `limit` | 내부 후보 → 제한 DTO, nullable 값·정밀 문자열·페이지 범위 유지. 외부 부작용 없음 |
 | `parser/PythonParserClient.validResult`, `failure` | 선택 미사용 행 수의 타입·범위 검증, 안전한 실패 요약에 0 명시. 파일·DB 쓰기 없음 |
 | `security/SecurityConfiguration.localSecurityFilterChain` | local 인증 유지, 선택적 DemoAccounts 공급, demo 추가 활성 시 POST `/api/dev/session`만 익명 허용 |
-| `security/LocalBearerAuthenticationFilter` 생성자·`doFilterInternal`, `ActorResolver.current` | 추가 자격의 고정 Actor를 principal로 전달하고 업무 조회 시 소속·역할 변경을 다시 차단 |
+| `security/LocalBearerAuthenticationFilter` 생성자·`doFilterInternal`, `ActorResolver.current` | demo 환경 토큰을 포함한 사업부 자격의 고정 Actor를 principal로 전달하고 업무 조회 시 소속·역할 변경을 다시 차단 |
 
 코드 경로의 기준은 `backend/src/main/java/io/skala/backend/`다.
 `SessionInput(role, organizationCode)`는 자동 접근자를 사용하는 입력 record다. 역할·최대 코드 길이는
@@ -202,10 +205,11 @@ Jakarta Validation, 역할과 허용 코드 조합은 `DemoAccounts.selectedOrga
 
 `DemoIntegrationTests`는 별도 H2 `demo_bridge`에서 초기 자료 멱등성·충돌 보존,
 Origin/Host/Content-Type, 조직 선택·토큰 격리·잘못된 선택·발급 후 권한 변경 차단,
-새 요청의 19개 대상·기존 두 대상 보존, 양식 권한, 실제 Python 연결, 금액 문자열·0, 페이지·조직 격리를 확인한다.
+새 요청의 17개 대상·기존 데모 이력 보존과 대상 제외·확정 계획 및 발행 마스터의 대상 불변, 양식 권한, 실제 Python 연결, 금액 문자열·0, 페이지·조직 격리를 확인한다.
 합성 양식의 보고 항목·대조 근거를 일반 검증 API로 확인하고 상세 2행·월별 24값을 적재한 뒤
-최종 제출(PENDING) → 기획자 승인(APPROVED) → 요청 승인 조직 수 갱신까지 검사한다.
+최종 제출(PENDING) → 기획자 승인(APPROVED) → 요청 승인 조직 수 갱신과 17개 중 1개 승인 시 `WAITING_INITIAL`을 검사한다.
 미사용 행 수 전달·구버전 필드 누락·결과 없는 실패의 0 호환과 음수·소수·문자열·null·범위 초과 거부도 검사한다.
+`LocalBearerAuthenticationFilterTest`는 demo 토큰의 legacy 이메일 인증 우회 차단과 local-only 기존 인증을 검사한다.
 `ActorResolverTest`는 고정 Actor 인증과 업무 조회 사이의 소속·역할·코드 변경도 검사한다.
 `DemoDisabledTests`는 별도 H2 `demo_disabled`에서 demo 미활성 시 Bean·초기 자료·익명 세션이 없음을 확인한다.
 실제 파서 테스트는 메모리 양식과 `-B` Python 프로세스를 사용하며 Data를 읽지 않는다.
