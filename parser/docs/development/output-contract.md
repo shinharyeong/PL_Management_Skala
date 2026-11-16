@@ -68,6 +68,7 @@ JSON은 UTF-8, JSONL은 줄마다 독립 객체입니다. gzip은 중복된 출�
 | `value` | object | 원문·Decimal 정규화 값·단위·통화·배율·규칙·확인 상태 |
 | `submission` | object | 제출 월·버전 원문·월별 회차·개정번호·확인 상태 |
 | `mapping` | object | mapped/partial/unmapped, 적용 규칙과 미확정 사유 |
+| `business_validation` | object/부재 | 상세행의 ID·계정·관리분류 등록 검사. status, 필드별 관측값·상태·계약 해시·출처, issues |
 | `formula`, `raw_value`, `data_type`, `style_reference` | object/null, any, string, object | 원본 값·수식·스타일과 연결 |
 
 `mapping.status=mapped`는 확인된 재무 의미를 연결했다는 뜻입니다. 제출본의 승인이나 마스터 포함을 뜻하지 않습니다. `value.status`는 confirmed/unresolved/not_numeric/missing으로 별도 관리합니다. 표준 항목으로 못 해석한 숫자·수식도 출처 레코드와 원본 추출 결과를 남깁니다. 제목·헤더·일반 텍스트는 원본 추출에서 보존하며 모두 재무 레코드로 만들지는 않습니다.
@@ -104,3 +105,13 @@ JSON은 UTF-8, JSONL은 줄마다 독립 객체입니다. gzip은 중복된 출�
 `raw_extraction_complete`는 전체 입력 파일·시트·XML 내용과 희소 구조의 독립 대조 및 원본 해시 보존을 뜻합니다. `validation_passed`는 출처 연결과 적용 가능한 마스터 비교도 포함합니다. `semantic_interpretation_complete=false`와 `formula_recalculation_performed=false`를 별도로 보고합니다.
 
 의미 매핑 단계가 실패해도 이미 추출한 원본은 보존하고 매핑 실패를 별도 진단합니다. 원본 추출 실패 파일은 누락을 숨기지 않고 failures에 기록합니다. 모든 값의 업무 의미 확정·계산 검증 완료와 전체 원본 추출 완료를 혼동하지 않습니다.
+
+## 월별 마스터의 업무 유효성과 숫자 금액
+
+`business_validation.status`는 `valid/invalid/unresolved/not_applicable`이다. 개별 필드는 `valid/invalid/unverified/missing/not_applicable`을 구분하며, 계약 부재를 유효성 확인으로 표현하지 않는다. 같은 조직 원본의 명시 상세 ID, 코드표와 직접 연결된 집계 수식 계약만 사용한다. `mapping.status`와 금액의 `value.status`를 이 검사로 덮어쓰지 않는다.
+
+월별 생성의 평탄 상세는 `business_validation` 전체와 원문 업무키·금액을 보존한다. 업무 검증이 invalid/unresolved이면 `semantic_complete=False`이며 `assembly_status=unresolved`, `included_in_totals=False`가 된다. 알려진 숫자는 `confirmed=True`와 정규금액 문자열을 유지한다. 따라서 금액을 가진 업무키 실패 출력은 엄격 평가의 FP에서 사라지지 않는다. 원본 업무키가 같은 정답이 있으면 해당 정답은 Recall 분모에 남는다.
+
+문자열 `None` 등 무효 ID의 서로 다른 원본행은 수정본·동일 재전송으로 합치지 않는다. `selection_reason=unvalidated_identity_preserved_by_source_location` 및 `source_occurrences`로 물리적 출처를 유지한다. 원래 ID와 원본 숫자를 null로 바꾸지 않는다.
+
+선택 영역의 실제 빈칸과 업무키 실패가 함께 있는 경우 조립 상태는 업무 미확정이지만, `raw_value`, `normalized_value`, `input_presence`, `period_group`, `formula`는 빈 금액·수식 캐시·원본 선택 영역을 계속 구분한다. 따라서 조립 상태별 필수 미확정 슬롯 수는 필수 **금액 빈칸** 수와 다르다. 선택된 상세 외에 조직 미확정 등으로 제외한 상세도 별도로 감사하고, 진단 후보나 제출 소유자를 이용해 업무키를 보충하지 않는다.
