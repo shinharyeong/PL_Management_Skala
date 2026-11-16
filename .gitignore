@@ -19,3 +19,22 @@ Thumbs.db
 Data/
 output/
 logs/
+
+# 원본 스프레드시트·DB 덤프와 로컬 DB 파일
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb
+*.csv
+*.tsv
+*.dump
+*.backup
+*.sql.gz
+*.sqlite
+*.sqlite3
+*.db
+
+# Python 실행 캐시
+__pycache__/
+*.py[cod]
+.pytest_cache/
