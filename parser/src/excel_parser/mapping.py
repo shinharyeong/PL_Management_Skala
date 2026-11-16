@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 
 from .business_validation import build_business_contracts, validate_business_row
 from .normalization import inspect_number_format, normalize_number
-from .ooxml import range_bounds
+from .ooxml import cell_position, range_bounds
 
 
 def _text(cell: dict | None) -> str:
@@ -396,7 +396,11 @@ def _organization_registry(indices: list[dict]) -> dict[str, dict]:
                     data.get(labels["사업부명"]),
                 )
                 code, name = _text(code_cell).strip(), _text(name_cell).strip()
-                if code and name:
+                if code and name and all(
+                    cell.get("data_type") != "error"
+                    and (cell.get("formula") or {}).get("cached_status") not in {"error", "missing"}
+                    for cell in (code_cell, name_cell)
+                ):
                     entry = registry.setdefault(
                         code, {"name": name, "names": set(), "provenance": []}
                     )
@@ -431,6 +435,26 @@ def _resolve_organization(
     provenance = [ref for ref in (_ref(code_cell), _ref(name_cell)) if ref]
     status = "unresolved"
     diagnostic = None
+    error_cells = [
+        cell for cell in (code_cell, name_cell)
+        if cell and (
+            cell.get("data_type") == "error"
+            or (cell.get("formula") or {}).get("cached_status") in {"error", "missing"}
+        )
+    ]
+    if error_cells:
+        error_cell = error_cells[0]
+        return {
+            "code": (code or None) if code_cell not in error_cells else None,
+            "name": (name or None) if name_cell not in error_cells else None,
+            "original_name": _text(name_cell) or None,
+            "scope": "organization",
+            "provenance": provenance,
+            "status": "unresolved",
+            "diagnostic": "ORGANIZATION_LOOKUP_ERROR"
+            if error_cell.get("formula") else "ORGANIZATION_VALUE_ERROR",
+            "diagnostic_cell": error_cell.get("address"),
+        }
     if code:
         entry = registry.get(code)
         if entry and (entry["name"] is None or (name and entry["name"] != name)):
@@ -477,6 +501,8 @@ def _resolve_organization(
         "provenance": provenance,
         "status": status,
         "diagnostic": diagnostic,
+        "diagnostic_cell": (name_cell or code_cell or {}).get("address")
+        if diagnostic else None,
     }
 
 
@@ -707,6 +733,150 @@ def _statement_items(index: dict, layout: dict) -> dict[int, dict]:
     return items
 
 
+def _template_formula(cell: dict) -> tuple[str, int] | None:
+    """단순 양식 판별에 사용할 원문 수식과 상대 행 기준을 확인한다.
+
+    Args:
+        cell: 원본 수식·공유 수식 근거가 있는 추출 셀.
+    Returns:
+        명시 수식 또는 같은 열의 유효 공유 범위에서 확인한 수식과 기준 행.
+        외부 참조·공유 근거 누락·범위 불일치면 None.
+    Raises:
+        없음. 잘못된 주소나 불완전 공유 근거는 확인 불가로 반환한다.
+    Side Effects:
+        없음. 수식을 전개·계산하거나 원본 수식 문자열을 바꾸지 않는다.
+    """
+    formula = cell.get("formula") or {}
+    if not formula or formula.get("external_reference"):
+        return None
+    expression = formula.get("raw_text") or formula.get("text")
+    if expression:
+        return expression.removeprefix("=").strip().upper(), cell["row"]
+    base = formula.get("shared_base") or {}
+    attributes, base_attributes = formula.get("attributes", {}), base.get("attributes", {})
+    if (
+        attributes.get("t") != "shared"
+        or not attributes.get("si")
+        or attributes.get("si") != base_attributes.get("si")
+        or not base.get("raw_text")
+    ):
+        return None
+    try:
+        first, left, last, right = range_bounds(base_attributes.get("ref", ""))
+        base_row, base_column, _ = cell_position(base.get("address", ""))
+    except (ValueError, TypeError):
+        return None
+    if not (
+        left == right == base_column == cell["column_index"]
+        and first == base_row <= cell["row"] <= last
+    ):
+        return None
+    return base["raw_text"].removeprefix("=").strip().upper(), base_row
+
+
+def _inactive_expense_template_row(row_number: int, index: dict, layout: dict) -> bool:
+    """명시 입력 없이 확인된 조회 오류와 연간 합계만 남은 비용 양식 행을 찾는다.
+
+    Args:
+        row_number: 검사할 원본 행 번호.
+        index: 같은 시트의 원본 행·셀 색인.
+        layout: 헤더로 확인한 expense_detail 열·기간 구조.
+    Returns:
+        필수 조회식 10개가 #N/A이고 월별 입력은 없으며 연간 12개월 SUM만
+        캐시 0으로 남은 경우 True. 실제 0·임의 수식·주석·불완전 근거는 False.
+    Raises:
+        없음. 지원하지 않는 양식이나 공유 수식은 활성 검증 대상으로 남긴다.
+    Side Effects:
+        없음. 셀·수식·후보를 삭제하지 않으며 숫자를 재계산하지 않는다.
+    """
+    if layout["kind"] != "expense_detail" or row_number <= layout["header_row"]:
+        return False
+    columns, periods = layout["columns"], layout["periods"]
+    row = index["rows"][row_number]
+    lookups = {
+        "대분류": ("실적집계기준", "예산코드", "A:C", 3),
+        "중분류": ("실적집계기준", "예산코드", "A:C", 2),
+        "소분류": ("실적집계기준", "예산코드", "A:C", 1),
+        "조직명": ("팀Code", "조직코드", "A:F", 2),
+        "본부명": ("팀Code", "조직코드", "A:F", 4),
+        "팀명": ("팀Code", "조직코드", "A:F", 6),
+        "실행과제명": ("실행과제Code", "실행과제코드", "A:B", 2),
+        "예산명칭": ("예산Code", "예산코드", "A:C", 2),
+        "실적집계기준": ("예산Code", "예산코드", "A:C", 3),
+        "비용구분": ("예산Code", "예산코드", "A:F", 4),
+    }
+    required = set(lookups) | {value[0] for value in lookups.values()} | {
+        "담당자", "거래내역 및 산출근거",
+    }
+    if not required <= columns.keys():
+        return False
+    header = index["rows"][layout["header_row"]]
+    allowed = set()
+    for label, (source_label, sheet_name, reference, result_column) in lookups.items():
+        cell = row.get(columns[label])
+        parsed = _template_formula(cell) if cell else None
+        if (
+            not parsed or cell.get("data_type") != "error" or cell.get("value") != "#N/A"
+            or (cell.get("formula") or {}).get("cached_status") != "error"
+        ):
+            return False
+        expression, formula_row = parsed
+        source_column = header[columns[source_label]]["column"]
+        row_prefix = r"\$?" if formula_row == row_number else ""
+        source = rf"\$?{source_column}{row_prefix}{formula_row}"
+        sheet_pattern = rf"(?:{sheet_name}|'{sheet_name}')"
+        first, last = reference.split(":")
+        range_pattern = rf"\$?{first}:\$?{last}"
+        if sheet_name == "조직코드":
+            pattern = (
+                rf"INDEX\({sheet_pattern}!{range_pattern},"
+                rf"MATCH\({source},{sheet_pattern}!\$?E:\$?E,0\),{result_column}\)"
+            )
+        else:
+            pattern = rf"VLOOKUP\({source},{sheet_pattern}!{range_pattern},{result_column},0\)"
+        if re.fullmatch(pattern, expression) is None:
+            return False
+        allowed.add(columns[label])
+    annual_columns = [column for column, period in periods.items() if period["aggregation"] == "annual"]
+    if not annual_columns:
+        return False
+    for column in annual_columns:
+        cell = row.get(column)
+        parsed = _template_formula(cell) if cell else None
+        if (
+            not parsed or cell.get("data_type") != "number"
+            or (cell.get("formula") or {}).get("cached_status") != "stored_unverified"
+            or re.fullmatch(r"[+-]?0+(?:\.0+)?(?:E[+-]?\d+)?", _text(cell).upper()) is None
+        ):
+            return False
+        annual = periods[column]
+        if not isinstance(annual.get("year"), int) or annual["scenario"] not in {
+            "plan", "actual", "estimate", "mixed",
+        }:
+            return False
+        accepted_scenarios = {"actual", "estimate"} if annual["scenario"] == "mixed" else {annual["scenario"]}
+        if any(
+            periods.get(column + month, {}).get("month") != month
+            or periods.get(column + month, {}).get("year") != annual["year"]
+            or periods.get(column + month, {}).get("aggregation") != "month"
+            or periods.get(column + month, {}).get("scenario") not in accepted_scenarios
+            for month in range(1, 13)
+        ):
+            return False
+        expression, formula_row = parsed
+        row_prefix = r"\$?" if formula_row == row_number else ""
+        first, last = header[column + 1]["column"], header[column + 12]["column"]
+        pattern = rf"SUM\(\$?{first}{row_prefix}{formula_row}:\$?{last}{row_prefix}{formula_row}\)"
+        if re.fullmatch(pattern, expression) is None:
+            return False
+        allowed.add(column)
+    return all(
+        not cell.get("comments")
+        and (column in allowed or (cell.get("value") in {None, ""} and not cell.get("formula")))
+        for column, cell in row.items()
+    )
+
+
 def _row_context(
     cell: dict,
     index: dict,
@@ -714,6 +884,7 @@ def _row_context(
     common_org: dict,
     registry: dict,
     statement_items: dict,
+    inactive_template: bool | None = None,
 ) -> dict:
     """값 셀에 대응하는 조직·항목·역할을 실제 헤더에서 가져온다.
 
@@ -724,6 +895,7 @@ def _row_context(
         common_org: 워크북 상세 행에서 확인한 조직 범위.
         registry: 같은 워크북의 조직 코드표.
         statement_items: 답안지의 행별 항목.
+        inactive_template: 호출자가 행별로 캐시한 미사용 판정. None이면 직접 확인한다.
     Returns:
         organization, item, dimensions, role, financial을 담은 사전.
     Raises:
@@ -890,6 +1062,10 @@ def _row_context(
             }
             financial = item["code"] is not None
         role = "reference" if kind == "unknown" else "unknown"
+    if inactive_template is None:
+        inactive_template = _inactive_expense_template_row(cell["row"], index, layout)
+    if inactive_template:
+        role = "inactive_template"
     return {
         "organization": organization,
         "item": item,
@@ -1037,6 +1213,7 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
     for sheet, index, layout in zip(sheets, indices, layouts):
         sheet_records = []
         business_rows = {}
+        inactive_rows = {}
         unit, unit_sources = _unit(index)
         statement_items = (
             _statement_items(index, layout)
@@ -1046,8 +1223,13 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
         for cell in sheet["cells"]:
             if not cell.get("has_content", True):
                 continue
+            if cell["row"] not in inactive_rows:
+                inactive_rows[cell["row"]] = _inactive_expense_template_row(
+                    cell["row"], index, layout
+                )
             context = _row_context(
-                cell, index, layout, common_org, registry, statement_items
+                cell, index, layout, common_org, registry, statement_items,
+                inactive_template=inactive_rows[cell["row"]],
             )
             context["item"]["metric_code"] = _metric(context["item"]["name"] or "")
             candidate = (
@@ -1082,6 +1264,8 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
             source_unit = unit if financial else None
             formula = cell.get("formula")
             rules = ["MAP_" + layout["kind"].upper()]
+            if context["role"] == "inactive_template":
+                rules.append("ROW_INACTIVE_EXPENSE_TEMPLATE")
             unit_evidence = list(unit_sources) if financial else []
             if context["role"] == "subtotal" and layout["kind"].endswith("_detail"):
                 expression = (formula or {}).get("text") or ""
@@ -1108,7 +1292,8 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
                 ]
             if financial and ratio_formats[number_format]:
                 value_kind, source_unit = "ratio", None
-                context["role"] = "ratio"
+                if context["role"] != "inactive_template":
+                    context["role"] = "ratio"
             normalization_locale, format_confirmed = _normalization_locale(
                 cell, source_unit, metadata.get("locale")
             )
@@ -1143,6 +1328,7 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
             if (
                 financial
                 and org_diagnostic
+                and context["role"] != "inactive_template"
                 and diagnostic_key not in organization_diagnostics
             ):
                 organization_diagnostics.add(diagnostic_key)
@@ -1152,6 +1338,7 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
                         "severity": "warning",
                         "sheet": sheet["name"],
                         "row": cell["row"],
+                        "cell": organization.get("diagnostic_cell"),
                         "message": "조직코드·이름의 근거가 충돌하거나 유일한 대응을 확인할 수 없습니다.",
                         "provenance": organization["provenance"],
                     }
@@ -1167,6 +1354,8 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
             if normalization["status"] != "confirmed":
                 reasons.append("값 정규화 미확정 또는 비숫자")
             status = "mapped" if not reasons else "partial" if financial else "unmapped"
+            if context["role"] == "inactive_template":
+                status = "unmapped"
             source = {
                 "raw_record_id": cell["record_id"],
                 "file_id": file["file_id"],
@@ -1186,7 +1375,9 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
                 "role": {
                     "kind": context["role"],
                     "aggregatable": False,
-                    "reason": "집계 시 조직·버전·기간·상세/합계 중복 제거 정책 확정 필요",
+                    "reason": "실제 입력 없이 확인된 조회·연간 합계 수식만 남은 양식 행"
+                    if context["role"] == "inactive_template"
+                    else "집계 시 조직·버전·기간·상세/합계 중복 제거 정책 확정 필요",
                 },
                 "value": normalization,
                 "unit_provenance": unit_evidence,

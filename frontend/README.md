@@ -1,29 +1,67 @@
-# frontend
+# 손익관리 프런트엔드
 
-Vue 3 + Vite + Vue Router + Pinia
+Vue 3.5 · Vite 8 · Vue Router · Pinia로 Figma의 조직 담당자 v3와 경영기획팀 6개 화면을 구현한다. Tailwind 및 별도 UI 라이브러리는 사용하지 않는다.
 
-## 실행
+## 체험 흐름
 
-Node.js 20.19 이상이 필요합니다.
+1. 첫 화면에서 조직 담당자 또는 경영기획팀을 선택한다.
+2. 조직 담당자는 요청함 → 제출 시작 → `.xlsx` 선택/드롭 → 파싱 시작을 진행한다. `테스트 양식으로 실행`은 서버의 예시 양식을 같은 업로드 API에 접수한다.
+3. 파싱 중에는 상태를 자동 조회한다. 완료 후 진단과 원 단위 추출 금액, 원본 시트·셀·수식을 확인한다.
+4. 제출 이력 관리에서 업로드 초안과 원본을 다시 조회한다.
+5. 경영기획팀은 `/planning`의 전사 손익 화면으로 들어간다. 사이드바에서 월간 시트 관리, 요청·검토, 연간 계획, 조직별 현황, 보고서를 각각 연다.
+6. 연간 계획의 본문 작성 페이지에서 실제 요청을 생성하고 요청·검토의 조직별 초안/최종 제출 현황을 확인한다. 조직별 현황에서 `실제 업로드`로 전환하면 기본 2026 연간 초안·최종 제출본·원본을 조회한다. 요청 현황의 보기는 최신 최종 제출본으로 직접 연결한다.
+7. 담당자는 상세에서 업무 검증 → 적재·진단 확인 → 최종 제출을 실행한다. 기획자는 제출본의 적재 금액·보고 집계·진단·정확한 원본 셀을 읽는다.
 
-```bash
-cd frontend
-npm install
-npm run dev      # http://localhost:5173
-npm run build
-```
+파싱 성공은 최종 제출 성공이 아니다. 최초 연간 PLAN은 담당자의 업무 검증과 명시적 최종 제출을 거쳐 PENDING이 된다. 파싱 후보·검증 적재값·보고 합계는 별도 영역이다. 파싱 후보 숫자는 amountUnit=KRW일 때만 원으로 표시하고 미확정 단위는 그대로 알린다. 수정 소명·월간 비교·승인·공식 마스터는 후속 구현이다. 기획 손익·Gap·보고서에는 `디자인 예시 · 실제 집계가 아닙니다`를 표시하며 선택·검색·행 펼침·메시지 편집만 로컬 상태로 동작한다. 검토·제외·기준 저장·보고서 생성·복사·다운로드는 미지원 안내를 제공하며 성공한 것처럼 처리하지 않는다.
 
-개발 서버는 `/api` 요청을 `http://localhost:8080`(backend)으로 프록시합니다.
+## 경영기획 화면
+
+| 경로 | 화면·데이터 범위 |
+| --- | --- |
+| `/planning` | 홈 · 전사 손익. Figma의 KPI·마감·할 일·손익표·차트 예시 |
+| `/planning/gap` | 월간 시트 관리. 예시 기준 카드·5단계·계층형 영업비용 표와 선택 작업 |
+| `/planning/requests` | 요청·검토. 실제 연간 요청 목록·조직별 수집 현황 GET |
+| `/planning/annual-plan` | 연간 계획. 활성 조직 전체 조회·실제 요청 POST, 생성 후 해당 현황으로 이동 |
+| `/planning/organizations` | 조직별 현황·아카이브. 디자인 예시와 실제 업로드 보기를 구분 |
+| `/planning/reports` | 보고서. 예시 자료 구성·표·차트·핵심 메시지 편집 |
+
+원본 캔버스 밖 차트와 회전된 마스터 카드는 웹 본문에서 읽을 수 있도록 정돈했다. 예시 값으로 실제 다른 월·연간 금액을 만들지 않는다. 모든 금액 수정 소명과 OP 비교 등 기존 도메인 규칙은 변경하지 않는다. 설정 메뉴의 Gap 기준 저장·조직 권한 편집은 아직 비활성이다.
+
+## 실행과 인증
+
+저장소의 [로컬 환경](../docs/development/local-environment.md)에서 Docker Compose 실행 안내를 따른다. 브라우저는 `http://localhost:5173`에서 같은 출처 `/api`를 호출한다. 개발 서버를 별도로 실행할 경우 Node.js 20.19 이상에서 `npm ci`, `npm run dev`를 사용하며 `/api`는 `http://localhost:8080`으로 프록시된다. 설치·빌드는 파일 생성 작업이므로 프로젝트 규칙의 허락 범위 안에서 실행한다.
+
+로컬 체험은 백엔드의 `local,demo` 프로필과 개발 역할 계정이 필요하다. `POST /api/dev/session`의 토큰은 Pinia 메모리에만 보관하며 브라우저 저장소·URL·로그에 기록하지 않는다. 새로고침 또는 역할 전환 시 다시 역할을 선택한다. 프런트 번들에 비밀값을 넣는 환경변수는 없다.
 
 ## 구조
 
-```
-src/
-├── main.js        # 앱 진입점
-├── App.vue
-├── router/        # 라우트 정의
-├── views/         # 페이지 단위 컴포넌트
-├── components/    # 재사용 컴포넌트
-├── stores/        # Pinia 스토어
-└── assets/        # 정적 리소스
-```
+| 경로 | 책임 |
+| --- | --- |
+| `src/App.vue` | Figma 공통 셸, 역할별 메뉴, 세션 종료 |
+| `src/views/HomeView.vue` | 로컬 역할 선택 |
+| `src/components/RequestList.vue` | 열린 요청함 |
+| `src/components/UploadView.vue` | 파일 선택/드롭, 예시 양식, 업로드 |
+| `src/components/SubmissionDetail.vue` | 폴링, 진단·추출 셀 페이지, 원본 다운로드 |
+| `src/components/HistoryView.vue` | 필터와 cursor 기반 이력 |
+| `src/components/PlannerDashboard.vue` | 기획 기본 홈, 전사 손익 디자인 예시 |
+| `src/components/PlannerGap.vue` | 월간 시트 예시, 검색·선택·행 펼침·안내 dialog |
+| `src/components/PlannerRequests.vue` | 실제 연간 요청 목록, 조직별 수집 현황 |
+| `src/components/PlannerRequestCreate.vue` | 본문 요청 작성, 전체 활성 조직 대상 요청 생성 |
+| `src/components/PlannerOrganizations.vue` | 예시 아카이브 및 실제 업로드 이력·원본 조회 |
+| `src/components/PlannerReports.vue` | 보고서 디자인 예시, 구성 선택·메시지 메모리 편집 |
+| `src/stores/session.js` | 메모리 인증·동일 출처 HTTP·요청 취소 |
+| `src/lib/display.js` | 금액 정밀도 보존, 시각·상태 표시, 다운로드 |
+| `src/styles.css` | Figma 토큰과 반응형 공통 스타일 |
+| `public/assets/` | Figma 원본 SVG 15개, 각각의 원본 width·height 유지 |
+
+Figma 출처·함수 명세·호출 관계는 [프런트 구현·함수 명세](../docs/development/frontend-guide.md)에 정리한다. 저장소의 [API 계약](../docs/development/api-contract.md)에서 구현 범위를 확인한다.
+
+## 검증 상태
+
+이전 검증은 조직 담당자의 업로드·파싱·이력과 기획자의 요청 생성이라는 API 흐름에 한정됐다. 이전의 “기획 전체 레이아웃 확인” 표현은 정정한다. 사용자 지적 후 경영기획 6개 화면과 메뉴를 복원했다.
+
+이번 실제 브라우저 확인에서는 보고서 구성 체크와 미지원 다운로드 안내, Gap 상세·닫기, 2029년 실제 요청 생성 후 2개 조직 수집 표, 아카이브 예시 및 실제 2027년 D100 초안 6개 조회가 통과했다. 실제 초안 상세의 파싱 완료·제출 전 상태와 시트 5·추출 셀 25·정규화 24·확인 필요 0도 확인했다. 기획 경로 6개와 원본 SVG 15개의 HTTP 응답·바이트 동일성, 백엔드 health UP을 확인했다.
+
+최신 홈의 마감·To Do → KPI → 요약·Top 5 → 사업부별 → 손익 흐름 → 월별 추이 배치와 원본 SVG 표시를 상·중·하단에서 확인했다. 최종 Docker 프런트 빌드(49개 모듈)와 frontend healthy가 통과했다. 마지막 label 글자 스타일 보정은 소스 점검·프로덕션 빌드 범위로 확인했다.
+
+이전 기록은 전체 필터·모바일 조합이나 당시 미구현 기능의 검증 완료를 뜻하지 않는다. 최초 연간 검증·최종 제출의 최신 통합 결과는 로컬 실행 환경 문서에서 구분하며, 소명·승인·공식 마스터·내보내기는 여전히 후속 범위다. 구체 결과는 [프런트 구현·함수 명세](../docs/development/frontend-guide.md)의 검증 범위를 따른다.

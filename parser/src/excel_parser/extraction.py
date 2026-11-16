@@ -2,6 +2,7 @@
 
 import hashlib
 import re
+from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
@@ -391,6 +392,63 @@ def extract_workbook(path: Path, root: Path | None = None) -> dict:
         "size_bytes": path.stat().st_size,
         "extension": path.suffix.lower(),
     }
+    return _extract_workbook_source(path, file)
+
+
+def extract_workbook_bytes(content: bytes, filename: str) -> dict:
+    """메모리의 xlsx 바이트를 기존 추출 계약으로 읽는다.
+
+    Args:
+        content: 이미 읽은 OOXML 바이트. 서비스 입력 한도는 브리지에서 검사한다.
+        filename: 경로 구분자와 제어 문자가 없는 출처 표시용 xlsx 파일명.
+    Returns:
+        경로 API와 같은 추출 사전. file.path는 로컬 경로 대신 파일명이다.
+    Raises:
+        ValueError: 파일명이 잘못되었거나 xlsx 형식이 아닌 경우.
+        BadZipFile: ZIP 패키지가 손상된 경우.
+        ET.ParseError: XML 파트가 손상된 경우.
+        KeyError: 필요한 OOXML 관계 또는 파트가 없는 경우.
+    Side Effects:
+        BytesIO만 읽는다. 파일·임시 폴더·캐시를 생성하지 않는다.
+    """
+    if (
+        not filename
+        or len(filename) > 255
+        or any(character in filename for character in "/\\")
+        or any(ord(character) < 32 or ord(character) == 127 for character in filename)
+        or Path(filename).suffix.lower() != ".xlsx"
+    ):
+        raise ValueError("메모리 추출에는 경로가 아닌 xlsx 파일명이 필요합니다.")
+    fingerprint = hashlib.sha256(content).hexdigest()
+    file = {
+        "file_id": fingerprint,
+        "source_id": hashlib.sha256(
+            (filename + "\0" + fingerprint).encode()
+        ).hexdigest()[:24],
+        "path": filename,
+        "name": filename,
+        "size_bytes": len(content),
+        "extension": ".xlsx",
+    }
+    return _extract_workbook_source(BytesIO(content), file)
+
+
+def _extract_workbook_source(source: Path | BytesIO, file: dict) -> dict:
+    """경로·메모리 입력에 동일한 OOXML 추출 본문을 적용한다.
+
+    Args:
+        source: 읽기 전용 원본 경로 또는 메모리 스트림.
+        file: 호출자가 구성한 파일 해시·표시 경로·크기 메타데이터.
+    Returns:
+        file, sheets, styles, package_metadata, diagnostics를 가진 추출 결과.
+    Raises:
+        OSError: 경로 입력을 읽을 수 없는 경우.
+        BadZipFile: ZIP 구조가 잘못된 경우.
+        ET.ParseError: XML 구조가 잘못된 경우.
+        ValueError, KeyError: 셀·파트·관계 정보가 유효하지 않은 경우.
+    Side Effects:
+        입력을 읽기만 한다. 파일 생성·수식 실행·외부 관계 접속은 없다.
+    """
     result = {
         "file": file,
         "sheets": [],
@@ -398,7 +456,7 @@ def extract_workbook(path: Path, root: Path | None = None) -> dict:
         "package_metadata": {},
         "diagnostics": [],
     }
-    with ZipFile(path) as archive:
+    with ZipFile(source) as archive:
         root_relations = relationships(archive, "")
         book_part = next(
             (

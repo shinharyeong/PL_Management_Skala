@@ -129,6 +129,75 @@ def monthly_workbook(registry_rows: list[tuple] | None = None) -> dict:
     return workbook
 
 
+def inactive_expense_workbook() -> dict:
+    """정상 0원 행과 조회 오류만 남은 미사용 비용 행을 메모리로 만든다.
+
+    Args:
+        없음.
+    Returns:
+        6행은 실제 입력, 7행은 조회식 10개·공유 연간 SUM·빈 12개월인 workbook.
+    Raises:
+        ValueError: 독립 합성 셀 주소가 잘못된 경우.
+    Side Effects:
+        메모리 객체만 만들며 원본·샘플·캐시 파일에 접근하지 않는다.
+    """
+    labels = (
+        "대분류", "중분류", "소분류", "조직명", "본부명", "팀Code", "팀명",
+        "실행과제Code", "실행과제명", "예산Code", "예산명칭", "실적집계기준",
+        "비용구분", "담당자", "거래내역 및 산출근거",
+    )
+    months = ('R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'AA', 'AB', 'AC')
+    rows = [("A1", "단위: 천원", "string"), ("Q4", "2031년 계획", "string"),
+            ("Q5", "연간 계획", "string")]
+    rows += [(f'{column}5', label, 'string') for column, label in zip('ABCDEFGHIJKLMNO', labels)]
+    rows += [(f'{column}5', f'{month}월', 'string') for month, column in enumerate(months, 1)]
+    rows += [
+        ('D6', '합성조직', 'string'), ('F6', 'TEAM-1', 'string'), ('J6', '62020', 'number'),
+        ('K6', '합성비용', 'string'), ('N6', '합성담당자', 'string'),
+        ('O6', '원본 근거 [ID:active-zero; 수정:1]', 'string'),
+        ('Q6', '0', 'number'), ('R6', '0', 'number'), ('Q7', '0', 'number'),
+    ]
+    lookup_formulas = {
+        'A': 'VLOOKUP($L7,예산코드!$A:$C,3,0)',
+        'B': 'VLOOKUP($L7,예산코드!$A:$C,2,0)',
+        'C': 'VLOOKUP($L7,예산코드!$A:$C,1,0)',
+        'D': 'INDEX(조직코드!$A:$F,MATCH($F7,조직코드!$E:$E,0),2)',
+        'E': 'INDEX(조직코드!$A:$F,MATCH($F7,조직코드!$E:$E,0),4)',
+        'G': 'INDEX(조직코드!$A:$F,MATCH($F7,조직코드!$E:$E,0),6)',
+        'I': 'VLOOKUP(H7,실행과제코드!A:B,2,0)',
+        'K': 'VLOOKUP($J7,예산코드!$A:$C,2,0)',
+        'L': 'VLOOKUP($J7,예산코드!$A:$C,3,0)',
+        'M': 'VLOOKUP($J7,예산코드!$A:$F,4,0)',
+    }
+    rows += [(f'{column}7', '#N/A', 'error') for column in lookup_formulas]
+    rows += [(f'{column}7', None, 'blank') for column in (*months, 'F', 'H', 'J', 'N', 'O', 'P')]
+    workbook = memory_workbook(rows)
+    base_attributes = {'t': 'shared', 'ref': 'Q6:Q7', 'si': '0'}
+    for cell in workbook['sheets'][0]['cells']:
+        if cell['row'] == 7 and cell['column'] in lookup_formulas:
+            cell['formula'] = {
+                'text': '=' + lookup_formulas[cell['column']], 'cached_status': 'error',
+            }
+        if cell['address'] == 'Q6':
+            cell['formula'] = {
+                'text': '=SUM(R6:AC6)', 'raw_text': 'SUM(R6:AC6)',
+                'attributes': dict(base_attributes), 'cached_status': 'stored_unverified',
+            }
+        if cell['address'] == 'Q7':
+            cell['formula'] = {
+                'text': None, 'attributes': {'t': 'shared', 'si': '0'},
+                'shared_base': {'address': 'Q6', 'raw_text': 'SUM(R6:AC6)', 'attributes': dict(base_attributes)},
+                'cached_status': 'stored_unverified',
+            }
+        if cell['data_type'] == 'blank':
+            cell['has_content'] = False
+    append_sheet(workbook, '조직코드', [
+        ('A1', '사업부코드', 'string'), ('B1', '사업부명', 'string'),
+        ('A2', 'ORG-1', 'string'), ('B2', '합성조직', 'string'),
+    ])
+    return workbook
+
+
 def find_record(mapped: dict, sheet: str, cell: str) -> dict:
     """독립 기대 주소에 해당하는 표준 레코드를 찾는다.
 
@@ -152,6 +221,134 @@ def find_record(mapped: dict, sheet: str, cell: str) -> dict:
 
 class MonthlyMappingTests(unittest.TestCase):
     """정답파일 없이 조직 근거와 월별 의미 보완의 경계를 검증한다."""
+
+    def test_unused_expense_formulas_preserve_candidates_and_active_zero(self) -> None:
+        """미사용 행의 후보·수식·금액을 보존하고 실제 0원 행을 검증한다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 후보가 없어지거나 실제 0원이 미사용으로 바뀐 경우.
+        Side Effects:
+            독립 메모리 workbook만 사용한다.
+        """
+        workbook = inactive_expense_workbook()
+        original = deepcopy(workbook)
+        mapped = map_workbook(workbook)
+        unused = [r for r in mapped['records'] if r['role']['kind'] == 'inactive_template']
+        self.assertEqual(len(unused), 11)
+        self.assertTrue(all(r['mapping']['status'] == 'unmapped' for r in unused))
+        self.assertTrue(all('ROW_INACTIVE_EXPENSE_TEMPLATE' in r['mapping']['rule_ids'] for r in unused))
+        self.assertFalse(any(r.get('business_validation') for r in unused))
+        record = find_record(mapped, '검증', 'Q7')
+        self.assertEqual(record['value']['normalized_value'], Decimal('0'))
+        self.assertEqual(record['value']['value_kind'], 'amount')
+        self.assertEqual((record['period']['year'], record['period']['scenario']), (2031, 'plan'))
+        self.assertIsNone(record['formula']['text'])
+        self.assertEqual(record['formula']['shared_base']['address'], 'Q6')
+        active = find_record(mapped, '검증', 'R6')
+        self.assertEqual(active['role']['kind'], 'detail')
+        self.assertEqual(active['value']['normalized_value'], Decimal('0'))
+        self.assertEqual(active['organization']['code'], 'ORG-1')
+        self.assertEqual(workbook, original)
+        self.assertFalse(any(d['code'].startswith('ORGANIZATION_') for d in mapped['diagnostics']))
+
+    def test_any_real_input_or_month_formula_keeps_expense_row_active(self) -> None:
+        """실제 0·공백·식별 입력·월 수식·추가 열·주석은 미사용으로 숨기지 않는다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 입력 흔적이나 실제 조회 오류가 제외된 경우.
+        Side Effects:
+            합성 메모리 셀만 변경하며 파일은 생성하지 않는다.
+        """
+        cases = [
+            ('R7', '0', 'number', None), ('R7', ' ', 'string', None),
+            ('R7', '0', 'number', {'text': '=0', 'cached_status': 'stored_unverified'}),
+            *[(f'{column}7', '입력', 'string', None) for column in ('F', 'H', 'J', 'N', 'O', 'A', 'P')],
+        ]
+        for address, value, kind, formula in cases:
+            with self.subTest(address=address, value=value, formula=formula):
+                workbook = inactive_expense_workbook()
+                cell = next(c for c in workbook['sheets'][0]['cells'] if c['address'] == address)
+                cell.update(value=value, data_type=kind, formula=formula, has_content=True)
+                mapped = map_workbook(workbook)
+                self.assertEqual(find_record(mapped, '검증', 'Q7')['role']['kind'], 'detail')
+                diagnostic = next(d for d in mapped['diagnostics'] if d['code'] == 'ORGANIZATION_LOOKUP_ERROR')
+                self.assertEqual(diagnostic['cell'], 'D7')
+        workbook = inactive_expense_workbook()
+        next(c for c in workbook['sheets'][0]['cells'] if c['address'] == 'P7')['comments'] = [{'text': '확인 필요'}]
+        self.assertEqual(find_record(map_workbook(workbook), '검증', 'Q7')['role']['kind'], 'detail')
+
+    def test_unknown_or_broken_formula_does_not_prove_unused_template(self) -> None:
+        """수식·공유 범위·캐시·기간의 불완전 근거를 미사용으로 확정하지 않는다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 확인되지 않은 수식 또는 비영 값을 제외한 경우.
+        Side Effects:
+            메모리 fixture의 수식만 바꾼다. 계산·파일 접근은 없다.
+        """
+        cases = [
+            {'text': '=SUM(R6:AC6)', 'cached_status': 'stored_unverified'},
+            {'text': '=SUM(R7:AB7)', 'cached_status': 'stored_unverified'},
+            {'text': '=SUM(R7:AC7)+0', 'cached_status': 'stored_unverified'},
+            {'text': '=SUM(R7:AC7)', 'cached_status': 'missing'},
+            {'text': None, 'attributes': {'t': 'shared', 'si': '0'}, 'cached_status': 'stored_unverified'},
+        ]
+        original_formula = next(c for c in inactive_expense_workbook()['sheets'][0]['cells'] if c['address'] == 'Q7')['formula']
+        wrong_range = deepcopy(original_formula)
+        wrong_range['shared_base']['attributes']['ref'] = 'Q6:Q6'
+        absolute_row = deepcopy(original_formula)
+        absolute_row['shared_base']['raw_text'] = 'SUM(R$6:AC$6)'
+        cases += [wrong_range, absolute_row]
+        for formula in cases:
+            with self.subTest(formula=formula):
+                workbook = inactive_expense_workbook()
+                next(c for c in workbook['sheets'][0]['cells'] if c['address'] == 'Q7')['formula'] = formula
+                self.assertEqual(find_record(map_workbook(workbook), '검증', 'Q7')['role']['kind'], 'detail')
+        for address, value in (('Q7', '1'), ('D7', '#REF!')):
+            workbook = inactive_expense_workbook()
+            next(c for c in workbook['sheets'][0]['cells'] if c['address'] == address)['value'] = value
+            self.assertEqual(find_record(map_workbook(workbook), '검증', 'Q7')['role']['kind'], 'detail')
+        workbook = inactive_expense_workbook()
+        next(c for c in workbook['sheets'][0]['cells'] if c['address'] == 'D7')['formula']['text'] = '=SUM(F7:F7)'
+        self.assertEqual(find_record(map_workbook(workbook), '검증', 'Q7')['role']['kind'], 'detail')
+        for header in ('2031년', '계획'):
+            workbook = inactive_expense_workbook()
+            next(c for c in workbook['sheets'][0]['cells'] if c['address'] == 'Q4')['value'] = header
+            self.assertNotEqual(find_record(map_workbook(workbook), '검증', 'Q7')['role']['kind'], 'inactive_template')
+
+    def test_missing_organization_formula_cache_never_uses_fallback(self) -> None:
+        """조직 수식 캐시 누락을 다른 정상 행의 공통 조직으로 덮지 않는다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 조회 미확정이 정상으로 바뀌거나 금액이 유실된 경우.
+        Side Effects:
+            메모리 원본만 읽으며 수식을 계산하지 않는다.
+        """
+        workbook = monthly_workbook()
+        cell = next(c for c in workbook['sheets'][1]['cells'] if c['address'] == 'D5')
+        cell.update(value=None, data_type='blank', formula={'text': '=LOOKUP(A5)', 'cached_status': 'missing'})
+        mapped = map_workbook(workbook)
+        record = find_record(mapped, '비용', 'I5')
+        self.assertEqual(record['organization']['status'], 'unresolved')
+        self.assertIsNone(record['organization']['code'])
+        self.assertEqual(record['value']['normalized_value'], Decimal('-1200000'))
+        diagnostic = next(d for d in mapped['diagnostics'] if d['code'] == 'ORGANIZATION_LOOKUP_ERROR')
+        self.assertEqual((diagnostic['sheet'], diagnostic['cell']), ('비용', 'D5'))
 
     def test_name_only_details_resolve_unique_same_workbook_code(self) -> None:
         """코드열 없는 두 상세표에서 유일한 원본 대응과 식별자를 확인한다.

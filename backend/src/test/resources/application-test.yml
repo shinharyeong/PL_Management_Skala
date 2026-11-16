@@ -1,0 +1,11 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:backend;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=YEAR,MONTH;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+  main:
+    banner-mode: off
+app:
+  parser:
+    worker-enabled: false
+    source-directory: ../parser/src

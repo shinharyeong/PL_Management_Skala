@@ -10,6 +10,14 @@
 - [논리 ERD 상세](development/erd.md) — 설계 v0.2의 컬럼·제약·상태 전이·검증 조건
 - [파서 결과와 DB 매핑](development/db-mapping.md) — 현재 파서 필드, 기술 마스터와 승인 마스터의 차이, 미구현 적재 어댑터
 - [아키텍처](architecture.png) — AWS EKS · S3 · RDS 기반 인프라 구성도
+- [서비스 API 명세](development/api-contract.md) — 0.6-draft, 업무 계약 35개 중 최초 연간 제출·적재 조회 17개 경로
+- [백엔드·파서 연결](development/backend-integration.md) — 설정·실행·파싱·검증 범위
+- [백엔드 함수 명세](development/backend-function-reference.md) — demo·parsed-records를 포함한 소스·테스트 함수와 호출 관계
+- [프런트 구현 안내](development/frontend-guide.md) — Figma 화면·라우트·API 흐름·함수 명세
+- [로컬 Docker 환경](development/local-environment.md) — `.env`·실행·종료·DB 볼륨·smoke 검증
+- [demo API와 파싱 후보](development/demo-api.md) — 개발 역할·17개 사업부 선택·합성 양식 2개 경로와 업무 API의 읽기 전용 후보 조회
+
+개발 전용 `/api/dev` 2개 경로는 업무 API 35개 집계와 구분합니다. 파싱 성공은 업무 검증·승인을 의미하지 않으며 후속 업무 기능의 성공 결과를 대신 만들지 않습니다.
 
 ## 문서 적용 기준
 

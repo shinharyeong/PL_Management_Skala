@@ -77,6 +77,10 @@ JSON은 UTF-8, JSONL은 줄마다 독립 객체입니다. gzip은 중복된 출�
 
 현재 모든 레코드는 안전한 자동 집계 정책이 미정이므로 `role.aggregatable=false`로 제공합니다. 상세·소계·합계, 월별·연간·비율, 원본 참고 마스터와 조직 제출본, 여러 제출 버전을 일괄 합산하지 않습니다.
 
+`role.kind=inactive_template`은 식별/월별 입력 없이 확인된 비용 양식 조회 오류와 같은 행의 연간 SUM만 남은 행의 후보입니다. 후보를 삭제하지 않고 `source`, `raw_value`, `formula`, `value`, `period`를 보존하며 `mapping.status=unmapped`, `mapping.rule_ids`에 `ROW_INACTIVE_EXPENSE_TEMPLATE`을 제공합니다. 이 행에는 상세 `business_validation`을 적용하지 않습니다. 직접 입력한 0·공백·월 수식·주석·미확정 수식/기간은 이 역할로 제외하지 않습니다. 엄격한 판정 조건은 [의미 매핑 규칙](mapping-rules.md#입력하지-않은-비용-양식-행)에 있습니다.
+
+조직 코드/이름의 원본 오류 또는 수식 캐시 누락은 `organization.status=unresolved`이며 원본 근거·`original_name`을 보존합니다. 수식이 있으면 `ORGANIZATION_LOOKUP_ERROR`, 수식 없는 오류 셀이면 `ORGANIZATION_VALUE_ERROR`로 구분합니다. 조직 진단의 `cell`은 오류·충돌한 조직 근거 셀 주소이며, 단순 금액 셀 주소나 임의 보완 조직을 가리키지 않습니다.
+
 ## 숫자와 단위 타입
 
 내부 정규화는 `decimal.Decimal`입니다. `normalized_value`, `multiplier`는 JSON에서 **십진 문자열**로 직렬화합니다. 합성 예로 천원 값 `100`은 원문을 유지하고 정규화 원화 문자열 `100000`로 연결합니다. API/DB 소비자는 float로 바꾸지 말고 decimal 또는 DB의 정밀 십진 타입으로 읽어야 합니다.
@@ -108,6 +112,8 @@ JSON은 UTF-8, JSONL은 줄마다 독립 객체입니다. gzip은 중복된 출�
 
 ## 월별 마스터의 업무 유효성과 숫자 금액
 
+이 절은 오프라인 월별 마스터 계약입니다. 아래의 제출 검증 어댑터와 승인 DB의 상태 전이는 별개입니다.
+
 `business_validation.status`는 `valid/invalid/unresolved/not_applicable`이다. 개별 필드는 `valid/invalid/unverified/missing/not_applicable`을 구분하며, 계약 부재를 유효성 확인으로 표현하지 않는다. 같은 조직 원본의 명시 상세 ID, 코드표와 직접 연결된 집계 수식 계약만 사용한다. `mapping.status`와 금액의 `value.status`를 이 검사로 덮어쓰지 않는다.
 
 월별 생성의 평탄 상세는 `business_validation` 전체와 원문 업무키·금액을 보존한다. 업무 검증이 invalid/unresolved이면 `semantic_complete=False`이며 `assembly_status=unresolved`, `included_in_totals=False`가 된다. 알려진 숫자는 `confirmed=True`와 정규금액 문자열을 유지한다. 따라서 금액을 가진 업무키 실패 출력은 엄격 평가의 FP에서 사라지지 않는다. 원본 업무키가 같은 정답이 있으면 해당 정답은 Recall 분모에 남는다.
@@ -115,3 +121,27 @@ JSON은 UTF-8, JSONL은 줄마다 독립 객체입니다. gzip은 중복된 출�
 문자열 `None` 등 무효 ID의 서로 다른 원본행은 수정본·동일 재전송으로 합치지 않는다. `selection_reason=unvalidated_identity_preserved_by_source_location` 및 `source_occurrences`로 물리적 출처를 유지한다. 원래 ID와 원본 숫자를 null로 바꾸지 않는다.
 
 선택 영역의 실제 빈칸과 업무키 실패가 함께 있는 경우 조립 상태는 업무 미확정이지만, `raw_value`, `normalized_value`, `input_presence`, `period_group`, `formula`는 빈 금액·수식 캐시·원본 선택 영역을 계속 구분한다. 따라서 조립 상태별 필수 미확정 슬롯 수는 필수 **금액 빈칸** 수와 다르다. 선택된 상세 외에 조직 미확정 등으로 제외한 상세도 별도로 감사하고, 진단 후보나 제출 소유자를 이용해 업무키를 보충하지 않는다.
+
+## 서비스 제출 검증 어댑터
+
+`stdlib-bridge/1.3`은 기존 `protocolVersion=1.0`, `contractVersion=preview-records/1.0`, 전체 `records` 투영을 유지하고 별도 `submissionData`를 추가합니다. `submission_adapter.build_submission_data(workbook, mapped)`는 같은 바이트에서 추출한 원본과 표준 후보만 읽습니다. 원본 후보·금액·수식·기간·미사용 역할을 변경하지 않습니다. 이 객체에는 승인/제출 준비 완료 상태가 없으며, 요청 연도·유형·로그인 조직의 선택과 검증·DB 트랜잭션은 백엔드 책임입니다.
+
+| 필드 | 계약 |
+| --- | --- |
+| `adapterVersion`, `sourceSha256` | `financial-submission/1.0`, 실제 원본 바이트 전체 SHA-256. 파일명은 조직·기간의 증거가 아님 |
+| `owner` | 같은 원본 조직표·상세 행으로 확인한 `code/name/status/evidence`. 단일 조직을 확인할 수 없으면 `UNRESOLVED` 또는 `MULTIPLE` |
+| `sheets` | 인식한 매출/비용 시트의 `name/domain/headerRow/periodColumns`. 각 열의 문자·연도·월·시나리오·상태·헤더 근거. 없는 12월 헤더를 생성하지 않음 |
+| `reportItems` | 직접 SUMIFS로 확인한 말단만 `key/kind/name/path/status/evidence/formulaCell`. `kind=REVENUE/COST`. 키는 종류+보고 계층 경로의 안정적 문자열이며 원본 계정 코드가 아님 |
+| `lines` | 활성 물리 행별 `key/domain/source(sheet,row)/organization/account/detailId/detailRevision/reportItemKey/reportMappingStatus`, `managementCategory/actualBasis/costType/teamCode/taskCode/description/personInCharge/teamName/taskName/headquartersName`, `fieldSources/businessValidation/values` |
+| `lines[].values` | 확인된 모든 원본 월 열의 `year/month/scenario/amount/valueStatus/inputPresence/sourceCell/sourceRecordId/sourceUnit/multiplier/formulaCacheStatus`. 연간/합계 셀은 상세 월 값에 포함하지 않음 |
+| `controlValues` | 검증된 보고 말단의 `reportItemKey` 또는 `calculationCode=REVENUE_TOTAL/COST_TOTAL/OP`와 `year/month/scenario/amount/valueStatus/sourceSheet/sourceCell/cacheStatus`. 수식의 저장 캐시이며 재계산 결과가 아님 |
+| `sourceCells` | 활성 행 메타·월 슬롯·조직/헤더·보고 항목·대조값의 근거를 `(sheet,cell)`로 중복 제거한 SourceCell 배열. 전체 원본 워크시트의 무제한 조회 계약은 아님 |
+| `diagnostics` | 고정 코드·ERROR·COMPLETENESS·조치 안내·확인된 source, 선택적인 lineKey. 원본 금액·민감 문자열을 안내문에 복제하지 않음 |
+
+월 슬롯의 `valueStatus`는 `AVAILABLE/MISSING/UNRESOLVED`입니다. `amount`는 정확한 십진 문자열 또는 null이며, 누락·미확정 값을 0으로 바꾸지 않습니다. `inputPresence`는 `PRESENT/STORED_BLANK/ABSENT_XML_CELL`을 구분합니다. 원본 후보가 없는 확인된 빈 슬롯은 파일 해시·시트·주소를 해시한 `slot:` 식별자를 갖습니다. 이는 원본 업무 상세 ID를 발급하는 것이 아닙니다. 중복 상세 ID·개정 번호는 모두 보존하며 선택·차단은 백엔드에서 수행합니다.
+
+`SourceCell`은 `sheet/cell/presence/dataType/rawValue/formula/cachedValue/cacheStatus/normalizationStatus/normalizedAmount/sourceUnit/multiplier`로 구성합니다. `presence=PRESENT/EMPTY`, `cacheStatus=NOT_FORMULA/STORED_UNVERIFIED/MISSING/ERROR`를 구분합니다. 숫자 원문과 Decimal은 문자열이며 값·수식이 없는 확인된 월 슬롯은 EMPTY입니다. 공유 수식 follower는 원본 `formula.text`가 없으므로 formula=null일 수 있고 캐시 상태는 계속 보존합니다. 외부 파일 경로는 포함하지 않습니다.
+
+보고 시트에 단위 표기가 없는 경우, 상세의 명시 단위와 직접 SUMIFS의 단일 표시 배율을 함께 증명하여 보고 캐시의 원 환산 단위를 정합니다. 확인된 말단으로 끝나는 같은 월 합계 및 `매출 총계−비용 총계` OP에만 같은 단위를 전파합니다. 표준 `records.value`는 그대로이며 제출용 `controlValues.amount`와 해당 `sourceCells.normalizedAmount`만 이 별도 근거를 사용합니다. 저장 캐시의 Excel 소수 오차도 보정하지 않습니다. 상세 합계와 캐시의 대조 허용 정책은 백엔드가 차이를 보존하여 판정해야 합니다.
+
+미사용 양식 행만 `lines`에서 제외합니다. 실제 0·월 수식·조직 오류·입력 없는 금액 슬롯·미등록 분류는 남습니다. 보고 매핑이 없거나 여러 항목에 대응하면 `reportItemKey=null`, `reportMappingStatus=UNRESOLVED`이며 보고 기준을 계정으로 추정하지 않습니다. 월 헤더 부재, 요청 범위 밖 기간, 조직 불일치, 중복/개정, 필수 금액·원본 대조값 누락은 호출자가 반드시 검증해야 합니다. 브리지의 `SUCCEEDED`만 보고 최종제출을 허용하면 안 됩니다.

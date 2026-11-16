@@ -1,12 +1,49 @@
 spring:
   application:
     name: backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/skala}
+    username: ${DB_USERNAME:skala}
+    password: ${DB_PASSWORD:}
+  sql:
+    init:
+      mode: never
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+      fail-on-trailing-tokens: true
+      accept-float-as-int: false
+    parser:
+      strict-duplicate-detection: true
+  servlet:
+    multipart:
+      max-file-size: 16MB
+      max-request-size: 17MB
+      file-size-threshold: 17MB
 
 server:
   port: 8080
+  address: ${SERVER_ADDRESS:127.0.0.1}
+  error:
+    include-message: never
+    include-stacktrace: never
 
 management:
   endpoints:
     web:
       exposure:
         include: health
+
+app:
+  parser:
+    python: ${PARSER_PYTHON:python3}
+    source-directory: ${PARSER_SOURCE_DIRECTORY:../parser/src}
+    timeout-seconds: 90
+    max-output-bytes: 67108864
+    worker-enabled: true
+    poll-delay-ms: 1000
+  local-auth:
+    planner-email: ${LOCAL_PLANNER_EMAIL:}
+    planner-token: ${LOCAL_PLANNER_TOKEN:}
+    organization-email: ${LOCAL_ORGANIZATION_EMAIL:}
+    organization-token: ${LOCAL_ORGANIZATION_TOKEN:}
