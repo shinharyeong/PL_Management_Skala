@@ -4,8 +4,8 @@
 
 | 항목 | 내용 |
 | --- | --- |
-| 문서 버전 | 0.6-draft · 최초 연간 제출·적재 조회 연결 |
-| 상태 | ERD v0.2 기반 전체 설계 35개 중 17개 구현. 최초 연간 검증·최종 제출·적재 조회 연결, 소명·승인·마스터는 후속 구현 |
+| 문서 버전 | 0.7-draft · 연간 제출 승인·반려 연결 |
+| 상태 | ERD v0.2 기반 전체 설계 35개 중 18개 구현. 최초 연간 검증·최종 제출·적재 조회·승인/반려 연결, 소명·월간 승인·마스터는 후속 구현 |
 | 기준 | [논리 ERD](https://github.com/shinharyeong/skala_final_project/blob/8c84d2783c9beb2f876810387baa7f9e3f503a50/docs/development/erd.md), [ERD PR #16](https://github.com/shinharyeong/skala_final_project/pull/16), [PR 기준 스키마](https://github.com/shinharyeong/skala_final_project/blob/8c84d2783c9beb2f876810387baa7f9e3f503a50/docs/development/erd.md) |
 | 확인한 백엔드 | Spring Boot 3.4.1 · Java 21 · JDBC/Flyway · PostgreSQL, 테스트만 H2 |
 | 범위 | 요청, 연간 계획, 전체 파일 제출, 파싱·검증, 금액 수정·OP Gap 소명, 승인·반려, 공식 마스터, 보고 데이터 |
@@ -17,7 +17,7 @@
 PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설계 커밋을 기준으로 하며, 합의한 업무 규칙·전체 API 설계와 현재 실행 가능한 구현 범위를 구분한다. 실제 구현과 검증 기록은 백엔드 연결 문서와 로컬 실행 환경 문서를 따른다.
 
 
-현재 구현은 총 35개 설계 경로 중 17개다: COM-01/02, REQ-01/02/03, SUB-01/02/03/04/05/06/07/08/09/10/12/13. 개발 전용 `/api/dev/session`, `/api/dev/template`는 이 수에서 제외한다. 파싱 성공 후에는 검증 전 `DRAFT + NOT_RUN + canSubmit=false`이며, 담당자가 validation과 submit을 각각 실행해야 `PENDING`이 된다. 초기 연결 범위는 원본 근거가 확인된 요청 연도의 연간 PLAN 1~12월이다. 월간 검증은 `MONTHLY_VALIDATION_UNAVAILABLE`, 수정 소명이 필요한 변경은 `CHANGE_EXPLANATION_REQUIRED`로 차단하며 소명·승인·연간 확정·공식 마스터 API는 아직 구현하지 않는다. 본문의 전체 설계가 모두 실행 가능한 API라는 뜻은 아니다.
+현재 구현은 총 35개 설계 경로 중 18개다: COM-01/02, REQ-01/02/03, SUB-01/02/03/04/05/06/07/08/09/10/11/12/13. 개발 전용 `/api/dev/session`, `/api/dev/template`는 이 수에서 제외한다. 파싱 성공 후에는 검증 전 `DRAFT + NOT_RUN + canSubmit=false`이며, 담당자가 validation과 submit을 각각 실행해야 `PENDING`이 된다. 초기 연결 범위는 원본 근거가 확인된 요청 연도의 연간 PLAN 1~12월이다. 월간 검증은 `MONTHLY_VALIDATION_UNAVAILABLE`, 수정 소명이 필요한 변경은 `CHANGE_EXPLANATION_REQUIRED`로 차단하며 소명·연간 확정·공식 마스터 API는 아직 구현하지 않는다. 연간 제출 승인·반려(SUB-11)는 구현했으며 월간 승인은 `MONTHLY_APPROVAL_UNAVAILABLE`로 차단한다. 본문의 전체 설계가 모두 실행 가능한 API라는 뜻은 아니다.
 
 검증은 파서 내부 `submissionData.adapterVersion=financial-submission/1.0`의 조직·월·분류·원 금액·답안지 합계 근거를 확인한다. 구버전 파서 결과에 이 근거가 없으면 `SUBMISSION_ADAPTER_REQUIRED`를 반환한다. 유효 상세는 검증 초안에 적재할 수 있지만 오류가 하나라도 있으면 `complete=false`, `canSubmit=false`, 보고값은 `UNRESOLVED/null`이다. 승인·공식 집계와 구분한다. 인증은 기존 local Bearer와 local·demo 체험 세션 범위이며 운영 로그인 정책을 대신하지 않는다.
 
@@ -141,7 +141,7 @@ PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설�
 
 현재 구현된 최초 연간 제출 흐름은 `REQ-02 → SUB-01 → SUB-03 폴링 → SUB-05 → SUB-06/07/13 확인 → 최신 SUB-03 → SUB-10`이다. 원본 확인은 `SUB-08/09`를 사용한다. 기획자는 `REQ-03.targets.latestSubmittedSubmissionId → SUB-03 → SUB-06/07/08/13`으로 제출 상태·적재행·집계·진단·원본 셀을 읽는다. 초안만 있는 조직은 SUB-02의 requestId/organizationId 필터로 확인한다.
 
-아래 표는 소명·승인·마스터의 후속 구현까지 포함한 전체 설계 순서다.
+아래 표는 소명·월간 승인·마스터의 후속 구현까지 포함한 전체 설계 순서다.
 
 | 화면 흐름 | 호출 순서 |
 | --- | --- |
@@ -339,7 +339,7 @@ CURRENT이나 차단 사유가 있으면 유효한 부분 적재행은 200으로
 
 ### SUB-10 · 최종 제출
 
-**현재 구현:** 담당자의 연간 검증 완료 초안을 `PENDING`으로 고정하고 제출 회차·제출자·시각을 기록한다. 아래 조건을 만족하지 않으면 제출 상태를 바꾸지 않는다. 변경 소명이 필요한 건·월간 검증·승인·마스터 발행은 이번 연결에 포함하지 않는다. `canSubmit=false`는 최종 제출 시 `409 SUBMISSION_NOT_READY`, 오래된 검증·비교 문맥은 `409 REVIEW_CONTEXT_CHANGED`다.
+**현재 구현:** 담당자의 연간 검증 완료 초안을 `PENDING`으로 고정하고 제출 회차·제출자·시각을 기록한다. 아래 조건을 만족하지 않으면 제출 상태를 바꾸지 않는다. 변경 소명이 필요한 건·월간 검증·월간 승인·마스터 발행은 이번 연결에 포함하지 않는다. `canSubmit=false`는 최종 제출 시 `409 SUBMISSION_NOT_READY`, 오래된 검증·비교 문맥은 `409 REVIEW_CONTEXT_CHANGED`다.
 
 입력은 `{expectedStateToken}`다. 서버는 조직 단위 잠금 아래 아래 조건을 재검사한다.
 
@@ -354,7 +354,9 @@ CURRENT이나 차단 사유가 있으면 유효한 부분 적재행은 200으로
 
 ### SUB-11 · 제출 승인·반려
 
-입력은 `{expectedStateToken, action, note?}`다. action은 APPROVE 또는 REJECT. note는 REJECT에만 허용하며 공백이 아닌 값이 필수다. APPROVE에는 승인 메모 필드가 없으므로 note를 보내면 400 INVALID_REQUEST다.
+**현재 구현:** PLANNER가 최신 PENDING 제출본을 판단한다. 연간 최초/금액 무변경 제출의 승인은 제출 당시 `annual-plan/1.0` 검증 객체·원본/파싱 참조·완전성·적재 건수를 확인하며, 요청 종료 후에도 검토할 수 있다. REJECT는 미완료 소명과 무관하게 가능하다. 원본·금액·제출 회차는 바꾸지 않고 검토자/시각과 반려 사유만 기록한다. 두 판단 모두 응답의 `masterEffects=[]`다. 월간 승인은 공식 마스터 트랜잭션 연결 전까지 `409 MONTHLY_APPROVAL_UNAVAILABLE`다. 반려 후 같은 요청에 새 전체 파일을 업로드하며, 금액 변경은 필수 소명 연결 전까지 차단한다.
+
+입력은 `{expectedStateToken, action, note?}`다. action은 APPROVE 또는 REJECT. note는 REJECT에만 허용하며 공백이 아닌 1~2000자 문자열이 필수다. 저장 시 양끝 공백을 제거한다. APPROVE에는 승인 메모 필드가 없으므로 note를 보내면 400 INVALID_REQUEST다.
 
 - APPROVE: PENDING이고 모든 필수 항목의 마지막 소명이 ACCEPTED여야 한다. 필수 항목이 없으면 이 조건 충족. 최종 제출 당시 기준으로 검토하며 최신 기준으로 다시 판정하지 않는다.
 - REJECT: PENDING이면 소명 수용 여부와 무관하게 제출본 자체 오류로 반려할 수 있다. REJECTED와 rejectReason·검토자/시각 기록. 숫자·기존 마스터는 유지한다.
@@ -564,6 +566,7 @@ errors는 `{field,code}` 목록이며 비어 있을 수 있다. 업무 오류는
 | 409 | REPORT_CATALOG_CONFLICT | 같은 보고 코드의 저장 이름·분류가 원본과 충돌 |
 | 404 | SOURCE_CELL_NOT_FOUND | 해당 제출본의 원본 셀 수집 근거 없음 |
 | 409 | REVIEW_CONTEXT_CHANGED / BASELINE_MISSING / THRESHOLD_MISSING | 비교 문맥 변경 또는 필수 기준 부재 |
+| 409 | MONTHLY_APPROVAL_UNAVAILABLE | 월간 승인·공식 마스터 발행 미연결 |
 | 409 | REQUIRED_EXPLANATION_MISSING / EXPLANATIONS_NOT_ACCEPTED | 최종 제출 답변 누락 / 승인 전 수용 미완료 |
 | 409 | EXPLANATION_ROUND_CHANGED / EXPLANATION_LOCKED | 오래된 회차 또는 답변·검토 잠금 |
 | 413 | FILE_TOO_LARGE | 업로드 또는 압축 해제 크기 한도 초과 |
@@ -615,12 +618,12 @@ errors는 `{field,code}` 목록이며 비어 있을 수 있다. 업무 오류는
 | --- | --- |
 | 인증 | 역할·조직 범위는 확정. 로그인 방식, 세션 만료, CSRF·인증 challenge는 미정 |
 | 운영 한도 | 초기 한도: 원본16MiB·출력64MiB·해제64MiB·5만셀·90초·조직당 대기/실행10건. 나머지 상세 제한은 bridge 설정. 운영 확장·보관 기간은 미정 |
-| 멱등·토큰 | 접수 명령에 사용자·메서드·경로·키 기반24시간 영속 멱등과 같은 DB 트랜잭션 적용. 초기 기술 테이블 stored_object/idempotency_record를 추가. 승인 트랜잭션은 후속 구현 |
+| 멱등·토큰 | 접수 명령에 사용자·메서드·경로·키 기반24시간 영속 멱등과 같은 DB 트랜잭션 적용. 초기 기술 테이블 stored_object/idempotency_record를 추가. 연간 승인·반려도 같은 잠금·멱등 트랜잭션 사용; 월간 승인·마스터 발행은 후속 구현 |
 | 수치·양식 | DB 금액 정밀도·범위, 필수 월/항목·빈칸 허용·안정적인 상세 비교 규격 |
 | 마감·조직 변경 | 자동 차단·리마인드, 기간 중 조직 신설·폐지 정책 |
 | Contingency 표시 | 연간 확정값은 고정. 월별/누적 실적 보고에 적용할 표시·배분 정책 |
 | 내보내기 | PDF/XLSX/이미지 등 지원 포맷과 클라이언트·서버 생성 책임 |
 | 파서 실행 | 내부 프로세스·DB 작업 큐로 초기 구현. 컨테이너 자원 제한·운영 모니터링은 후속 설정 |
-| 계약 구현 | 17개 경로·컨트롤러·서비스·실제 파서·최초 연간 검증/제출 연결 구현. OpenAPI 및 나머지 18개 경로는 후속 작업 |
+| 계약 구현 | 18개 경로·컨트롤러·서비스·실제 파서·연간 검증/제출/승인/반려 연결 구현. OpenAPI 및 나머지 17개 경로는 후속 작업 |
 
 HTTP 메서드·상태 의미는 [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html), 오류 표현은 [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html), 파일 전송 형식은 [RFC 7578](https://www.rfc-editor.org/rfc/rfc7578.html)을 참고한다. 경로·오류 code·멱등키·stateToken은 이 프로젝트가 제안한 계약이다.

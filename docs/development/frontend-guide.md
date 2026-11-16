@@ -1,6 +1,6 @@
 # 손익관리 프런트엔드 구현
 
-2026-11-16 기준 Vue 3.5 · Vite 8 · Vue Router · Pinia의 기존 스택을 유지한다. 소스는 저장소의 `frontend/`(작업공간에서는 `skala_final_project-develop/frontend/`)에 있으며 새 UI 라이브러리는 추가하지 않았다. 조직 담당자의 요청·초안·파싱 흐름과 경영기획팀의 6개 화면을 구분한다. 요청 생성·수집 현황·원본 조회는 실제 API에 연결하며, 손익 집계·Gap·보고서의 Figma 금액은 디자인 예시다. 최초 연간 계획 초안의 업무 검증·최종 제출과 제출본별 적재 금액·보고 집계·원본 셀 조회를 연결한다. 소명 답변·승인·공식 마스터는 이번 구현 범위가 아니다.
+2026-11-16 기준 Vue 3.5 · Vite 8 · Vue Router · Pinia의 기존 스택을 유지한다. 소스는 저장소의 `frontend/`(작업공간에서는 `skala_final_project-develop/frontend/`)에 있으며 새 UI 라이브러리는 추가하지 않았다. 조직 담당자의 요청·초안·파싱 흐름과 경영기획팀의 6개 화면을 구분한다. 요청 생성·수집 현황·원본 조회는 실제 API에 연결하며, 손익 집계·Gap·보고서의 Figma 금액은 디자인 예시다. 최초 연간 계획 초안의 업무 검증·최종 제출, 제출본별 적재 금액·보고 집계·원본 셀 조회, 기획자의 연간 제출 승인·반려를 연결한다. 소명 답변·연간 확정·월간 승인·공식 마스터는 후속 범위다.
 
 ## Figma 출처와 적용
 
@@ -51,11 +51,11 @@
 | `/` | `POST /api/dev/session {role, organizationCode?}` → 메모리 토큰·actor·선택 가능 조직 → 역할별 시작 화면 |
 | `/requests` | 열린 요청 GET·cursor, 세션 응답의 체험 조직 선택 시 새 조직 세션으로 전환 |
 | `/requests/:id/upload` | 요청 상세 → 양식 다운로드 또는 파일 입력 → multipart `POST .../submissions` |
-| `/submissions/:id` | 상태 GET·순차 폴링 → 진단·파싱 후보 조회, financial-values/report-values 독립 조회. 담당자만 validation → 준비 상태 확인 → submit. 출처 클릭은 source-cells GET |
+| `/submissions/:id` | 상태 GET·순차 폴링 → 진단·파싱 후보 조회, financial-values/report-values 독립 조회. 담당자는 validation → 준비 상태 확인 → submit, 기획자는 연간 PENDING에 decisions. 출처 클릭은 source-cells GET |
 | `/history` | 제출 목록 필터·cursor, query의 requestId/organizationId로 조직 현황에서 진입 |
 | `/planning` | `PlannerDashboard.vue`, 경영기획 기본 진입점. 전사 손익 디자인 예시 |
 | `/planning/gap` | `PlannerGap.vue`, 예시 선택·검색·정렬·탭·행 펼침·상세 dialog. HTTP·업무 상태 변경 없음 |
-| `/planning/requests` | `PlannerRequests.vue`, ANNUAL_PLAN 요청 목록·상세 GET, 조직별 초안·최종 제출 수, 최신 제출본 직접 연결(없으면 조직별 이력) |
+| `/planning/requests` | `PlannerRequests.vue`, ANNUAL_PLAN 요청 목록·상세 GET, 조직별 초안·최종 제출·승인 수, 검토 대기는 `검토`로 최신 제출본 연결(없으면 조직별 이력) |
 | `/planning/annual-plan` | `PlannerRequestCreate.vue`, 활성 조직 전체 GET → 멱등 연간 요청 POST → `/planning/requests?requestId=…` |
 | `/planning/organizations` | `PlannerOrganizations.vue`, 기본 디자인 예시. `실제 업로드`의 기본 연도는 2026. 경로의 실제 보기·조직·연월 복원, 제출 GET·원본 다운로드 |
 | `/planning/reports` | `PlannerReports.vue`, Figma 표·차트 예시 구성과 메시지 메모리 편집. 공식 보고서 생성 없음 |
@@ -78,6 +78,10 @@ summary의 `unusedTemplateRowCount`가 0보다 크면 기존 네 개 요약 건�
 `SubmissionDetail.vue`는 기존 카드·색·표를 유지하고 `SubmissionData.vue`로 적재 조회만 분리한다. `financial-values`의 선택 완료 상세행·월 금액과 `report-values`의 보고 합계를 원본 `parsed-records` 후보와 별도 표로 표시한다. 팀·과제·계정·상세 ID·설명은 원천 근거이며 별도 Gap 평가 축으로 취급하지 않는다. 적재·보고의 확정 금액은 원 단위 십진 문자열을 유지한다. 파싱 후보의 nullable amountUnit과 혼동하지 않는다. `valueStatus=MISSING/UNRESOLVED`는 `—`와 해당 상태로 표시하고 일부 행만 합산한 값을 만들지 않는다. `summary.complete=false`이면 유효 일부 행을 담은 검증 초안이라고 안내한다. 검증 전·무효화 조회의 `VALIDATION_REQUIRED/VALIDATION_STALE`는 빈 결과로 단정하지 않고 검증 필요 안내를 표시한다.
 
 업무 검증과 최종 제출은 ORG_MANAGER의 DRAFT에만 제공한다. 검증은 파싱 SUCCEEDED에서 `POST .../validation {expectedStateToken}`으로 실행하고 응답의 submission을 채택한 뒤 최신 상태·진단을 조회한다. `readiness.blockers`의 message/code/source를 그대로 안내하며 `canSubmit=true`일 때만 `POST .../submit {expectedStateToken}`을 허용한다. 같은 명령·본문의 통신 재시도에는 같은 멱등키를 사용한다. 상태 충돌은 최신 GET으로 갱신하고 오류를 표시하며 자동 재제출하지 않는다. 제출 후 서버의 회차·행위자·시각과 PENDING을 표시하며 승인으로 바꾸지 않는다. 기획자에게는 담당자 명령 버튼을 표시하지 않는다.
+
+연간 제출본의 `PENDING`에서만 PLANNER에게 `제출본 검토`를 제공한다. `chooseDecision`으로 승인·반려 확인 폼을 열고 `decide`가 `POST .../decisions {expectedStateToken, action, note?}`를 실행한다. 반려 사유는 앞뒤 공백을 제거한 1~2,000자이며 REJECT일 때만 note를 전송한다. APPROVE 본문에는 note 필드가 없다. 같은 본문 재시도는 동일 멱등키를 사용하고 처리 중 버튼·사유 입력은 잠근다. `RESOURCE_CHANGED`, `INVALID_SUBMISSION_STATE`, `REVIEW_CONTEXT_CHANGED`는 최신 GET 후 오류를 표시하며 자동으로 재판단하지 않는다. 성공 응답의 submission을 반영하고 검토자·검토 시각·반려 사유를 양쪽 역할에 표시한다. 제출본 승인과 연간 계획 전체 확정을 구분하며 월간 판단은 연결되지 않았다고 알린다.
+
+반려본은 원본과 적재 금액을 보존한다. 담당자의 `전체 파일 다시 제출`은 기존 업로드 경로에서 새 초안을 만드는 동작이며 기존 반려본을 수정하지 않는다. 금액 수정 소명이 필요한 변경본은 소명 기능 연결 전까지 최종 제출이 제한됨을 재제출 링크 위에 안내한다. 요청 현황으로 돌아가면 목록과 선택 요청을 새로 조회하여 서버의 최신 상태 및 approvedCount를 표시한다.
 
 진단·적재 금액·파싱 후보의 원본 위치를 누르면 `source-cells?sheet&cell`로 정확한 셀을 조회한다. 패널은 값·수식·저장된 계산값·단위·배율·정규화 상태를 표시하며 원본을 재계산하지 않는다. source-cells의 sharedFormulaBase가 있으면 `공유 수식 · 기준 셀`과 실제 기준 수식·공유 범위를 별도로 표시한다. 이를 현재 셀의 수식으로 복제하거나 실행하지 않는다. formula=null이면서 기준 근거도 없으면 cacheStatus에 따라 `수식 원문 미확인`과 `없음`을 구분한다. 파싱 후보 DTO만으로 수식 존재를 알 수 없으면 원본 셀 확인을 안내한다. 정규화 값은 sourceUnit이 확인될 때만 원으로 표시한다. CONTROL_CACHE_PRECISION 진단은 저장 캐시·정확한 상세 합계·차이를 함께 표시하며 숫자를 수정하지 않는다. 없는 셀은 API 오류로 표시하고 빈 셀과 혼동하지 않는다. 선택 변경은 이전 조회를 취소하고 세대값으로 늦은 응답을 무시한다. 파싱 시도 변경·재파싱·화면 이탈에는 패널을 비운다.
 
@@ -128,11 +132,13 @@ summary의 `unusedTemplateRowCount`가 0보다 크면 기존 네 개 요약 건�
 | `upload`, `template` | 없음/즉시 실행 여부 → Promise<void> | sendFile 또는 양식 다운로드; 오류 표시 |
 | `dispose` | 없음 → void | 파일/요청 HTTP 취소 |
 | `upload-filename.js` · `inspectUploadFilename` | 원본명·제출명·현재 조직 코드 → 허용/동의 필요/거절 사유 | 계약 이름 또는 확인된 17개 원본 이름만 허용; 파일 읽기·쓰기 없음 |
-| `SubmissionDetail.vue` · `isParsing`, `allowsValidation`, `allowsSubmission` | 없음 → boolean | 파싱·역할·상태·서버 준비 상태 판정 |
+| `SubmissionDetail.vue` · `isParsing`, `allowsValidation`, `allowsSubmission`, `allowsReview` | 없음 → boolean | 파싱·역할·상태·서버 준비 상태·연간 검토 범위 판정 |
 | `submissionReturn`, `describeState`, `blockerMessage` | 없음/없음/blocker → 라우트·안내 | 허용된 복귀 문맥과 실제 상태 표시; 부작용 없음 |
 | `load`, `loadResults`, 내부 `setDiagnostics`/`setRecords` | 없음/세대/응답 → Promise<void>/void | 상태 GET·순차 폴링·진단/후보 병렬 조회, 구 응답 차단 |
 | `more` | 자료 종류 → Promise<void> | 현재 cursor의 다음 페이지 추가 |
 | `command` | validation/submit/parsing-retries → Promise<void> | 권한·상태 확인 → 토큰/멱등키 POST → 최신 상태·진단 조회 |
+| `chooseDecision` | APPROVE/REJECT/빈 문자열 → void | 기획자·연간 PENDING 확인 → 확인 폼 열기/취소, 서버 변경 없음 |
+| `decide` | 없음 → Promise<void> | 반려 사유 검사 → 토큰/멱등키 decisions POST → 응답의 상태·검토 결과 반영 → load, 상태 충돌도 load 후 오류 표시 |
 | `openCell`, `closeCell` | 서버 출처/없음 → Promise<void>/void | 정확한 원본 셀 GET·초점 이동 / 취소·패널 초기화 |
 | `download`, `dispose` | 없음 → Promise<void>/void | 원본 GET·saveBlob / 폴링·명령·셀 조회 취소 |
 | `SubmissionData.vue` · `resultMessage` | API 오류 → 안내 | NOT_RUN/STALE/파싱 중을 조회 오류와 구분 |
@@ -191,7 +197,7 @@ summary의 `unusedTemplateRowCount`가 0보다 크면 기존 네 개 요약 건�
 | 홈 · 전사 손익 | 상·중·하단 시각 확인. 마감·To Do → KPI → 요약·Top 5 → 사업부별 → 손익 흐름 → 월별 추이 순서와 SVG 계획선·점·분리선·연결선 표시 확인 |
 | 최종 프로덕션 빌드 | Docker 프런트 빌드 49개 모듈 처리 성공, frontend healthy 확인 |
 
-위 결과는 확인한 동작만 기록한 것이며 모든 선택·검색·반응형 조합의 완전 검증을 뜻하지 않는다. 후속 정적 점검에서 Gap 상세 항목과 보고서 옵션 label에 남아 있던 공통 CSS 글자 굵기를 보정했다. 마지막 label 스타일 보정은 소스 점검과 최종 프로덕션 빌드로 확인했으며 별도의 시각 재검증을 했다고 기록하지 않는다. 미구현 최종 제출·소명 처리·승인·마스터·보고서 내보내기는 검증 완료로 표시하지 않는다.
+위 결과는 확인한 동작만 기록한 것이며 모든 선택·검색·반응형 조합의 완전 검증을 뜻하지 않는다. 후속 정적 점검에서 Gap 상세 항목과 보고서 옵션 label에 남아 있던 공통 CSS 글자 굵기를 보정했다. 마지막 label 스타일 보정은 소스 점검과 최종 프로덕션 빌드로 확인했으며 별도의 시각 재검증을 했다고 기록하지 않는다. 당시 미구현이던 최종 제출·소명 처리·승인·마스터·보고서 내보내기의 검증 근거로 사용하지 않는다.
 
 ### 사업부 원본 업로드 연결의 추가 검증
 
@@ -202,3 +208,7 @@ summary의 `unusedTemplateRowCount`가 0보다 크면 기존 네 개 요약 건�
 ### 최초 연간 제출·적재 조회 연결 검증
 
 이번 프런트 변경은 파일을 만들지 않는 메모리 검사로 검증했다. 변경한 7개 JavaScript/script setup의 `node --check`와 공백 오류 검사가 통과했다. 모의 API에서는 검증 실패 후 같은 본문·멱등키 재시도, 검증 후 새 토큰으로 submit, PENDING 전환, 기획자의 담당자 명령 차단, 연속 원본 셀 선택의 늦은 응답 무시, 요청 표의 최신 제출본/이력 분기가 통과했다. 이는 실제 Vue 템플릿 렌더·서버 적재·원본 금액 검증을 대신하지 않는다. 실제 Docker 빌드와 브라우저의 최초 연간 최종 제출·기획 조회 검증은 통합 단계에서 확인한다.
+
+### 연간 제출 승인·반려 연결 검증
+
+`SubmissionDetail.vue`, `PlannerRequests.vue`의 script setup을 메모리에서 `node --check`로 검사했고 공백 오류 검사가 통과했다. 모의 API로 기획자·연간 PENDING 권한 조건, 승인 본문의 note 생략, 반려 사유 공백·2,000자 초과 차단 및 앞뒤 공백 제거, 통신 실패 재시도의 동일 본문·멱등키, 오래된 토큰 충돌 후 최신 상태 조회, 중복 클릭 차단을 확인했다. 이 결과는 실제 API·DB 트랜잭션, Vue 템플릿 렌더, 브라우저 시각 검증을 대신하지 않는다.

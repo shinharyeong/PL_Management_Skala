@@ -95,7 +95,7 @@ function shortDate(value, withTime = false) {
  */
 function targetStatus(target) {
   const states = {
-    PENDING: { label: '제출 완료', tone: 'submitted' },
+    PENDING: { label: '검토 대기', tone: 'submitted' },
     APPROVED: { label: '승인 완료', tone: 'approved' },
     REJECTED: { label: '반려', tone: 'overdue' },
   }
@@ -170,7 +170,7 @@ onBeforeUnmount(dispose)
                   <span :class="['request-state', targetStatus(target).tone]">{{ targetStatus(target).label }}</span>
                   <small v-if="target.draftCount">업로드 초안 {{ target.draftCount }}건</small>
                 </td>
-                <td><RouterLink :to="targetLink(target)" class="detail-link">보기</RouterLink></td>
+                <td><RouterLink :to="targetLink(target)" class="detail-link">{{ target.latestStatus === 'PENDING' ? '검토' : '보기' }}</RouterLink></td>
               </tr>
             </tbody>
             <tfoot>
@@ -186,7 +186,7 @@ onBeforeUnmount(dispose)
             </tfoot>
           </table>
         </div>
-        <p class="progress-note">업로드 초안은 최종 제출 완료에 포함하지 않습니다.</p>
+        <p class="progress-note">최종 제출 {{ selected.submittedCount }}/{{ selected.targetCount }}곳 · 승인 {{ selected.approvedCount }}/{{ selected.targetCount }}곳. 업로드 초안은 최종 제출 완료에 포함하지 않습니다.</p>
       </template>
       <div v-else-if="!error" class="progress-empty">
         <p>아직 발송한 연간 계획 요청이 없습니다.</p>

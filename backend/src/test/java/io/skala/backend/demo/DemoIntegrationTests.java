@@ -224,7 +224,7 @@ class DemoIntegrationTests {
         return mapper.readTree(response);
     }
 
-    /** 합성 양식이 실제 파서에서 12개월 계획·정밀 금액·0을 보존하는지 확인한다.
+    /** 합성 양식의 실제 파싱·검증·최종 제출·승인과 정밀 금액·0 보존을 확인한다.
      * Args: 없음. Returns: 없음. Raises: HTTP/파서/검증 오류.
      * Side Effects: 메모리 ZIP·DB·-B Python 프로세스. 파일 fixture 생성 없음.
      */
@@ -238,6 +238,9 @@ class DemoIntegrationTests {
         assertThat(result.path("summary").path("unresolvedCount").asInt()).isZero();
         assertThat(result.path("summary").path("unusedTemplateRowCount").asInt()).isZero();
         assertThat(result.path("records").findValuesAsText("normalized_value")).contains("1000000.50", "300000.25", "0");
+        assertThat(result.path("submissionData").path("owner").path("code").asText()).isEqualTo("D100");
+        assertThat(result.path("submissionData").path("reportItems").size()).isEqualTo(2);
+        assertThat(result.path("submissionData").path("diagnostics").isEmpty()).isTrue();
         String submissionId = upload(requestId, template);
         mvc.perform(get("/api/v1/submissions/" + submissionId + "/parsed-records").header("Authorization", MANAGER))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("PARSING_NOT_READY"));
@@ -254,7 +257,7 @@ class DemoIntegrationTests {
                 monetaryCount++;
             }
         }
-        assertThat(monetaryCount).isEqualTo(24);
+        assertThat(monetaryCount).isEqualTo(84);
         assertThat(response.getContentAsString(StandardCharsets.UTF_8))
                 .doesNotContain("source_object_key", "result_object_key", "raw_record_id", "source_id", "standard:");
         JsonNode first = mapper.readTree(mvc.perform(get("/api/v1/submissions/" + submissionId + "/parsed-records?limit=1")
@@ -263,8 +266,34 @@ class DemoIntegrationTests {
         assertThat(first.path("nextCursor").isTextual()).isTrue();
         mvc.perform(get("/api/v1/submissions/" + submissionId + "/parsed-records").param("limit", "1")
                 .param("cursor", first.path("nextCursor").asText()).header("Authorization", MANAGER)).andExpect(status().isOk());
-        mvc.perform(get("/api/v1/submissions/" + submissionId).header("Authorization", MANAGER))
-                .andExpect(jsonPath("$.status").value("DRAFT")).andExpect(jsonPath("$.readiness.canSubmit").value(false));
+        JsonNode draft = mapper.readTree(mvc.perform(get("/api/v1/submissions/" + submissionId).header("Authorization", MANAGER))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("DRAFT"))
+                .andExpect(jsonPath("$.readiness.canSubmit").value(false))
+                .andReturn().getResponse().getContentAsByteArray());
+        JsonNode validated = mapper.readTree(mvc.perform(post("/api/v1/submissions/" + submissionId + "/validation")
+                .header("Authorization", MANAGER).header("Idempotency-Key", "demo-flow-validation")
+                .contentType("application/json").content(mapper.writeValueAsBytes(java.util.Map.of(
+                        "expectedStateToken", draft.path("stateToken").asText()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.submission.readiness.canSubmit").value(true))
+                .andExpect(jsonPath("$.submission.readiness.requiredCount").value(0))
+                .andReturn().getResponse().getContentAsByteArray()).path("submission");
+        mvc.perform(get("/api/v1/submissions/" + submissionId + "/financial-values").header("Authorization", MANAGER))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.summary.complete").value(true))
+                .andExpect(jsonPath("$.summary.lineCount").value(2)).andExpect(jsonPath("$.summary.valueCount").value(24));
+        JsonNode submitted = mapper.readTree(mvc.perform(post("/api/v1/submissions/" + submissionId + "/submit")
+                .header("Authorization", MANAGER).header("Idempotency-Key", "demo-flow-submit")
+                .contentType("application/json").content(mapper.writeValueAsBytes(java.util.Map.of(
+                        "expectedStateToken", validated.path("stateToken").asText()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.seq").value(1)).andReturn().getResponse().getContentAsByteArray());
+        mvc.perform(post("/api/v1/submissions/" + submissionId + "/decisions")
+                .header("Authorization", PLANNER).header("Idempotency-Key", "demo-flow-approve")
+                .contentType("application/json").content(mapper.writeValueAsBytes(java.util.Map.of(
+                        "expectedStateToken", submitted.path("stateToken").asText(), "action", "APPROVE"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.submission.status").value("APPROVED"))
+                .andExpect(jsonPath("$.submission.seq").value(1)).andExpect(jsonPath("$.masterEffects").isEmpty());
+        mvc.perform(get("/api/v1/submission-requests/" + requestId).header("Authorization", PLANNER))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.approvedCount").value(1));
     }
 
     /** 미사용 행 수를 전달하고 구버전 저장 결과와 결과 없는 실패는 0으로 조회한다.

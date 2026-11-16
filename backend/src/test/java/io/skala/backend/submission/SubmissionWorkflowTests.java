@@ -296,6 +296,114 @@ class SubmissionWorkflowTests {
         assertDraft(10);
     }
 
+    /** 서로 다른 기획자의 승인·반려 경합에서 먼저 잠근 판단만 한 번 저장한다.
+     * Args: 없음. Returns: 없음. Raises: 스레드·검증 오류.
+     * Side Effects: 합성 제출·기획 계정·테스트 스레드와 메모리 DB만 사용한다.
+     */
+    @Test
+    void concurrentApprovalAndRejectionPreserveOneDecision() throws Exception {
+        Actor planner = planner();
+        jdbc.sql("INSERT INTO app_user(id,email,name,role) VALUES (5,'reviewer@example.test','다른 기획','PLANNER')").update();
+        Actor reviewer = new Actor("5", "reviewer@example.test", "다른 기획", "PLANNER", null);
+        makePending(10);
+        var approve = decisionInput(planner, "10", "APPROVE", null);
+        var reject = decisionInput(reviewer, "10", "REJECT", "합성 검토 사유");
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            entered.countDown();
+            if (!release.await(3, TimeUnit.SECONDS)) throw new IllegalStateException("테스트 잠금 대기 초과");
+            return null;
+        }).when(validation).assertReadyForApproval(planner, "10");
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> workflow.decide(planner, "10", "approve-race-01", approve));
+            assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
+            var second = executor.submit(() -> {
+                try {
+                    workflow.decide(reviewer, "10", "reject-race-01", reject);
+                    return "UNEXPECTED_SUCCESS";
+                } catch (ApiException error) {
+                    return error.code();
+                }
+            });
+            assertThatThrownBy(() -> second.get(150, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+            release.countDown();
+            assertThat(first.get(5, TimeUnit.SECONDS).status()).isEqualTo(200);
+            assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo("INVALID_SUBMISSION_STATE");
+        } finally {
+            release.countDown();
+        }
+        var row = jdbc.sql("SELECT status,seq,reviewed_by,reject_reason FROM submission WHERE id=10").query().singleRow();
+        assertThat(row.get("status")).isEqualTo("APPROVED");
+        assertThat(((Number) row.get("seq")).intValue()).isEqualTo(1);
+        assertThat(((Number) row.get("reviewed_by")).longValue()).isEqualTo(1);
+        assertThat(row.get("reject_reason")).isNull();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM idempotency_record").query(Long.class).single()).isEqualTo(1);
+    }
+
+    /** 승인 근거 검사 실패가 부분 쓰기와 검토 기록·멱등 응답을 함께 롤백한다.
+     * Args: 없음. Returns: 없음. Raises: 검증 오류.
+     * Side Effects: 메모리 DB에 고의 부분 쓰기를 시도하고 롤백 결과만 읽는다.
+     */
+    @Test
+    void approvalFailureRollsBackDecisionAndPartialWrites() {
+        Actor planner = planner();
+        makePending(10);
+        doAnswer(invocation -> {
+            jdbc.sql("UPDATE submission SET reviewed_by=1,reviewed_at=CURRENT_TIMESTAMP WHERE id=10").update();
+            throw new ApiException(HttpStatus.CONFLICT, "APPROVAL_NOT_READY", "승인 근거 불충분");
+        }).when(validation).assertReadyForApproval(planner, "10");
+        assertThatThrownBy(() -> workflow.decide(planner, "10", "approve-rollback-01", decisionInput(planner, "10", "APPROVE", null)))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("APPROVAL_NOT_READY");
+        var row = jdbc.sql("SELECT status,reviewed_by,reviewed_at FROM submission WHERE id=10").query().singleRow();
+        assertThat(row.get("status")).isEqualTo("PENDING");
+        assertThat(row.get("reviewed_by")).isNull();
+        assertThat(row.get("reviewed_at")).isNull();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM idempotency_record").query(Long.class).single()).isZero();
+    }
+
+    /** 최신 완료 회차가 아닌 대기본과 확정된 계획의 승인을 차단한다.
+     * Args: 없음. Returns: 없음. Raises: 검증 오류.
+     * Side Effects: 메모리 DB에 불일치 회차·확정 계획 조건을 준비하며 업무 명령은 실패한다.
+     */
+    @Test
+    void olderPendingAndConfirmedPlanCannotBeApproved() {
+        Actor planner = planner();
+        makePending(10);
+        seedDraft(11);
+        jdbc.sql("UPDATE submission SET status='REJECTED',seq=2,submitted_by=2,submitted_at=CURRENT_TIMESTAMP WHERE id=11").update();
+        assertThatThrownBy(() -> workflow.decide(planner, "10", "approve-old-01", decisionInput(planner, "10", "APPROVE", null)))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("INVALID_SUBMISSION_STATE");
+        jdbc.sql("UPDATE submission SET status='DRAFT',seq=NULL WHERE id=11").update();
+        jdbc.sql("UPDATE annual_plan SET status='CONFIRMED' WHERE id=1").update();
+        assertThatThrownBy(() -> workflow.decide(planner, "10", "approve-confirmed-01", decisionInput(planner, "10", "APPROVE", null)))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("ANNUAL_PLAN_LOCKED");
+        assertThat(jdbc.sql("SELECT status FROM submission WHERE id=10").query(String.class).single()).isEqualTo("PENDING");
+        verifyNoInteractions(validation);
+    }
+
+    /** 독립 기획 계정의 인증 문맥을 만든다.
+     * Args: 없음. Returns: 준비한 DB 기획자와 일치하는 Actor. Raises: 없음. Side Effects: 없음.
+     */
+    private Actor planner() { return new Actor("1", "planner@example.test", "기획", "PLANNER", null); }
+
+    /** 초안을 완료 회차 하나의 합성 검토 대기본으로 준비한다.
+     * Args: submissionId 준비할 제출 ID. Returns: 없음. Raises: DB 오류. Side Effects: 메모리 제출 행 변경.
+     */
+    private void makePending(long submissionId) {
+        jdbc.sql("UPDATE submission SET status='PENDING',seq=1,submitted_by=2,submitted_at=CURRENT_TIMESTAMP WHERE id=?")
+                .param(submissionId).update();
+    }
+
+    /** 최신 토큰과 행위별 허용 필드만 가진 판단 입력을 만든다.
+     * Args: actor 기획자, submissionId 제출, action APPROVE/REJECT, note 반려 사유 또는 null.
+     * Returns: 서비스 판단 입력. Raises: 입력 변환 오류. Side Effects: 메모리 DB 읽기.
+     */
+    private SubmissionWorkflowService.DecisionInput decisionInput(Actor actor, String submissionId, String action, String note) {
+        return new SubmissionWorkflowService.DecisionInput(currentView(actor, submissionId).get("stateToken").toString(), action, note);
+    }
+
     /** 독립 원본·성공 파싱을 참조하는 합성 초안을 준비한다.
      * Args: submissionId 합성 ID. Returns: 없음. Raises: DB 오류.
      * Side Effects: 메모리 DB의 제출·파싱 행 INSERT.
@@ -322,7 +430,7 @@ class SubmissionWorkflowTests {
         var row = rows.getFirst();
         String token = ApiData.hash((row.get("id") + ":" + row.get("status") + ":" + row.get("seq") + ":"
                 + row.get("attempt_no") + ":" + row.get("parsing_status")).getBytes(StandardCharsets.UTF_8));
-        return ApiData.object("id", submissionId, "status", row.get("status"), "seq", row.get("seq"), "stateToken", token);
+        return ApiData.object("id", submissionId, "organizationId", row.get("organization_id").toString(), "status", row.get("status"), "seq", row.get("seq"), "stateToken", token);
     }
 
     /** 현재 합성 상태에서 명령 입력을 만든다.

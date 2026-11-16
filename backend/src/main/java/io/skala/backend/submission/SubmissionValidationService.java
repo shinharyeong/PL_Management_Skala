@@ -104,6 +104,49 @@ public class SubmissionValidationService {
         if (!Boolean.TRUE.equals(state.get("canSubmit"))) throw conflict("SUBMISSION_NOT_READY", "최종 제출 조건을 충족하지 못했습니다. 검증 결과를 확인해 주세요.");
     }
 
+    /** 최종 제출 때 고정한 연간 검증 근거와 적재 완전성을 승인 전에 확인한다.
+     * Args: actor 경영기획 담당자, submissionId 호출자가 조직·제출 잠금을 소유한 제출본.
+     * Returns: 없음. Raises: ApiException 제출 당시 근거 부재·불일치·미완료·적재 누락.
+     * Side Effects: DB 읽기만 수행. 최신 요청 상태·비교본·정책으로 재검증하거나 금융값을 변경하지 않는다.
+     */
+    public void assertReadyForApproval(Actor actor, String submissionId) {
+        actor.requireRole("PLANNER");
+        Map<String, Object> row = accessible(actor, submissionId);
+        var saved = rows("SELECT * FROM submission_validation WHERE submission_id=?", id(submissionId));
+        if (saved.isEmpty()) throw conflict("VALIDATION_REQUIRED", "제출 당시 업무 검증 근거가 없어 승인할 수 없습니다.");
+        Map<String, Object> validation = saved.getFirst();
+        JsonNode snapshot = objectResult(validation.get("validation_result_object_key").toString());
+        // 이 정책은 수정 금액이 있으면 complete=false로 고정한다. 소명 구현 전 승인 우회를 막는다.
+        if (!"ANNUAL_PLAN".equals(row.get("type")) || !"PENDING".equals(row.get("status"))
+                || !"SUCCEEDED".equals(row.get("parsing_status"))
+                || !"annual-plan/1.0".equals(validation.get("policy_version"))
+                || !Objects.equals(validation.get("policy_version"), snapshot.path("policyVersion").asText())
+                || !Objects.equals(validation.get("attempt_no"), row.get("attempt_no"))
+                || !Objects.equals(validation.get("source_sha256"), row.get("source_sha256"))
+                || !Objects.equals(validation.get("parser_result_object_key"), row.get("result_object_key"))
+                || !Objects.equals(nullableId(snapshot.path("previousSubmissionId")), row.get("previous_submission_id"))) {
+            throw conflict("REVIEW_CONTEXT_CHANGED", "제출 당시 검증 근거와 현재 제출본이 일치하지 않아 승인할 수 없습니다.");
+        }
+        if (!snapshot.path("complete").asBoolean() || !snapshot.path("summary").path("complete").asBoolean()
+                || !snapshot.path("diagnostics").isArray() || !snapshot.path("reportValues").isArray()
+                || snapshot.path("reportValues").isEmpty() || snapshot.path("fingerprint").asText().isBlank()) {
+            throw conflict("SUBMISSION_NOT_READY", "완전한 검증 근거가 확인된 제출본만 승인할 수 있습니다.");
+        }
+        for (JsonNode diagnostic : snapshot.path("diagnostics")) {
+            if ("ERROR".equals(diagnostic.path("severity").asText())) {
+                throw conflict("SUBMISSION_NOT_READY", "미해결 검증 오류 또는 필수 수정 소명이 있어 승인할 수 없습니다.");
+            }
+        }
+        long lines = jdbc.sql("SELECT COUNT(*) FROM financial_line WHERE submission_id=?")
+                .param(id(submissionId)).query(Long.class).single();
+        long values = jdbc.sql("SELECT COUNT(*) FROM financial_value v JOIN financial_line l ON l.id=v.line_id WHERE l.submission_id=?")
+                .param(id(submissionId)).query(Long.class).single();
+        if (lines == 0 || values == 0 || lines != snapshot.path("summary").path("lineCount").asLong(-1)
+                || values != snapshot.path("summary").path("valueCount").asLong(-1)) {
+            throw conflict("SUBMISSION_NOT_READY", "제출 당시 검증한 금액의 적재 구성이 일치하지 않습니다.");
+        }
+    }
+
     /** 저장된 근거로 현재 준비 상태를 계산한다.
      * Args: submissionRow id를 가진 내부 제출 행. Returns: readiness DTO.
      * Raises: IllegalStateException 저장 결과 손상. Side Effects: DB 읽기; 상태·금액 변경 없음.

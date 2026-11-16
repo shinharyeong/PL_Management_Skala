@@ -6,7 +6,7 @@
 
 호출 관계 열은 프로젝트 내부의 직접 호출을 중심으로 정리한다. 외부 JDK·Spring API 호출 전체를 나열하지 않으며, 프레임워크 진입점과 DB·HTTP·프로세스 경계는 각 타입 설명 및 부작용에 명시한다. 같은 이름의 오버로드는 호출 대상 이름을 공유한다. 테스트 표는 검증 범위를 설명하며 실행 결과를 주장하지 않는다.
 
-서비스 [API 계약](api-contract.md)은 0.6-draft이며 전체 설계 35개 중 17개를 구현했다. 개발 전용 /api/dev 2개 경로는 제외한다. 최초 연간 PLAN의 검증·적재·최종 제출과 적재값·보고 집계·정확한 원본 셀 조회를 연결한다. 파싱 성공만으로는 DRAFT/NOT_RUN이며 명시적 검증 후 최종 제출이 PENDING을 만든다. 변경 소명·월간 비교·승인·연간 확정·공식 마스터는 후속 범위이며 준비되지 않은 업무는 차단한다.
+서비스 [API 계약](api-contract.md)은 0.7-draft이며 전체 설계 35개 중 18개를 구현했다. 개발 전용 /api/dev 2개 경로는 제외한다. 최초 연간 PLAN의 검증·적재·최종 제출과 적재값·보고 집계·정확한 원본 셀 조회를 연결한다. 파싱 성공만으로는 DRAFT/NOT_RUN이며 명시적 검증 후 최종 제출이 PENDING을 만든다. 연간 승인·반려를 지원한다. 변경 소명·월간 비교/승인·연간 확정·공식 마스터는 후속 범위이며 준비되지 않은 업무는 차단한다.
 
 관련 문서: [프런트 흐름·함수](frontend-guide.md), [로컬 실행·검증](local-environment.md), [demo·파싱 후보 계약](demo-api.md). 개발 세션과 후보 조회는 아래 각 타입 표에 포함한다.
 
@@ -252,7 +252,7 @@ SubmissionController와 서비스 테스트에서 호출한다. SQL/DTO 보조 �
 | `private Map<String, Object> requestView(Actor actor, Map<String, Object> row, boolean detail)` | 요청·권한 범위 집계를 DTO로 조립한다.<br>**입력:** actor 인증 행위자, row 내부 행, detail 대상 상세 포함 여부.<br>**출력:** 요청 DTO. | **예외:** DB 접근 오류.<br>**부작용:** 대상/제출 현황 DB 읽기. | `ApiData.hash`, `ApiData.id`, `ApiData.instant`, `ApiData.object`, `SubmissionService.json` |
 | `private Map<String, Object> submissionSummary(Map<String, Object> row)` | 저장된 제출 헤더를 공개 요약으로 변환한다.<br>**입력:** row 내부 행.<br>**출력:** 제출 요약. | **예외:** 없음.<br>**부작용:** 없음. | `ApiData.instant`, `ApiData.object` |
 | `private Map<String, Object> submissionView(Map<String, Object> row)` | 파싱 결과와 업무 검증 미구현 경계를 명시한다.<br>**입력:** row 내부 행.<br>**출력:** 제출 상세 DTO. | **예외:** 없음.<br>**부작용:** 없음. | `ApiData.object`, `SubmissionService.retryAllowed`, `SubmissionService.submissionSummary`, `SubmissionService.token` |
-| `private String token(Map<String, Object> row)` | 활성 작업 변경을 탐지하는 불투명 토큰을 계산한다.<br>**입력:** row 내부 제출·작업 행.<br>**출력:** SHA-256 토큰. | **예외:** 없음.<br>**부작용:** 없음. | `ApiData.hash`, `ApiData.object`, `SubmissionService.json` |
+| `private String token(Map<String, Object> row)` | 활성 작업·검증 결과·회차·검토자/시각/반려 사유의 변경을 탐지하는 불투명 토큰을 계산한다.<br>**입력:** row 내부 제출·작업 행.<br>**출력:** SHA-256 토큰. | **예외:** 없음.<br>**부작용:** 없음. | `ApiData.hash`, `ApiData.object`, `SubmissionService.json` |
 | `private boolean retryAllowed(Map<String, Object> row)` | 동일 바이트를 다시 실행할 수 있는 운영 오류만 허용한다.<br>**입력:** row 내부 행.<br>**출력:** 재시도 가능 여부. | **예외:** 없음.<br>**부작용:** 없음. | 내부 명시 호출 없음; 외부 API/값 처리 |
 | `private JsonNode readResult(Map<String, Object> row)` | 현재 결과 객체를 읽는다.<br>**입력:** row 제출 행.<br>**출력:** 프로토콜 JSON. | **예외:** IllegalStateException 저장 자료 손상.<br>**부작용:** DB 읽기. | `ApiData.object` |
 | `private String filters(Map<String, String> query, List<Object> params, boolean submissions)` | 목록 공통 필터를 바인딩한다.<br>**입력:** query 필터, params 바인딩 값, submissions 제출 상태 여부.<br>**출력:** SQL 조건. | **예외:** ApiException 유효하지 않은 필터.<br>**부작용:** params에 바인딩 추가. | `SubmissionService.invalid` |
@@ -312,6 +312,7 @@ SubmissionController와 서비스 테스트에서 호출한다. SQL/DTO 보조 �
 | `SubmissionValidationService(jdbc, mapper, rules)` | DB·JSON·순수 규칙 연결 → 반환 없음 | 없음; 의존성 보관만 | 생성자 주입 |
 | `validateLocked(actor, submissionId)` | 잠긴 본인 초안 → 반환 없음 | 권한·상태·저장 오류; 현재 상세/금액·검증 참조 교체 및 불변 결과 객체 추가 | `accessible`, `result`, `rules.evaluate`, `previous`, `validationResult`, `reportId`, `accountId`, `insert`, `json`, `blocker` |
 | `assertReadyForSubmit(actor, submissionId)` | 잠긴 초안 → 반환 없음 | 문맥 변경·제출 불가 409; 읽기만 | `accessible`, `readiness`, `conflict` |
+| `assertReadyForApproval(actor, submissionId)` | 기획자·잠긴 제출 → 제출 당시 정책·완전성·원본/파싱 참조·적재 건수 검사, 반환 없음. | 권한·근거 부재/불일치/미완료 409; DB 읽기만 수행하고 최신 정책 재평가 없음. | `accessible`, `rows`, `objectResult`, `nullableId`, JdbcClient |
 | `readiness(submissionRow)` | 내부 제출 ID → 준비 상태·검증 현재성·차단 사유 | 저장 손상; DB 읽기, 금액·소명 생성 없음 | `row`, `rows`, `objectResult`, `nullableId`, `previous`, `blocker` |
 | `validationFingerprint(submissionId)` | 제출 → 검증 결과 참조·직전 제출 문맥 JSON | 조회 오류; DB 읽기 | `rows`, `row`, `previous`, `json` |
 | `comparisonContext(submissionId)` | 제출 → 고정 비교본·정책 DTO | 저장 손상; DB 읽기 | `validationResult`, `stringNode` |
@@ -434,9 +435,10 @@ DemoController.template이 호출한다. 조직 담당자의 연간 요청 권�
 | --- | --- | --- | --- |
 | `public DemoTemplateService(SubmissionService submissions)` | 요청 권한 조회 서비스를 받는다.<br>**입력:** submissions 업무 서비스.<br>**출력:** 없음. | **예외:** 없음.<br>**부작용:** 없음. | 내부 명시 호출 없음; 외부 API/값 처리 |
 | `public SubmissionService.OriginalFile generate(Actor actor, String requestId)` | 본인 조직의 연간 요청에 맞는 12개월 합성 양식을 반환한다.<br>**입력:** actor 조직 담당자, requestId 접근할 연간 요청.<br>**출력:** 요청 파일명과 XLSX 바이트. | **예외:** 권한/404/미지원 요청/ZIP 구성 오류.<br>**부작용:** 요청 DB 조회, 메모리 ZIP 생성; 디스크·Data·DB 쓰기 없음. | `Actor.requireRole`, `ApiException.ApiException`, `DemoTemplateService.workbook`, `SubmissionService.request` |
-| `private byte[] workbook(Actor actor, int year)` | 재무 상세·코드표·집계 근거를 한 메모리 ZIP으로 구성한다.<br>**입력:** actor 조직 정보, year 요청 연도.<br>**출력:** OOXML 바이트. | **예외:** IllegalStateException 메모리 ZIP 실패.<br>**부작용:** 메모리만 사용; 파일 생성 없음. | `DemoTemplateService.financialSheet`, `DemoTemplateService.text`, `DemoTemplateService.worksheet`, `DemoTemplateService.worksheetTypes`, `DemoTemplateService.xml` |
+| `private byte[] workbook(Actor actor, int year)` | 재무 상세·코드표·집계 근거를 한 메모리 ZIP으로 구성한다.<br>**입력:** actor 조직 정보, year 요청 연도.<br>**출력:** OOXML 바이트. | **예외:** IllegalStateException 메모리 ZIP 실패.<br>**부작용:** 메모리만 사용; 파일 생성 없음. | `DemoTemplateService.financialSheet`, `DemoTemplateService.reportSheet`, `DemoTemplateService.text`, `DemoTemplateService.worksheet`, `DemoTemplateService.worksheetTypes` |
 | `private String worksheetTypes(int count)` | 표준 worksheet ContentType 선언을 만든다.<br>**입력:** count 시트 수.<br>**출력:** XML 조각. | **예외:** 없음.<br>**부작용:** 없음. | 내부 명시 호출 없음; 외부 API/값 처리 |
 | `private String financialSheet(String organization, int year, boolean revenue)` | 파서가 지원하는 다단 헤더와 12개월 PLAN 상세 한 행을 만든다.<br>**입력:** organization 조직명, year 연도, revenue 매출이면 true.<br>**출력:** worksheet XML. | **예외:** 없음.<br>**부작용:** 합성 숫자를 메모리에서 구성. | `DemoTemplateService.column`, `DemoTemplateService.text`, `DemoTemplateService.worksheet` |
+| `private String reportSheet(String organization, int year)` | 월별 상세·보고 분류 SUMIFS와 매출·비용·손익 대조 근거를 만든다.<br>**입력:** organization 요청 조직명, year 요청 연도.<br>**출력:** 12개월 PLAN 보고 worksheet XML. | **예외:** 없음.<br>**부작용:** 합성 수식·정확한 캐시값을 메모리에 구성; 수식 실행·파일 쓰기 없음. | `DemoTemplateService.column`, `DemoTemplateService.text`, `DemoTemplateService.xml`, `DemoTemplateService.worksheet` |
 | `private String worksheet(String rows)` | 행 XML을 worksheet로 감싼다.<br>**입력:** rows 행 XML.<br>**출력:** worksheet. | **예외:** 없음.<br>**부작용:** 없음. | 내부 명시 호출 없음; 외부 API/값 처리 |
 | `private String text(String address, String value)` | 문자열 셀을 XML 이스케이프하여 만든다.<br>**입력:** address A1 위치, value 문자열.<br>**출력:** inlineStr 셀 XML. | **예외:** 없음.<br>**부작용:** 없음. | `DemoTemplateService.xml` |
 | `private String column(int index)` | 고정 양식의 1~26열을 A1 열 문자로 바꾼다.<br>**입력:** index 양식 내 열 번호.<br>**출력:** 열 문자. | **예외:** IllegalArgumentException 범위 밖.<br>**부작용:** 없음. | 내부 명시 호출 없음; 외부 API/값 처리 |
@@ -539,7 +541,7 @@ JUnit이 @BeforeEach/@AfterEach 준비·정리와 @Test/@ParameterizedTest를 �
 | `void bootstrapIsIdempotentAndDoesNotCreateApprovals()` | 재기동이 합성 조직·사용자·요청을 중복 생성하지 않음을 확인한다.<br>**입력:** 없음.<br>**출력:** 없음. | **예외:** 검증/DB 오류.<br>**부작용:** 메모리 DB 조회 및 멱등 부트스트랩 실행; 테스트 후 롤백. | `DemoBootstrap.run` |
 | `void bootstrapRejectsExistingEmailConflictWithoutOverwriting()` | 설정 이메일에 기존 다른 사용자가 있으면 이름을 덮어쓰지 않고 실패한다.<br>**입력:** 없음.<br>**출력:** 없음. | **예외:** 검증/DB 오류.<br>**부작용:** 메모리 DB의 테스트 이름만 바꾸며 테스트 후 롤백. | `DemoBootstrap.run` |
 | `void sessionRequiresAllowedOriginHostAndJson() throws Exception` | 허용된 역할·Origin·Host·JSON 요청만 체험 자격을 받는지 확인한다.<br>**입력:** 없음.<br>**출력:** 없음. | **예외:** HTTP/검증 오류.<br>**부작용:** 메모리 HTTP·DB 읽기; 실제 토큰이나 파일을 저장하지 않는다. | 내부 명시 호출 없음; 외부 API/값 처리 |
-| `void templateRunsRealParserAndPreviewKeepsAmountsAsStrings() throws Exception` | 합성 양식이 실제 파서에서 12개월 계획·정밀 금액·0을 보존하는지 확인한다.<br>**입력:** 없음.<br>**출력:** 없음. | **예외:** HTTP/파서/검증 오류.<br>**부작용:** 메모리 ZIP·DB·-B Python 프로세스. 파일 fixture 생성 없음. | `DemoIntegrationTests.requestId`, `DemoIntegrationTests.template`, `DemoIntegrationTests.upload`, `ParsingWorker.ParsingWorker`, `ParsingWorker.runNext`, `PythonParserClient.parse` |
+| `void templateRunsRealParserAndPreviewKeepsAmountsAsStrings() throws Exception` | 합성 양식의 실제 파싱·검증·24개 상세값 적재·최종 제출·승인과 정밀 금액·0 보존을 확인한다.<br>**입력:** 없음.<br>**출력:** 없음. | **예외:** HTTP/파서/검증 오류.<br>**부작용:** 메모리 ZIP·DB·-B Python 프로세스. 파일 fixture 생성 없음. | `DemoIntegrationTests.requestId`, `DemoIntegrationTests.template`, `DemoIntegrationTests.upload`, `ParsingWorker.ParsingWorker`, `ParsingWorker.runNext`, `PythonParserClient.parse`; MockMvc validation/submit/decisions |
 | `void templateAndPreviewKeepRoleAndOrganizationBoundaries() throws Exception` | 기획자의 대리 양식 다운로드·타 조직 후보 조회와 잘못된 페이지를 차단한다.<br>**입력:** 없음.<br>**출력:** 없음. | **예외:** HTTP/검증 오류.<br>**부작용:** 메모리 DB·HTTP만 사용하며 테스트 후 롤백. | `DemoIntegrationTests.requestId`, `DemoIntegrationTests.template`, `DemoIntegrationTests.upload` |
 | `void previewPreservesUnusedTemplateCountAndReadsLegacyResults() throws Exception` | 미사용 행 수·후보 보존과 구버전/결과 없는 실패의 0 호환을 확인한다.<br>**입력/출력:** 없음. | **예외:** HTTP/JSON/DB/검증 오류.<br>**부작용:** 메모리 합성 결과만 변경 후 롤백; 파일 생성 없음. | `DemoIntegrationTests.requestId`, `DemoIntegrationTests.template`, `DemoIntegrationTests.upload`, `ParsingWorker.runNext` |
 | `void parserValidatesOptionalUnusedTemplateCount() throws Exception` | 선택 행 수의 누락·0·양수 허용과 음수·소수·문자열·null·범위 초과 거부를 확인한다.<br>**입력/출력:** 없음. | **예외:** JSON/검증 오류.<br>**부작용:** 메모리 JSON 검증만 수행. | `PythonParserClient.failure`, `PythonParserClient.validResult` |
@@ -582,6 +584,16 @@ JUnit이 @BeforeEach/@AfterEach 준비·정리와 @Test/@ParameterizedTest를 �
 | `void validationPersistsFactsAndFinalSubmissionIsVisibleToPlanner() throws Exception` | 합성 근거로 적재·보고·정확한 셀/공유 수식 기준·최종 제출·기획 현황·원본·멱등 연결 확인. Args/Returns 없음. | 검증 실패; H2·메모리 JSON만 사용. | `createRequest`, `upload`, `seedAdapter`, `workflow`, `workbook`, MockMvc |
 | `void incompleteFactsExposeDiagnosticsAndCannotBeSubmitted() throws Exception` | 누락 금액·불완전 집계·제출 차단·재검증 cursor 무효화 확인. Args/Returns 없음. | 검증 실패; H2만 변경. | `createRequest`, `upload`, `seedAdapter`, `workflow`, MockMvc |
 | `void financialEndpointsEnforceOrganizationAndWriterRole() throws Exception` | 기획자 쓰기 금지·타 조직 적재/보고/셀 조회 404 확인. Args/Returns 없음. | 검증 실패; H2만 변경. | `createRequest`, `upload`, `seedAdapter`, MockMvc |
+| `void annualApprovalIsAuditedIdempotentAndPreservesSubmittedFacts() throws Exception` | 입력/반환 없음. 요청 종료 후 승인·검토 기록·멱등 재전달·원본/금액/회차 보존·승인 조직 수 확인. | HTTP·검증 오류. 합성 제출·검토·멱등 기록을 H2에 저장하며 파일 쓰기 없음. | `createRequest`, `pendingSubmission`, `decisionBody`, `decision`, MockMvc, JdbcClient |
+| `void rejectionPreservesHistoryAndAmountChangesStillRequireExplanation() throws Exception` | 입력/반환 없음. 반려 사유·이력을 유지한 동일 금액 재제출의 새 회차와 변경 금액의 소명 차단 확인. | HTTP·JSON·검증 오류. 합성 원본·검증·제출을 H2에 저장; 원본 Data 접근 없음. | `createRequest`, `pendingSubmission`, `decisionBody`, `decision`, `submissionView`, `upload`, `workbook`, `seedAdapter`, `workflow` |
+| `void decisionsEnforceRoleInputStateAndToken() throws Exception` | 입력/반환 없음. 기획자 권한·JSON 입력·PENDING 상태·최신 토큰을 HTTP에서 검사. | HTTP·검증 오류. H2 합성 초안·대기본만 생성하며 잘못된 판단은 상태 보존. | `createRequest`, `upload`, `workbook`, `pendingSubmission`, `decisionBody`, `decision`, `submissionView`, MockMvc |
+| `void missingFrozenValidationBlocksApprovalButAllowsRejection() throws Exception` | 입력/반환 없음. 검증 근거 없는 대기본의 승인은 차단하고 사유 있는 반려는 허용. | HTTP·검증 오류. H2 검증 참조 제거로 손상 모사 후 반려 기록 저장. | `createRequest`, `pendingSubmission`, `decisionBody`, `decision`, `submissionView`, JdbcClient |
+| `void changedFinancialRowsCannotPassFrozenApprovalCheck() throws Exception` | 입력/반환 없음. 검증 스냅샷과 실제 적재 건수가 다르면 승인되지 않는지 확인. | HTTP·검증 오류. H2 합성 금융값 한 건 제거; 파일·외부 DB 접근 없음. | `createRequest`, `pendingSubmission`, `decisionBody`, `decision`, `submissionView`, JdbcClient |
+| `void monthlyApprovalIsExplicitlyBlockedUntilMasterPublicationExists() throws Exception` | 입력/반환 없음. 마스터 미구현 월간 승인은 차단하되 제출본 오류 반려는 허용. | HTTP·검증 오류. H2 합성 요청 유형을 변경하고 반려 기록 저장. | `createRequest`, `pendingSubmission`, `decisionBody`, `decision`, JdbcClient |
+| `private String pendingSubmission(String request, String keyPrefix) throws Exception` | 요청 ID·멱등키 접두사 → PENDING 제출 ID. 전체 합성 파일의 접수·검증·최종 제출 준비. | HTTP·검증 오류. H2 원본·검증·금융값·제출 기록 생성. | `upload`, `workbook`, `seedAdapter`, `workflow` |
+| `private JsonNode submissionView(String id) throws Exception` | 제출 ID → 기획자에게 보이는 현재 상세 JSON. | HTTP·JSON 오류. H2 읽기만 수행. | MockMvc, ObjectMapper |
+| `private String decisionBody(String id, String action, String note) throws Exception` | 제출 ID·판단·반려 사유/null → 최신 토큰과 허용 필드의 JSON 본문. | HTTP·JSON 오류. 현재 제출 읽기만 수행. | `submissionView`, ObjectMapper |
+| `private ResultActions decision(String id, String key, String body) throws Exception` | 제출 ID·멱등키·원문 JSON → 검증 가능한 MockMvc 결과. 기획자 인증으로 판단 POST 실행. | HTTP 오류. 성공 시 H2 검토·멱등 기록 변경. | MockMvc |
 | `private void seedAdapter(String id, boolean missing) throws Exception` | 제출 ID·금액 누락 여부 → 반환 없음. 독립 합성 적재 근거를 파서 결과에 주입. | JSON·DB 오류; H2 결과 참조만 변경, 원본 보존. | `FinancialValidationRulesTest.fixture`, JdbcClient |
 | `private JsonNode workflow(String id, String name, String key) throws Exception` | 제출·명령·멱등키 → 성공 JSON. 최신 상태 토큰으로 HTTP 실행. | 검증 실패; H2 명령 변경. | MockMvc, ObjectMapper |
 | `private String createRequest() throws Exception` | 사전 정의한 기획 계정으로 연간 요청을 생성한다.<br>**입력:** 없음.<br>**출력:** 요청 ID. | **예외:** 검증 오류.<br>**부작용:** 메모리 DB. | 내부 명시 호출 없음; 외부 API/값 처리 |
@@ -606,13 +618,14 @@ JUnit이 @BeforeEach/@AfterEach 준비·정리와 @Test/@ParameterizedTest를 �
 
 ### [SubmissionWorkflowService.java](../../backend/src/main/java/io/skala/backend/submission/SubmissionWorkflowService.java)
 
-`SubmissionWorkflowController → CommandExecutor → 조직·제출·연간 계획 잠금 → SubmissionValidationService → SubmissionService` 순서다. 같은 연도의 검증은 계획 잠금으로 공통 항목의 최초 생성도 직렬화한다. 검증과 최종 제출은 분리하며 승인·마스터를 생성하지 않는다. V2 마이그레이션은 기존 원본·초안을 수정하지 않고 금융 4테이블과 검증 근거를 추가한다. 세부 Args·Returns·Raises·Side Effects의 기준은 코드 Javadoc이다.
+`SubmissionWorkflowController → CommandExecutor → 조직·제출·연간 계획 잠금 → SubmissionValidationService → SubmissionService` 순서다. 같은 연도의 검증은 계획 잠금으로 공통 항목의 최초 생성도 직렬화한다. 검증·최종 제출·경영기획 판단을 분리한다. 연간 승인/반려는 기존 검토 컬럼만 갱신하며 마스터를 생성하지 않는다. V2 마이그레이션은 기존 원본·초안을 수정하지 않고 금융 4테이블과 검증 근거를 추가한다. 세부 Args·Returns·Raises·Side Effects의 기준은 코드 Javadoc이다.
 
 | 시그니처 | 역할·입출력 | 예외·부작용 | 호출 관계 |
 | --- | --- | --- | --- |
 | `public SubmissionWorkflowService(JdbcClient jdbc, ObjectMapper mapper, CommandExecutor commands, SubmissionService submissions, SubmissionValidationService validation)` | 같은 DB를 사용하는 명령·검증·조회 의존성 연결. 반환 없음. | 예외·외부 부작용 없음. | 생성자 주입 |
 | `public CommandExecutor.Result validate(Actor actor, String submissionId, String key, StateInput input)` | 초안·기대 토큰 → 검증된 제출 DTO와 빈 변경 배열. 회차 미발급. | 권한·토큰·상태·DB/JSON 오류. 검증·월 상세·멱등 응답을 동일 트랜잭션에서 저장. | `lockDraft`, `lockAnnualPlan`, `validation.validateLocked`, `submissions.submission`, `fingerprint`, `json` |
 | `public CommandExecutor.Result submit(Actor actor, String submissionId, String key, StateInput input)` | 초안·기대 토큰 → 양수 회차가 있는 PENDING DTO/멱등 재전달. | 검증·기준·요청·조직 대기 조건 오류. 제출자·시각·회차와 멱등 응답 원자 갱신. | `lockDraft`, `checkSubmissionWindow`, `validation.assertReadyForSubmit`, `submissions.submission` |
+| `public CommandExecutor.Result decide(Actor actor, String submissionId, String key, DecisionInput input)` | 기획자·상태 토큰·판단 → 제출 상세와 빈 masterEffects 또는 멱등 재전달. | 권한·최신 회차·상태·토큰·검증 오류. 조직→제출→계획 잠금과 검토 헤더/멱등 응답 원자 저장. | `CommandExecutor.execute`, `lockAnnualPlan`, `count`, `validation.assertReadyForApproval`, `submissions.submission` |
 | `private Map<String, Object> lockDraft(Actor actor, String submissionId, StateInput input)` | 조회 권한·토큰·DRAFT·SUCCEEDED 확인 → 잠근 제출 행. | 권한·상태·토큰·파싱 오류. 조직→제출 행 잠금만 수행. | `submissions.submission`, `conflict` |
 | `private void checkSubmissionWindow(Actor actor, Map<String, Object> submission)` | 잠근 제출 → 열린 요청·연간 조건·조직 PENDING·다른 기간 반려 제한 검사. 반환 없음. | 업무 충돌. 계획→요청 잠금과 DB 읽기. | `lockAnnualPlan`, `count`, `conflict` |
 | `private Map<String, Object> lockAnnualPlan(Map<String, Object> submission)` | 조직·제출이 잠긴 행 → 잠근 계획 id/status. | DB 조회·잠금 오류. 같은 연도의 공통 항목 생성·상태 검사를 직렬화하며 DB 값 변경 없음. | JdbcClient |
@@ -620,6 +633,9 @@ JUnit이 @BeforeEach/@AfterEach 준비·정리와 @Test/@ParameterizedTest를 �
 | `private long count(String sql, Object... params)` | 고정 COUNT SQL·바인딩 → 행 수. | DB 오류. DB 읽기. | JdbcClient |
 | `private String json(Object value)` | 계약 DTO → JSON. | IllegalStateException 직렬화 실패. 외부 부작용 없음. | ObjectMapper |
 | `private ApiException conflict(String code, String message)` | 고정 코드·안내 → HTTP 409 예외. | 예외 생성 이외 부작용 없음. | ApiException |
+| `private static ApiException invalidDecision(String message)` | 공개 문구 → HTTP 400 예외. | 부작용 없음. | ApiException |
+| `DecisionInput(expectedStateToken, action, note)` | 명령 필수값·사유 길이 검사 및 공백 제거. | 잘못된 입력 400; 부작용 없음. | `DecisionInput.fromJson` |
+| `static DecisionInput fromJson(JsonNode input)` | 문자열 타입·허용 필드·승인 note 부재 확인 → 판단 DTO. | 잘못된 구조/필드/타입 400; 부작용 없음. | Jackson, `DecisionInput`, `invalidDecision` |
 
 `StateInput(expectedStateToken)`은 `@NotBlank` 입력 record이며 직접 작성한 메서드는 없다.
 
@@ -630,6 +646,7 @@ JUnit이 @BeforeEach/@AfterEach 준비·정리와 @Test/@ParameterizedTest를 �
 | `public SubmissionWorkflowController(SubmissionWorkflowService workflow, SubmissionService submissions, ActorResolver actors)` | 명령·쿼리·인증 경계 주입. 반환 없음. | 예외·외부 부작용 없음. | 생성자 주입 |
 | `public ResponseEntity<String> validate(String submissionId, String key, StateInput input, Map<String, String> query)` | POST validation → 검증 DTO 200/재전달. | 인증·입력·상태 오류. 서비스 검증·적재 호출. | `submissions.checkQuery`, `actors.current`, `workflow.validate`, `command` |
 | `public ResponseEntity<String> submit(String submissionId, String key, StateInput input, Map<String, String> query)` | POST submit → PENDING DTO 200/재전달. | 인증·입력·상태 오류. 서비스 최종 제출 호출. | `submissions.checkQuery`, `actors.current`, `workflow.submit`, `command` |
+| `public ResponseEntity<String> decide(String submissionId, String key, DecisionInput input, Map<String, String> query)` | POST decisions → 검토 결과 200/재전달. | 인증·입력·상태·검증 오류. 검토 헤더 명령 호출. | `submissions.checkQuery`, `actors.current`, `workflow.decide`, `command` |
 | `private ResponseEntity<String> command(CommandExecutor.Result result)` | 명령 결과 → JSON 상태·Location·재전달 헤더. | 예외·외부 부작용 없음. | ResponseEntity |
 
 ### [SubmissionWorkflowTests.java](../../backend/src/test/java/io/skala/backend/submission/SubmissionWorkflowTests.java)
@@ -649,6 +666,12 @@ JUnit이 @BeforeEach/@AfterEach 준비·정리와 @Test/@ParameterizedTest를 �
 | `void differentUsersOfOneOrganizationCannotCreateTwoPendingSubmissions() throws Exception` | 입력/반환 없음. 서로 다른 사용자 명령의 조직 잠금 검사. | 스레드/검증 오류. 제한된 테스트 스레드·메모리 DB만 사용. | `workflow.submit`, `seedDraft`, `assertDraft` |
 | `void annualPlanLockSerializesValidationAcrossOrganizations() throws Exception` | 입력/반환 없음. 다른 조직의 동일 연도 검증을 계획 잠금으로 직렬화하는지 확인. | 스레드/검증 오류. 합성 초안·제한된 스레드·메모리 DB만 사용. | `workflow.validate`, `seedDraft`, `assertDraft` |
 | `void plannerAndOtherOrganizationCannotIssueCommands()` | 입력/반환 없음. 역할·조직 차단 검사. | 검증 오류. 메모리 읽기만 수행. | `workflow.submit`, `workflow.validate`, `assertDraft` |
+| `void concurrentApprovalAndRejectionPreserveOneDecision() throws Exception` | 입력/반환 없음. 서로 다른 기획자의 승인·반려 경합에서 하나의 판단만 저장되는지 확인. | 스레드·검증 오류. 합성 기획 계정·제출·제한된 테스트 스레드·H2만 사용. | `planner`, `makePending`, `decisionInput`, `workflow.decide`, `validation.assertReadyForApproval` |
+| `void approvalFailureRollsBackDecisionAndPartialWrites()` | 입력/반환 없음. 승인 근거 검사 실패 시 검토 부분 쓰기와 멱등 응답 롤백 확인. | 검증 오류. H2에 부분 쓰기 시도 후 롤백 결과 읽기. | `planner`, `makePending`, `decisionInput`, `workflow.decide`, `validation.assertReadyForApproval` |
+| `void olderPendingAndConfirmedPlanCannotBeApproved()` | 입력/반환 없음. 최신 완료 회차가 아닌 대기본과 확정 계획의 승인 차단 확인. | 검증 오류. H2 합성 회차·계획 상태만 준비하고 실패한 판단의 상태 보존. | `planner`, `makePending`, `seedDraft`, `decisionInput`, `workflow.decide` |
+| `private Actor planner()` | 입력 없음 → 준비한 DB 기획자와 일치하는 인증 문맥. | 예외·부작용 없음. | `Actor` |
+| `private void makePending(long submissionId)` | 제출 ID → 반환 없음. 합성 초안에 첫 완료 회차와 PENDING 부여. | DB 오류. H2 제출 행 변경. | JdbcClient |
+| `private DecisionInput decisionInput(Actor actor, String submissionId, String action, String note)` | 기획자·제출 ID·판단·반려 사유/null → 최신 토큰의 판단 입력. | 입력·조회 오류. H2 읽기만 수행. | `currentView`, `SubmissionWorkflowService.DecisionInput` |
 | `private void seedDraft(long submissionId)` | 합성 ID → 반환 없음. 원본·파싱 참조 초안 생성. | DB 오류. 메모리 행 INSERT. | JdbcClient |
 | `private Map<String, Object> currentView(Actor actor, String submissionId)` | 행위자·ID → 최소 제출 DTO·상태 토큰. | 권한 밖/없는 ID. 메모리 읽기. | `ApiData.id`, `hash`, `object` |
 | `private StateInput input(Actor actor, String submissionId)` | 행위자·ID → 기대 토큰 입력. | 조회 오류. 메모리 읽기. | `currentView` |

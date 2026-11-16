@@ -2,11 +2,11 @@
 
 ## 기준과 구현 범위
 
-[API 0.6-draft](api-contract.md)와
+[API 0.7-draft](api-contract.md)와
 [ERD PR #16](https://github.com/shinharyeong/skala_final_project/blob/8c84d2783c9beb2f876810387baa7f9e3f503a50/docs/development/erd.md)을 기준으로 한다.
 전체 스냅샷 재제출, 모든 금액 변경 소명, 조직·보고 항목·연월·시나리오별 비교, 확인된 OP의 Gap,
 전 조직 최초 승인 후 마스터 발행·이후 승인 조직만 교체하는 업무 규칙을 유지한다.
-현재 구현은 원본 접수·파싱에서 최초 연간 PLAN 검증·적재·최종 제출과 기획자 조회까지 연결한다. 승인·공식 마스터는 아직 생성하지 않는다.
+현재 구현은 원본 접수·파싱에서 최초 연간 PLAN 검증·적재·최종 제출·기획자 조회·연간 승인·반려까지 연결한다. 연간 계획 확정·공식 마스터 발행은 후속 범위다.
 
 공통 접두사는 /api/v1이다. P는 PLANNER, O는 ORG_MANAGER, B는 둘 다다.
 
@@ -26,11 +26,12 @@
 | GET /submissions/{submissionId}/parsed-records | B | 추출 후보·nullable 단위·원본 위치 미리보기 |
 | POST /submissions/{submissionId}/validation | O | 현재 초안의 연간 12개월·분류·금액·합계 근거 검증과 선택 상세 적재 |
 | POST /submissions/{submissionId}/submit | O | 준비된 초안에 회차·제출자·시각 부여, PENDING |
+| POST /submissions/{submissionId}/decisions | P | 최신 PENDING의 연간 승인·반려, 검토자·시각·반려 사유 기록 |
 | GET /submissions/{submissionId}/financial-values | B | 실제 적재한 상세 월별 금액과 원본 위치 |
 | GET /submissions/{submissionId}/report-values | B | 검증된 보고 집계 또는 UNRESOLVED/null |
 | GET /submissions/{submissionId}/source-cells | B | 지정한 보존 원본 셀의 값·수식·캐시·단위 |
 
-전체 설계 35개 중 위 17개를 구현했다. 나머지 18개 경로와 소명·승인·연간 확정·Gap·공식 마스터·보고 생성은 후속 구현이다. 아직 없는 기능이 성공한 것처럼 응답하지 않는다.
+전체 설계 35개 중 위 18개를 구현했다. 나머지 17개 경로와 소명·연간 확정·Gap·월간 승인·공식 마스터·보고 생성은 후속 구현이다. 아직 없는 기능이 성공한 것처럼 응답하지 않는다.
 월간 접수의 확정 계획 조건은 검사하지만 확정 API는 아직 없으므로 초기 연결은 ANNUAL_PLAN 흐름으로 확인한다.
 
 ## 연결 구조
@@ -166,6 +167,14 @@ env -u EXCEL_PARSER_TEST_DATA PYTHONPATH=src:tests python3 -B -m unittest test_e
 ```
 
 현재 단계의 검증 함수·HTTP/H2 테스트는 [함수 명세](backend-function-reference.md)에 기록하며 실제 17개 원본 대조는 [verify-submission.py](../../scripts/verify-submission.py)를 사용한다. 실행 방법·범위는 [로컬 환경](local-environment.md#최초-연간-검증최종-제출-대조)에 있다.
-남은 업무 순서는 모든 수정 항목·OP Gap 비교/소명 → 연간 확정·승인·불변 마스터다.
+남은 업무 순서는 모든 수정 항목·OP Gap 비교/소명 → 연간 확정·월간 승인·불변 마스터다.
 로그인 제공자·OpenAPI 산출물·운영 모니터링도 남아 있다.
 구현 함수·테스트와 부작용은 [백엔드 함수 명세](backend-function-reference.md)에 관리한다.
+
+## 연간 제출 승인·반려
+
+`decisions`는 조직·제출 잠금 아래 최신 회차와 상태 토큰을 다시 확인한다. 연간 승인은 제출 때 고정된 검증 객체와 실제 적재 건수를 확인하고 `APPROVED`로 변경한다. 요청이 닫혀도 이미 접수한 제출본은 검토할 수 있다. `REJECTED`에는 1~2000자 사유와 검토자·시각을 기록하며 원본·금액·제출 회차는 보존한다. 새 DB 마이그레이션 없이 기존 `submission`의 검토 컬럼을 사용한다.
+
+종료한 제출본을 새 멱등키로 다시 판단하면 409이며, 성공한 같은 키는 처음 응답을 재전달한다. 승인과 반려의 경합은 한 전이만 성공한다. 승인 응답과 저장을 같은 트랜잭션에서 처리하므로 실패하면 검토 기록도 남지 않는다.
+
+반려본을 초안으로 되돌리지 않는다. 같은 요청의 새 전체 파일 업로드 → 검증 → 최종 제출에서만 다음 회차를 부여하며, 비교 대상은 직전 반려본이다. 금액 변경은 현재 `CHANGE_EXPLANATION_REQUIRED`로 차단한다. 연간 승인과 연간 계획 확정은 별도이고, 월간 승인/마스터 발행은 아직 지원하지 않는다.

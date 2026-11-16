@@ -426,7 +426,8 @@ public class SubmissionService {
      * Args: row 내부 제출·작업 행. Returns: SHA-256 토큰. Raises: DB 오류. Side Effects: 검증 참조 읽기.
      */
     private String token(Map<String, Object> row) {
-        return hash(json(object("id", row.get("id"), "status", row.get("status"), "job", row.get("job_id"),
+        return hash(json(object("id", row.get("id"), "status", row.get("status"), "seq", row.get("seq"),
+                "reviewedBy", row.get("reviewed_by"), "reviewedAt", instant(row.get("reviewed_at")), "rejectReason", row.get("reject_reason"), "job", row.get("job_id"),
                 "attempt", row.get("attempt_no"), "parsing", row.get("parsing_status"), "error", row.get("error_code"),
                 "result", row.get("result_object_key"), "validation", validation.validationFingerprint(row.get("id").toString()))).getBytes(StandardCharsets.UTF_8));
     }

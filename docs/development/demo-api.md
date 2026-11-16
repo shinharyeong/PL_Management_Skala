@@ -3,7 +3,7 @@
 ## 적용 범위
 
 이 문서는 구현된 개발 체험 API와 읽기 전용 파싱 미리보기 계약을 설명한다.
-업무 API의 최초 연간 검증·최종 제출·적재 조회는 [API 명세](api-contract.md)에 연결되어 있다. 수정 소명·승인·공식 마스터는 후속 범위다.
+업무 API의 연간 검증·최종 제출·적재 조회·승인·반려는 [API 명세](api-contract.md)에 연결되어 있다. 수정 소명·연간 확정·공식 마스터는 후속 범위다.
 `SUCCEEDED`는 파서 실행 결과이며, 업무 검증·승인 성공을 뜻하지 않는다.
 파싱 직후 제출은 `DRAFT`, 업무 검증은 `NOT_RUN`, `readiness.canSubmit=false`다. 이후 담당자가 업무 검증을 실행하고 조건을 충족한 초안을 명시적으로 제출하면 PENDING이 된다. 개발 양식 API가 업무 검증을 자동으로 통과시키지는 않는다.
 
@@ -99,15 +99,19 @@ JSON 외 Content-Type은 415다. 응답은 `private, no-store`이며 쿠키를 �
 없는 요청·대상 외 요청은 기존 조회 계약에 따라 처리한다.
 
 응답은 XLSX attachment이며 파일명은 조직과 요청 연도에서 결정한다. 예: `D100_2027-PLAN.xlsx`.
-양식은 `매출`, `비용`, `조직코드`, `예산코드`, `집계근거` 5개 시트다.
+양식은 `매출`, `비용`, `조직코드`, `예산코드`, `보고` 5개 시트다.
 매출·비용 상세에는 1~12월 PLAN, 단위 원, 합성 상세 ID·개정번호와 코드 근거를 포함한다.
-금액은 0과 소수 정밀도를 확인하는 합성 값이다. 집계근거 시트는 SUMIFS 수식과 저장된 캐시값을
-함께 제공한다. 서버 파서는 수식을 재계산하지 않는다.
+금액은 0과 소수 정밀도를 확인하는 합성 값이다. 보고 시트는 요청 조직·연도의 12개월 헤더와
+관리분류/실적집계기준별 SUMIFS, 매출·비용 총계 SUM, 영업이익 차감 수식과 정확한 합성 캐시값을
+제공한다. 원 단위 상세와 보고 금액의 대조가 가능하며 서버 파서는 수식을 재계산하지 않는다.
+상세 금융값 24개와 보고 대조값 60개는 역할이 다르며, 보고 총계를 금융 상세에 중복 적재하지 않는다.
 
 양식은 `ByteArrayOutputStream`·`ZipOutputStream`으로 요청마다 메모리에서 만든다.
 서버 파일·임시 파일·Data 원본을 읽거나 만들지 않는다. 사용자가 다운로드한 양식을 업로드하면
 기존 접수 경로가 원본 바이트를 DB에 저장하고 실제 Python 파서로 처리한다.
 이 양식은 동작 확인을 위한 최소 예시이며 전체 기업 양식이나 확정 계획을 대신하지 않는다.
+같은 요청에 비교할 이전 제출이 없는 경우 일반 업무 검증을 거쳐 최종 제출과 기획자 승인·반려까지
+체험할 수 있다. 기존 제출본과 금액이 다르면 합성 양식도 수정 소명 조건을 우회하지 않는다.
 
 ## 파싱 후보 페이지
 
@@ -182,7 +186,7 @@ Python 경계에서는 선택 필드로 받되 존재하면 0 이상의 Java int
 | `demo/DemoBootstrap` 생성자, `run`, `organization`, `user` | ApplicationRunner → 합성 자료 검사/INSERT → `SubmissionService.createRequest`. 하나의 트랜잭션, 충돌 시 실패 |
 | `demo/DemoController` 생성자, `session`, `template` | 환경 Origin 검증 → 세션 헤더·역할 검사 또는 인증 양식 서비스 호출. 세션은 읽기만, 양식은 메모리 생성 |
 | `demo/DemoTemplateService` 생성자, `generate`, `workbook` | 인증 조직·연간 요청 → 파일명·OOXML 바이트. 요청 DB 읽기; 디스크 접근 없음 |
-| `DemoTemplateService.worksheetTypes`, `financialSheet`, `worksheet`, `text`, `column`, `xml` | 고정 합성 템플릿 XML 구성·문자 이스케이프. 메모리만 사용 |
+| `DemoTemplateService.worksheetTypes`, `financialSheet`, `reportSheet`, `worksheet`, `text`, `column`, `xml` | 고정 합성 템플릿·12개월 보고 수식/캐시 XML 구성·문자 이스케이프. 메모리만 사용 |
 | `parser/ParsedRecordsController` 생성자, `records` | ActorResolver → ParsedRecordsService. 인증·권한 오류를 기존 공통 처리기로 전달 |
 | `parser/ParsedRecordsService` 생성자, `records`, `page` | 제출 권한 → 활성 작업 → DB 결과 바이트 → 스트림 페이지·커서. 미사용 행 수를 전달하며 구버전 누락은 0. 파일·DB 쓰기·재파싱 없음 |
 | `ParsedRecordsService.project`, `emptySummary`, `text`, `integer`, `limit` | 내부 후보 → 제한 DTO, nullable 값·정밀 문자열·페이지 범위 유지. 외부 부작용 없음 |
@@ -199,6 +203,8 @@ Jakarta Validation, 역할과 허용 코드 조합은 `DemoAccounts.selectedOrga
 `DemoIntegrationTests`는 별도 H2 `demo_bridge`에서 초기 자료 멱등성·충돌 보존,
 Origin/Host/Content-Type, 조직 선택·토큰 격리·잘못된 선택·발급 후 권한 변경 차단,
 새 요청의 19개 대상·기존 두 대상 보존, 양식 권한, 실제 Python 연결, 금액 문자열·0, 페이지·조직 격리를 확인한다.
+합성 양식의 보고 항목·대조 근거를 일반 검증 API로 확인하고 상세 2행·월별 24값을 적재한 뒤
+최종 제출(PENDING) → 기획자 승인(APPROVED) → 요청 승인 조직 수 갱신까지 검사한다.
 미사용 행 수 전달·구버전 필드 누락·결과 없는 실패의 0 호환과 음수·소수·문자열·null·범위 초과 거부도 검사한다.
 `ActorResolverTest`는 고정 Actor 인증과 업무 조회 사이의 소속·역할·코드 변경도 검사한다.
 `DemoDisabledTests`는 별도 H2 `demo_disabled`에서 demo 미활성 시 Bean·초기 자료·익명 세션이 없음을 확인한다.
