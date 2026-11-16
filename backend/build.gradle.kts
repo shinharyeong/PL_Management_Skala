@@ -44,4 +44,9 @@ dependencies {
 
 tasks.withType<Test> {
 	useJUnitPlatform()
+	// 실제 17개 파싱 결과를 전용 H2 메모리에 보존하는 선택 검사에만 힙을 늘린다.
+	System.getProperty("business.workbook.path")?.takeIf { it.isNotBlank() }?.let {
+		systemProperty("business.workbook.path", it)
+		maxHeapSize = "2g"
+	}
 }

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.skala.backend.demo.DemoAccounts;
 import jakarta.servlet.FilterChain;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -64,6 +65,54 @@ class LocalBearerAuthenticationFilterTest {
         assertThat(authentication.getPrincipal()).isEqualTo("manager@example.test");
         assertThat(authentication.getCredentials()).isNull();
         assertThat(authentication.getAuthorities()).extracting("authority").containsExactly("ROLE_ORG_MANAGER");
+    }
+
+    /** demo 환경 토큰은 이전 설정 이메일을 조회하지 않고 고정 F10 담당자만 인증한다.
+     * Args: 없음. Returns: 없음. Raises: 필터 처리 실패는 Exception, 계약 불일치는 AssertionError.
+     * Side Effects: 메모리 인증 문맥·HTTP 객체만 변경한다.
+     */
+    @Test
+    void demoOrganizationTokenUsesFixedBusinessActorInsteadOfLegacyEmail() throws Exception {
+        String token = UUID.randomUUID().toString();
+        ActorResolver actors = mock(ActorResolver.class);
+        DemoAccounts demo = mock(DemoAccounts.class);
+        Actor fixed = new Actor("10", "demo-f10@example.test", "사업부1 담당자 (데모)", "ORG_MANAGER",
+                new Organization("10", "F10", "사업부1"));
+        when(demo.actorForOrganizationToken(token)).thenReturn(fixed);
+        MockEnvironment environment = new MockEnvironment()
+                .withProperty("app.local-auth.organization-email", "legacy@example.test")
+                .withProperty("app.local-auth.organization-token", token);
+        var filter = new LocalBearerAuthenticationFilter(environment, actors,
+                new SecurityProblemHandler(new ObjectMapper()), demo);
+        var request = new MockHttpServletRequest("GET", "/api/v1/me");
+        request.addHeader("Authorization", "Bearer " + token);
+        filter.doFilter(request, new MockHttpServletResponse(), (incoming, outgoing) -> {});
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getPrincipal()).isEqualTo(fixed);
+        verifyNoInteractions(actors);
+    }
+
+    /** demo 계정 검증에 없는 토큰을 legacy 이메일 인증으로 우회시키지 않는다.
+     * Args: 없음. Returns: 없음. Raises: 필터 처리 실패는 Exception, 인증 우회는 AssertionError.
+     * Side Effects: 메모리 HTTP 응답과 인증 문맥만 변경한다.
+     */
+    @Test
+    void demoTokenWithoutFixedActorCannotFallBackToConfiguredEmail() throws Exception {
+        String token = UUID.randomUUID().toString();
+        ActorResolver actors = mock(ActorResolver.class);
+        DemoAccounts demo = mock(DemoAccounts.class);
+        MockEnvironment environment = new MockEnvironment()
+                .withProperty("app.local-auth.organization-email", "legacy@example.test")
+                .withProperty("app.local-auth.organization-token", token);
+        var filter = new LocalBearerAuthenticationFilter(environment, actors,
+                new SecurityProblemHandler(new ObjectMapper()), demo);
+        var request = new MockHttpServletRequest("GET", "/api/v1/me");
+        request.addHeader("Authorization", "Bearer " + token);
+        var response = new MockHttpServletResponse();
+        filter.doFilter(request, response, (incoming, outgoing) -> {
+            throw new AssertionError("고정 사업부 계정이 없는 토큰이 인증됐습니다.");
+        });
+        assertThat(response.getStatus()).isEqualTo(401);
+        verifyNoInteractions(actors);
     }
 
     /**

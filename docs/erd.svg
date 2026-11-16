@@ -1,17 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="3300" height="2470" viewBox="0 0 3300 2470" role="img" aria-labelledby="erd-title erd-desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="3300" height="3180" viewBox="0 0 3300 3180" role="img" aria-labelledby="erd-title erd-desc">
 <title id="erd-title">손익 제출·검토·마스터 ERD</title>
-<desc id="erd-desc">17개 테이블, 141개 필드, 27개 핵심 관계. 연결선은 수평·수직 직선이며 곡선이나 대각선 연결을 사용하지 않습니다. 관계 끝 숫자로 카디널리티를 표시합니다. 행위자 외래키는 컬럼에 표시하고 관계선은 생략합니다.</desc>
+<desc id="erd-desc">19개 테이블, 154개 필드, 33개 핵심 관계. 기존 논리 설계와 V3 구현 연간 마스터를 구분하며 하단 참조 카드는 기존 테이블의 별칭입니다. 연결선은 수평·수직 직선이며 곡선이나 대각선 연결을 사용하지 않습니다. 관계 끝 숫자로 카디널리티를 표시합니다. 행위자 외래키는 컬럼에 표시하고 관계선은 생략합니다.</desc>
 <style>text{font-family:"Apple SD Gothic Neo","Noto Sans KR",Arial,sans-serif;fill:#0f172a}.mono{font-family:Menlo,Consolas,monospace}.entity-name{font-size:16px;font-weight:700}.field-name{font-size:12px}.field-type{font-size:11px;fill:#64748b}.field-key{font-size:10px;font-weight:700}.column-label{font-size:10px;font-weight:700;fill:#64748b;letter-spacing:.6px}.relation-label{font-size:12px;font-weight:600}.cardinality{font-family:Menlo,Consolas,monospace;font-size:11px;font-weight:700}.field:hover .row-bg{fill:#e0f2fe}</style>
-<rect width="3300" height="2470" fill="#f8fafc"/>
+<rect width="3300" height="3180" fill="#f8fafc"/>
 <text x="100" y="55" font-size="30" font-weight="700">손익 제출·검토·마스터 ERD</text>
-<text x="100" y="86" font-size="14" fill="#475569">논리 설계 v0.2 · 2026-11-16 · 17개 테이블 · 141개 필드 · 27개 핵심 관계</text>
+<text x="100" y="86" font-size="14" fill="#475569">논리 설계 + V3 연간 마스터 · 2026-11-16 · 19개 테이블 · 154개 필드 · 33개 핵심 관계</text>
 <text x="2000" y="53" font-size="13">1 = 필수 한 건　 0..1 = 선택 한 건　 0..N = 선택 여러 건　 1..N = 필수 여러 건</text>
 <text x="2000" y="82" font-size="12" fill="#64748b">PK 기본키　 FK 외래키　 UK 고유키　 복합 제약·업무 상태는 erd.md 기준</text>
 <text x="100" y="135" font-size="13" font-weight="700" fill="#64748b">조직·요청</text>
 <text x="1380" y="120" font-size="13" font-weight="700" fill="#64748b">제출·파싱</text>
 <text x="2020" y="215" font-size="13" font-weight="700" fill="#64748b">재무 원천·보고 항목</text>
 <text x="2020" y="1420" font-size="13" font-weight="700" fill="#64748b">검토·소명</text>
-<text x="100" y="1918" font-size="13" font-weight="700" fill="#64748b">공식 마스터</text>
+<text x="100" y="1918" font-size="13" font-weight="700" fill="#64748b">월별 마스터 · 후속 논리 설계</text>
 <g class="relationship" id="relation-1" data-from="organization" data-to="app_user" data-kind="belongs_to" data-cardinality="|o--o{">
 <title>organization |o--o{ app_user: belongs_to / 소속</title>
 <polyline class="relationship-halo" points="340,1000 340,438" fill="none" stroke="#f8fafc" stroke-width="7" stroke-linejoin="miter"/>
@@ -493,10 +493,10 @@
 <text class="field-name mono" x="920" y="827">requested_at</text>
 </g>
 </g>
-<g class="entity" id="entity-request_target" data-entity="request_target" data-x="740" data-y="1080" data-width="480" data-height="144">
-<title>request_target: 3개 필드</title>
-<rect x="740" y="1083" width="480" height="144" rx="7" fill="#0f172a" opacity=".05"/>
-<rect x="740" y="1080" width="480" height="144" rx="7" fill="white" stroke="#cbd5e1" stroke-width="1.2"/>
+<g class="entity" id="entity-request_target" data-entity="request_target" data-x="740" data-y="1080" data-width="480" data-height="166">
+<title>request_target: 4개 필드</title>
+<rect x="740" y="1083" width="480" height="166" rx="7" fill="#0f172a" opacity=".05"/>
+<rect x="740" y="1080" width="480" height="166" rx="7" fill="white" stroke="#cbd5e1" stroke-width="1.2"/>
 <rect x="740" y="1080" width="480" height="40" rx="7" fill="#2563eb"/>
 <rect x="740" y="1110" width="480" height="10" fill="#2563eb"/>
 <text class="entity-name mono" x="756" y="1106" style="fill:white">request_target</text>
@@ -519,6 +519,12 @@
 <text class="field-key mono" x="756" y="1205" style="fill:#2563eb">FK</text>
 <text class="field-type mono" x="818" y="1205">bigint</text>
 <text class="field-name mono" x="920" y="1205">confirmed_plan_submission_id</text>
+</g>
+<g class="field" data-field="excluded" data-type="boolean" data-key=""><title>excluded · boolean · NOT NULL DEFAULT FALSE · V3: 이력은 보존하고 수집·승인·최초 마스터 대상에서 제외</title>
+<rect class="row-bg" x="741" y="1212" width="478" height="22" fill="#f8fafc"/>
+<text class="field-key mono" x="756" y="1227" style="fill:#2563eb"></text>
+<text class="field-type mono" x="818" y="1227">boolean</text>
+<text class="field-name mono" x="920" y="1227">excluded</text>
 </g>
 </g>
 <g class="entity" id="entity-submission" data-entity="submission" data-x="1380" data-y="800" data-width="480" data-height="518">
@@ -1246,7 +1252,7 @@
 </g>
 </g>
 <g class="entity" id="entity-master_version" data-entity="master_version" data-x="100" data-y="1950" data-width="480" data-height="232">
-<title>master_version: 7개 필드</title>
+<title>master_version: 7개 필드 · 월별 마스터 후속 논리 설계, V3 annual_master와 별도</title>
 <rect x="100" y="1953" width="480" height="232" rx="7" fill="#0f172a" opacity=".05"/>
 <rect x="100" y="1950" width="480" height="232" rx="7" fill="white" stroke="#cbd5e1" stroke-width="1.2"/>
 <rect x="100" y="1950" width="480" height="40" rx="7" fill="#7c3aed"/>
@@ -1298,7 +1304,7 @@
 </g>
 </g>
 <g class="entity" id="entity-master_source" data-entity="master_source" data-x="740" data-y="1950" data-width="480" data-height="144">
-<title>master_source: 3개 필드</title>
+<title>master_source: 3개 필드 · 월별 마스터 후속 논리 설계, V3 annual_master_source와 별도</title>
 <rect x="740" y="1953" width="480" height="144" rx="7" fill="#0f172a" opacity=".05"/>
 <rect x="740" y="1950" width="480" height="144" rx="7" fill="white" stroke="#cbd5e1" stroke-width="1.2"/>
 <rect x="740" y="1950" width="480" height="40" rx="7" fill="#7c3aed"/>
@@ -1325,7 +1331,212 @@
 <text class="field-name mono" x="920" y="2075">submission_id</text>
 </g>
 </g>
-<line x1="100" y1="2390" x2="3200" y2="2390" stroke="#cbd5e1"/>
-<text x="100" y="2420" font-size="13">전체 스냅샷 재제출 · 모든 금액 수정 항목 소명 · 최초 전 조직 승인 · 이후 새 승인 조직만 마스터 갱신</text>
-<text x="100" y="2445" font-size="12" fill="#64748b">필드에 마우스를 올리면 nullable·상태·용도 설명을 볼 수 있습니다. DB 구현 전 논리 설계입니다.</text>
+<line x1="100" y1="2400" x2="3200" y2="2400" stroke="#cbd5e1"/>
+<text x="100" y="2450" font-size="24" font-weight="700">연간 계획 마스터 · V3 구현</text>
+<text x="100" y="2480" font-size="14" fill="#475569">전 사업 조직 최초 승인 → 최초 발행 · 이후 재승인된 조직의 제출본만 교체 · 확정 계획/Contingency와 별도</text>
+<text x="100" y="2505" font-size="12" fill="#64748b">점선 카드 = 상단 기존 테이블 참조(테이블 수에 중복 포함하지 않음) · 금액은 복제하지 않고 승인 제출본의 불변 적재값을 참조</text>
+<g class="relationship" id="relation-28" data-from="submission_request" data-to="annual_master" data-kind="publishes_annual" data-cardinality="||--o{">
+<title>submission_request ||--o{ annual_master: 연간 요청</title>
+<polyline class="relationship-halo" points="580,2630 740,2630" fill="none" stroke="#f8fafc" stroke-width="7" stroke-linejoin="miter" stroke-linecap="butt"/>
+<polyline class="relationship-line" points="580,2630 740,2630" fill="none" stroke="#047857" stroke-width="2" stroke-linejoin="miter" stroke-linecap="butt"/>
+<rect x="595.5" y="2621" width="17" height="18" rx="3" fill="white" stroke="#047857" stroke-width=".7"/>
+<text class="cardinality" x="604" y="2634" text-anchor="middle" style="fill:#047857">1</text>
+<rect x="697" y="2621" width="38" height="18" rx="3" fill="white" stroke="#047857" stroke-width=".7"/>
+<text class="cardinality" x="716" y="2634" text-anchor="middle" style="fill:#047857">0..N</text>
+<rect x="617.5" y="2583" width="85" height="22" rx="3" fill="#f8fafc"/>
+<text class="relation-label" x="660" y="2598" text-anchor="middle" style="fill:#047857">연간 요청</text>
+</g>
+<g class="relationship" id="relation-29" data-from="submission" data-to="annual_master" data-kind="triggers_annual" data-cardinality="||--o{">
+<title>submission ||--o{ annual_master: 발행 계기 승인본</title>
+<polyline class="relationship-halo" points="580,2845 660,2845 660,2775 740,2775" fill="none" stroke="#f8fafc" stroke-width="7" stroke-linejoin="miter" stroke-linecap="butt"/>
+<polyline class="relationship-line" points="580,2845 660,2845 660,2775 740,2775" fill="none" stroke="#047857" stroke-width="2" stroke-linejoin="miter" stroke-linecap="butt"/>
+<rect x="595.5" y="2836" width="17" height="18" rx="3" fill="white" stroke="#047857" stroke-width=".7"/>
+<text class="cardinality" x="604" y="2849" text-anchor="middle" style="fill:#047857">1</text>
+<rect x="697" y="2766" width="38" height="18" rx="3" fill="white" stroke="#047857" stroke-width=".7"/>
+<text class="cardinality" x="716" y="2779" text-anchor="middle" style="fill:#047857">0..N</text>
+<rect x="591.5" y="2867" width="137" height="22" rx="3" fill="#f8fafc"/>
+<text class="relation-label" x="660" y="2882" text-anchor="middle" style="fill:#047857">발행 계기 승인본</text>
+</g>
+<g class="relationship" id="relation-30" data-from="annual_master" data-to="annual_master" data-kind="previous_annual_version" data-cardinality="|o--o{">
+<title>annual_master |o--o{ annual_master: 직전 연간본</title>
+<polyline class="relationship-halo" points="1220,2740 1300,2740 1300,2840 1220,2840" fill="none" stroke="#f8fafc" stroke-width="7" stroke-linejoin="miter" stroke-linecap="butt"/>
+<polyline class="relationship-line" points="1220,2740 1300,2740 1300,2840 1220,2840" fill="none" stroke="#047857" stroke-width="2" stroke-linejoin="miter" stroke-linecap="butt"/>
+<rect x="1225" y="2731" width="38" height="18" rx="3" fill="white" stroke="#047857" stroke-width=".7"/>
+<text class="cardinality" x="1244" y="2744" text-anchor="middle" style="fill:#047857">0..1</text>
+<rect x="1225" y="2831" width="38" height="18" rx="3" fill="white" stroke="#047857" stroke-width=".7"/>
+<text class="cardinality" x="1244" y="2844" text-anchor="middle" style="fill:#047857">0..N</text>
+<rect x="1321" y="2779" width="98" height="22" rx="3" fill="#f8fafc"/>
+<text class="relation-label" x="1370" y="2794" text-anchor="middle" style="fill:#047857">직전 연간본</text>
+</g>
+<g class="relationship" id="relation-31" data-from="annual_master" data-to="annual_master_source" data-kind="fixes_annual_sources" data-cardinality="||--|{">
+<title>annual_master ||--|{ annual_master_source: 승인 제출본 조합</title>
+<polyline class="relationship-halo" points="1220,2650 2020,2650" fill="none" stroke="#f8fafc" stroke-width="7" stroke-linejoin="miter" stroke-linecap="butt"/>
+<polyline class="relationship-line" points="1220,2650 2020,2650" fill="none" stroke="#047857" stroke-width="2" stroke-linejoin="miter" stroke-linecap="butt"/>
+<rect x="1235.5" y="2641" width="17" height="18" rx="3" fill="white" stroke="#047857" stroke-width=".7"/>
+<text class="cardinality" x="1244" y="2654" text-anchor="middle" style="fill:#047857">1</text>
+<rect x="1977" y="2641" width="38" height="18" rx="3" fill="white" stroke="#047857" stroke-width=".7"/>
+<text class="cardinality" x="1996" y="2654" text-anchor="middle" style="fill:#047857">1..N</text>
+<rect x="1551.5" y="2603" width="137" height="22" rx="3" fill="#f8fafc"/>
+<text class="relation-label" x="1620" y="2618" text-anchor="middle" style="fill:#047857">승인 제출본 조합</text>
+</g>
+<g class="relationship" id="relation-32" data-from="organization" data-to="annual_master_source" data-kind="contributes_annual" data-cardinality="||--o{">
+<title>organization ||--o{ annual_master_source: 대상 조직</title>
+<polyline class="relationship-halo" points="2660,2630 2500,2630" fill="none" stroke="#f8fafc" stroke-width="7" stroke-linejoin="miter" stroke-linecap="butt"/>
+<polyline class="relationship-line" points="2660,2630 2500,2630" fill="none" stroke="#047857" stroke-width="2" stroke-linejoin="miter" stroke-linecap="butt"/>
+<rect x="2627.5" y="2621" width="17" height="18" rx="3" fill="white" stroke="#047857" stroke-width=".7"/>
+<text class="cardinality" x="2636" y="2634" text-anchor="middle" style="fill:#047857">1</text>
+<rect x="2505" y="2621" width="38" height="18" rx="3" fill="white" stroke="#047857" stroke-width=".7"/>
+<text class="cardinality" x="2524" y="2634" text-anchor="middle" style="fill:#047857">0..N</text>
+<rect x="2537.5" y="2583" width="85" height="22" rx="3" fill="#f8fafc"/>
+<text class="relation-label" x="2580" y="2598" text-anchor="middle" style="fill:#047857">대상 조직</text>
+</g>
+<g class="relationship" id="relation-33" data-from="submission" data-to="annual_master_source" data-kind="approved_annual_source" data-cardinality="||--o{">
+<title>submission ||--o{ annual_master_source: 고정 승인본</title>
+<polyline class="relationship-halo" points="2260,2880 2260,2724" fill="none" stroke="#f8fafc" stroke-width="7" stroke-linejoin="miter" stroke-linecap="butt"/>
+<polyline class="relationship-line" points="2260,2880 2260,2724" fill="none" stroke="#047857" stroke-width="2" stroke-linejoin="miter" stroke-linecap="butt"/>
+<rect x="2251.5" y="2847" width="17" height="18" rx="3" fill="white" stroke="#047857" stroke-width=".7"/>
+<text class="cardinality" x="2260" y="2860" text-anchor="middle" style="fill:#047857">1</text>
+<rect x="2241" y="2739" width="38" height="18" rx="3" fill="white" stroke="#047857" stroke-width=".7"/>
+<text class="cardinality" x="2260" y="2752" text-anchor="middle" style="fill:#047857">0..N</text>
+<rect x="2301" y="2790" width="98" height="22" rx="3" fill="#f8fafc"/>
+<text class="relation-label" x="2350" y="2805" text-anchor="middle" style="fill:#047857">고정 승인본</text>
+</g>
+<g class="reference" id="reference-annual-request" data-entity-reference="submission_request" data-x="100" data-y="2580" data-width="480" data-height="90">
+<title>상단 submission_request 테이블 참조 카드이며 별도 테이블이 아닙니다.</title>
+<a href="#entity-submission_request">
+<rect x="100" y="2580" width="480" height="90" rx="7" fill="#f0fdf4" stroke="#047857" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text class="entity-name mono" x="116" y="2610">submission_request</text>
+<text x="116" y="2636" font-size="12" fill="#475569">ANNUAL_PLAN 요청 · id → request_id</text>
+<text x="116" y="2656" font-size="11" fill="#64748b">기존 테이블 참조 ↗</text>
+</a>
+</g>
+<g class="reference" id="reference-annual-trigger" data-entity-reference="submission" data-x="100" data-y="2800" data-width="480" data-height="90">
+<title>상단 submission 테이블 참조 카드이며 별도 테이블이 아닙니다.</title>
+<a href="#entity-submission">
+<rect x="100" y="2800" width="480" height="90" rx="7" fill="#f0fdf4" stroke="#047857" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text class="entity-name mono" x="116" y="2830">submission</text>
+<text x="116" y="2856" font-size="12" fill="#475569">승인 계기 제출 · id → trigger_submission_id</text>
+<text x="116" y="2876" font-size="11" fill="#64748b">기존 테이블 참조 ↗</text>
+</a>
+</g>
+<g class="reference" id="reference-annual-organization" data-entity-reference="organization" data-x="2660" data-y="2580" data-width="480" data-height="90">
+<title>상단 organization 테이블 참조 카드이며 별도 테이블이 아닙니다.</title>
+<a href="#entity-organization">
+<rect x="2660" y="2580" width="480" height="90" rx="7" fill="#f0fdf4" stroke="#047857" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text class="entity-name mono" x="2676" y="2610">organization</text>
+<text x="2676" y="2636" font-size="12" fill="#475569">사업 조직 · id → organization_id</text>
+<text x="2676" y="2656" font-size="11" fill="#64748b">기존 테이블 참조 ↗</text>
+</a>
+</g>
+<g class="reference" id="reference-annual-source" data-entity-reference="submission" data-x="2020" data-y="2880" data-width="480" data-height="90">
+<title>상단 submission 테이블 참조 카드이며 별도 테이블이 아닙니다.</title>
+<a href="#entity-submission">
+<rect x="2020" y="2880" width="480" height="90" rx="7" fill="#f0fdf4" stroke="#047857" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text class="entity-name mono" x="2036" y="2910">submission</text>
+<text x="2036" y="2936" font-size="12" fill="#475569">고정한 승인 제출 · id → submission_id</text>
+<text x="2036" y="2956" font-size="11" fill="#64748b">기존 테이블 참조 ↗</text>
+</a>
+</g>
+<g class="entity" id="entity-annual_master" data-entity="annual_master" data-x="740" data-y="2580" data-width="480" data-height="276" data-implementation="V3">
+<title>annual_master: 9개 필드 · V3 구현</title>
+<rect x="740" y="2583" width="480" height="276" rx="7" fill="#0f172a" opacity=".05"/>
+<rect x="740" y="2580" width="480" height="276" rx="7" fill="white" stroke="#cbd5e1" stroke-width="1.2"/>
+<rect x="740" y="2580" width="480" height="40" rx="7" fill="#047857"/>
+<rect x="740" y="2610" width="480" height="10" fill="#047857"/>
+<text class="entity-name mono" x="756" y="2606" style="fill:white">annual_master</text>
+<text class="column-label" x="756" y="2637">KEY</text><text class="column-label" x="818" y="2637">TYPE</text><text class="column-label" x="920" y="2637">COLUMN</text>
+<line x1="741" y1="2644" x2="1219" y2="2644" stroke="#e2e8f0"/>
+<g class="field" data-field="id" data-type="bigint" data-key="PK"><title>id · bigint · PK</title>
+<rect class="row-bg" x="741" y="2646" width="478" height="22" fill="white"/>
+<text class="field-key mono" x="756" y="2661" style="fill:#047857">PK</text>
+<text class="field-type mono" x="818" y="2661">bigint</text>
+<text class="field-name mono" x="920" y="2661">id</text>
+</g>
+<g class="field" data-field="request_id" data-type="bigint" data-key="FK"><title>request_id · bigint · FK · submission_request.id · UNIQUE(request_id, seq)</title>
+<rect class="row-bg" x="741" y="2668" width="478" height="22" fill="#f8fafc"/>
+<text class="field-key mono" x="756" y="2683" style="fill:#047857">FK</text>
+<text class="field-type mono" x="818" y="2683">bigint</text>
+<text class="field-name mono" x="920" y="2683">request_id</text>
+</g>
+<g class="field" data-field="seq" data-type="int" data-key=""><title>seq · int · CHECK seq &gt; 0</title>
+<rect class="row-bg" x="741" y="2690" width="478" height="22" fill="white"/>
+<text class="field-key mono" x="756" y="2705" style="fill:#047857"></text>
+<text class="field-type mono" x="818" y="2705">int</text>
+<text class="field-name mono" x="920" y="2705">seq</text>
+</g>
+<g class="field" data-field="previous_master_id" data-type="bigint" data-key="FK"><title>previous_master_id · bigint · FK · annual_master.id · 첫 발행은 NULL</title>
+<rect class="row-bg" x="741" y="2712" width="478" height="22" fill="#f8fafc"/>
+<text class="field-key mono" x="756" y="2727" style="fill:#047857">FK</text>
+<text class="field-type mono" x="818" y="2727">bigint</text>
+<text class="field-name mono" x="920" y="2727">previous_master_id</text>
+</g>
+<g class="field" data-field="trigger_submission_id" data-type="bigint" data-key="FK"><title>trigger_submission_id · bigint · FK · submission.id · 발행을 일으킨 승인본</title>
+<rect class="row-bg" x="741" y="2734" width="478" height="22" fill="white"/>
+<text class="field-key mono" x="756" y="2749" style="fill:#047857">FK</text>
+<text class="field-type mono" x="818" y="2749">bigint</text>
+<text class="field-name mono" x="920" y="2749">trigger_submission_id</text>
+</g>
+<g class="field" data-field="content_sha256" data-type="char(64)" data-key=""><title>content_sha256 · char(64) · 승인 제출본 조합 식별 해시</title>
+<rect class="row-bg" x="741" y="2756" width="478" height="22" fill="#f8fafc"/>
+<text class="field-key mono" x="756" y="2771" style="fill:#047857"></text>
+<text class="field-type mono" x="818" y="2771">char(64)</text>
+<text class="field-name mono" x="920" y="2771">content_sha256</text>
+</g>
+<g class="field" data-field="calculation_version" data-type="varchar(80)" data-key=""><title>calculation_version · varchar(80) · 집계 규칙 버전</title>
+<rect class="row-bg" x="741" y="2778" width="478" height="22" fill="white"/>
+<text class="field-key mono" x="756" y="2793" style="fill:#047857"></text>
+<text class="field-type mono" x="818" y="2793">varchar(80)</text>
+<text class="field-name mono" x="920" y="2793">calculation_version</text>
+</g>
+<g class="field" data-field="created_by" data-type="bigint" data-key="FK"><title>created_by · bigint · FK · app_user.id · 발행 행위자; 관계선 생략</title>
+<rect class="row-bg" x="741" y="2800" width="478" height="22" fill="#f8fafc"/>
+<text class="field-key mono" x="756" y="2815" style="fill:#047857">FK</text>
+<text class="field-type mono" x="818" y="2815">bigint</text>
+<text class="field-name mono" x="920" y="2815">created_by</text>
+</g>
+<g class="field" data-field="created_at" data-type="timestamptz" data-key=""><title>created_at · timestamptz · 발행 시각</title>
+<rect class="row-bg" x="741" y="2822" width="478" height="22" fill="white"/>
+<text class="field-key mono" x="756" y="2837" style="fill:#047857"></text>
+<text class="field-type mono" x="818" y="2837">timestamptz</text>
+<text class="field-name mono" x="920" y="2837">created_at</text>
+</g>
+</g>
+<g class="entity" id="entity-annual_master_source" data-entity="annual_master_source" data-x="2020" data-y="2580" data-width="480" data-height="144" data-implementation="V3">
+<title>annual_master_source: 3개 필드 · V3 구현</title>
+<rect x="2020" y="2583" width="480" height="144" rx="7" fill="#0f172a" opacity=".05"/>
+<rect x="2020" y="2580" width="480" height="144" rx="7" fill="white" stroke="#cbd5e1" stroke-width="1.2"/>
+<rect x="2020" y="2580" width="480" height="40" rx="7" fill="#047857"/>
+<rect x="2020" y="2610" width="480" height="10" fill="#047857"/>
+<text class="entity-name mono" x="2036" y="2606" style="fill:white">annual_master_source</text>
+<text class="column-label" x="2036" y="2637">KEY</text><text class="column-label" x="2098" y="2637">TYPE</text><text class="column-label" x="2200" y="2637">COLUMN</text>
+<line x1="2021" y1="2644" x2="2499" y2="2644" stroke="#e2e8f0"/>
+<g class="field" data-field="master_id" data-type="bigint" data-key="PK, FK"><title>master_id · bigint · PK, FK · annual_master.id</title>
+<rect class="row-bg" x="2021" y="2646" width="478" height="22" fill="white"/>
+<text class="field-key mono" x="2036" y="2661" style="fill:#047857">PK, FK</text>
+<text class="field-type mono" x="2098" y="2661">bigint</text>
+<text class="field-name mono" x="2200" y="2661">master_id</text>
+</g>
+<g class="field" data-field="organization_id" data-type="bigint" data-key="PK, FK"><title>organization_id · bigint · PK, FK · organization.id · 마스터별 조직당 한 제출본</title>
+<rect class="row-bg" x="2021" y="2668" width="478" height="22" fill="#f8fafc"/>
+<text class="field-key mono" x="2036" y="2683" style="fill:#047857">PK, FK</text>
+<text class="field-type mono" x="2098" y="2683">bigint</text>
+<text class="field-name mono" x="2200" y="2683">organization_id</text>
+</g>
+<g class="field" data-field="submission_id" data-type="bigint" data-key="FK"><title>submission_id · bigint · FK · submission.id · UNIQUE(master_id, submission_id)</title>
+<rect class="row-bg" x="2021" y="2690" width="478" height="22" fill="white"/>
+<text class="field-key mono" x="2036" y="2705" style="fill:#047857">FK</text>
+<text class="field-type mono" x="2098" y="2705">bigint</text>
+<text class="field-name mono" x="2200" y="2705">submission_id</text>
+</g>
+</g>
+<text x="1380" y="2705" font-size="12" fill="#475569">UNIQUE(request_id, seq)</text>
+<text x="1380" y="2730" font-size="12" fill="#475569">PK(master_id, organization_id)</text>
+<text x="1380" y="2755" font-size="12" fill="#475569">UNIQUE(master_id, submission_id)</text>
+<text x="740" y="2940" font-size="12" fill="#475569">request_target.excluded = FALSE인 수집 대상 기준</text>
+<text x="740" y="2965" font-size="12" fill="#475569">최초 17개 사업 조직 승인 완료 시 자동 발행</text>
+<text x="740" y="2990" font-size="12" fill="#475569">이후 일부 조직 재승인 시 전체 제출본 조합을 새 버전으로 보존</text>
+<line x1="100" y1="3070" x2="3200" y2="3070" stroke="#cbd5e1"/>
+<text x="100" y="3100" font-size="13">전체 스냅샷 재제출 · 모든 금액 수정 항목 소명 · 최초 전 조직 승인 · 이후 새 승인 조직만 마스터 갱신</text>
+<text x="100" y="3125" font-size="12" fill="#64748b">상단은 기존 논리 설계(후속 범위 포함), 하단 annual_master·annual_master_source 및 excluded는 V3 구현입니다.</text>
+<text x="100" y="3150" font-size="12" fill="#64748b">필드의 상세 제약·nullable·참조는 마우스 설명 및 development/erd.md, 실제 물리 스키마는 Flyway 마이그레이션을 기준으로 합니다.</text>
 </svg>

@@ -3,6 +3,7 @@ import { reactive, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSession } from '../stores/session'
 import { query, errorText } from '../lib/display'
+import AnnualPlanConfirmation from './AnnualPlanConfirmation.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,7 +15,7 @@ const error = ref('')
 const requestedYear = Number(route.query.year)
 const form = reactive({
   year: Number.isInteger(requestedYear) && requestedYear >= 2000 && requestedYear <= 9999
-    ? requestedYear : new Date().getFullYear() + 1,
+    ? requestedYear : new Date().getFullYear(),
   dueAt: '',
   message: '',
 })
@@ -88,6 +89,8 @@ onBeforeUnmount(dispose)
 <template>
   <div class="annual-create" data-figma-node="2:2261">
     <h1>연간 계획</h1>
+    <label class="confirmation-year">확인 연도<input v-model="form.year" type="number" min="2000" max="9999" :disabled="saving" /></label>
+    <AnnualPlanConfirmation :year="Number(form.year)" :organizations="organizations" />
 
     <section class="annual-card" aria-labelledby="annual-create-title" data-figma-node="2:2300">
       <form @submit.prevent="createRequest">
@@ -160,7 +163,7 @@ onBeforeUnmount(dispose)
 .annual-card {
   width: min(740px, 100%);
   min-height: 611px;
-  margin-top: 162px;
+  margin-top: 28px;
   padding: 24px 25px 26px;
   border: 1px solid #e7e4de;
   border-radius: 12px;
@@ -175,6 +178,7 @@ onBeforeUnmount(dispose)
   gap: 20px;
   margin-bottom: 24px;
 }
+.confirmation-year { display:flex; align-items:center; gap:12px; margin:20px 0; max-width:250px; font-size:13px; }.confirmation-year input { width:110px; margin:0; }
 
 .annual-card h2 {
   font-size: 16px;

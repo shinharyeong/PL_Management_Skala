@@ -41,6 +41,7 @@ class SubmissionIntegrationTests {
     @Autowired ObjectMapper mapper;
     @Autowired PythonParserClient parser;
     @Autowired TransactionTemplate transactions;
+    @Autowired io.skala.backend.review.ReviewComparisonService comparisons;
 
     /** 각 테스트의 업무 자료를 메모리 DB에만 준비한다.
      * Args: 없음. Returns: 없음. Raises: DB 오류. Side Effects: H2 행 초기화, 파일 쓰기 없음.
@@ -48,7 +49,7 @@ class SubmissionIntegrationTests {
     @BeforeEach
     void prepare() {
         jdbc.sql("UPDATE request_target SET confirmed_plan_submission_id=NULL").update();
-        for (String table : new String[]{"financial_value", "financial_line", "submission_validation", "account_item", "report_item", "idempotency_record", "parsing_job", "submission", "request_target",
+        for (String table : new String[]{"review_explanation", "gap_comparison", "review_item", "gap_threshold", "master_source", "master_version", "annual_master_source", "annual_master", "financial_value", "financial_line", "submission_validation", "account_item", "report_item", "idempotency_record", "parsing_job", "submission", "request_target",
                 "submission_request", "annual_plan", "app_user", "organization", "stored_object"}) {
             jdbc.sql("DELETE FROM " + table).update();
         }
@@ -286,6 +287,349 @@ class SubmissionIntegrationTests {
         jdbc.sql("UPDATE submission SET organization_id=2 WHERE id=?").param(Long.parseLong(id)).update();
         for (String suffix : new String[]{"/financial-values", "/report-values", "/source-cells?sheet=매출&cell=A1"})
             mvc.perform(get("/api/v1/submissions/" + id + suffix).header("Authorization", MANAGER)).andExpect(status().isNotFound());
+    }
+
+    /** 제출 후 요청이 닫혀도 고정 검증 근거로 승인하고 원본·금액·회차를 보존한다.
+     * Args: 없음. Returns: 없음. Raises: HTTP·검증 오류.
+     * Side Effects: 합성 연간 제출·검토·멱등 기록을 H2에 저장하며 파일·외부 DB 접근 없음.
+     */
+    @Test
+    void annualApprovalIsAuditedIdempotentAndPreservesSubmittedFacts() throws Exception {
+        String request = createRequest();
+        String id = pendingSubmission(request, "approval");
+        byte[] original = mvc.perform(get("/api/v1/submissions/" + id + "/file").header("Authorization", PLANNER))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        var values = jdbc.sql("SELECT id,line_id,year,month,scenario,amount,source_record_id,source_cell FROM financial_value ORDER BY id").query().listOfRows();
+        String validationKey = jdbc.sql("SELECT validation_result_object_key FROM submission_validation WHERE submission_id=?")
+                .param(Long.parseLong(id)).query(String.class).single();
+        String body = decisionBody(id, "APPROVE", null);
+        jdbc.sql("UPDATE submission_request SET status='CLOSED' WHERE id=?").param(Long.parseLong(request)).update();
+        String originalResponse = decision(id, "approve-audit-01", body).andExpect(status().isOk())
+                .andExpect(jsonPath("$.submission.status").value("APPROVED"))
+                .andExpect(jsonPath("$.submission.seq").value(1))
+                .andExpect(jsonPath("$.submission.reviewedBy.id").value("10"))
+                .andExpect(jsonPath("$.submission.reviewedBy.name").value("기획"))
+                .andExpect(jsonPath("$.submission.reviewedAt").isNotEmpty())
+                .andExpect(jsonPath("$.submission.rejectReason").doesNotExist())
+                .andExpect(jsonPath("$.masterEffects[0].action").value("WAITING_INITIAL"))
+                .andExpect(jsonPath("$.masterEffects[0].approvedOrganizationCount").value(1))
+                .andExpect(jsonPath("$.masterEffects[0].requiredOrganizationCount").value(2))
+                .andReturn().getResponse().getContentAsString();
+        decision(id, "approve-audit-01", body).andExpect(status().isOk())
+                .andExpect(header().string("Idempotency-Replayed", "true")).andExpect(content().json(originalResponse));
+        decision(id, "approve-ended-01", decisionBody(id, "APPROVE", null)).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("INVALID_SUBMISSION_STATE"));
+        mvc.perform(get("/api/v1/submissions/" + id).header("Authorization", MANAGER))
+                .andExpect(jsonPath("$.status").value("APPROVED")).andExpect(jsonPath("$.reviewedBy.id").value("10"));
+        mvc.perform(get("/api/v1/submission-requests/" + request).header("Authorization", PLANNER))
+                .andExpect(jsonPath("$.approvedCount").value(1)).andExpect(jsonPath("$.targets[0].latestStatus").value("APPROVED"));
+        assertThat(jdbc.sql("SELECT id,line_id,year,month,scenario,amount,source_record_id,source_cell FROM financial_value ORDER BY id").query().listOfRows()).isEqualTo(values);
+        assertThat(jdbc.sql("SELECT validation_result_object_key FROM submission_validation WHERE submission_id=?")
+                .param(Long.parseLong(id)).query(String.class).single()).isEqualTo(validationKey);
+        mvc.perform(get("/api/v1/submissions/" + id + "/file").header("Authorization", PLANNER))
+                .andExpect(status().isOk()).andExpect(content().bytes(original));
+    }
+
+    /** 반려본을 보존한 전체 재제출은 새 회차가 되고 수정 금액은 소명 없이 통과하지 못한다.
+     * Args: 없음. Returns: 없음. Raises: HTTP·JSON·검증 오류.
+     * Side Effects: H2에 세 합성 파일과 검증 근거를 저장하며 원본 Data에는 접근하지 않는다.
+     */
+    @Test
+    void rejectionPreservesHistoryAndAmountChangesStillRequireExplanation() throws Exception {
+        String request = createRequest();
+        String first = pendingSubmission(request, "rejected");
+        String body = decisionBody(first, "REJECT", "  원본의 거래 근거를 보완해 주세요.  ");
+        decision(first, "reject-first-01", body).andExpect(status().isOk())
+                .andExpect(jsonPath("$.submission.status").value("REJECTED"))
+                .andExpect(jsonPath("$.submission.rejectReason").value("원본의 거래 근거를 보완해 주세요."))
+                .andExpect(jsonPath("$.submission.reviewedBy.id").value("10"))
+                .andExpect(jsonPath("$.submission.reviewedAt").isNotEmpty()).andExpect(jsonPath("$.masterEffects").isEmpty());
+        decision(first, "reject-first-01", body).andExpect(status().isOk()).andExpect(header().string("Idempotency-Replayed", "true"));
+        decision(first, "reject-ended-01", decisionBody(first, "REJECT", "새 사유")).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("INVALID_SUBMISSION_STATE"));
+        mvc.perform(get("/api/v1/submissions/" + first).header("Authorization", MANAGER))
+                .andExpect(jsonPath("$.rejectReason").value("원본의 거래 근거를 보완해 주세요."));
+        String second = pendingSubmission(request, "resubmitted");
+        JsonNode secondView = submissionView(second);
+        assertThat(secondView.path("seq").asInt()).isEqualTo(2);
+        assertThat(secondView.path("comparisonContext").path("previousSubmissionId").asText()).isEqualTo(first);
+        decision(second, "reject-second-01", decisionBody(second, "REJECT", "추가 근거가 필요합니다.")).andExpect(status().isOk());
+        String changed = upload(request, "changed-upload-01", workbook()).path("id").asText();
+        seedAdapter(changed, false);
+        String key = "test-adapter/" + changed;
+        JsonNode parsed = mapper.readTree(jdbc.sql("SELECT payload FROM stored_object WHERE object_key=?").param(key).query(byte[].class).single());
+        ((com.fasterxml.jackson.databind.node.ObjectNode) parsed.path("submissionData").path("lines").get(0).path("values").get(1))
+                .put("amount", "100.123457");
+        jdbc.sql("UPDATE stored_object SET payload=? WHERE object_key=?").params(mapper.writeValueAsBytes(parsed), key).update();
+        JsonNode validation = workflow(changed, "validation", "changed-validate-01");
+        assertThat(validation.path("submission").path("readiness").path("canSubmit").asBoolean()).isFalse();
+        assertThat(validation.path("submission").path("readiness").path("blockers").findValuesAsText("code"))
+                .contains("REQUIRED_EXPLANATIONS_MISSING");
+        mvc.perform(post("/api/v1/submissions/" + changed + "/submit").header("Authorization", MANAGER)
+                .header("Idempotency-Key", "changed-submit-01").contentType("application/json")
+                .content(mapper.writeValueAsString(ApiData.object("expectedStateToken", submissionView(changed).path("stateToken").asText()))))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SUBMISSION_NOT_READY"));
+        assertThat(submissionView(changed).path("seq").isNull()).isTrue();
+        assertThat(submissionView(first).path("status").asText()).isEqualTo("REJECTED");
+        assertThat(submissionView(first).path("seq").asInt()).isEqualTo(1);
+        mvc.perform(get("/api/v1/submission-requests/" + request).header("Authorization", PLANNER))
+                .andExpect(jsonPath("$.approvedCount").value(0)).andExpect(jsonPath("$.targets[0].latestSubmittedSubmissionId").value(second))
+                .andExpect(jsonPath("$.targets[0].latestStatus").value("REJECTED"));
+
+        String reviewId = validation.path("answerRequiredReviewItemIds").get(0).asText();
+        JsonNode review = reviewView(reviewId);
+        mvc.perform(get("/api/v1/review-items/" + reviewId + "/evidence").header("Authorization", PLANNER).param("reason", "CHANGE"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.comparisonMode").value("MULTISET"))
+                .andExpect(jsonPath("$.baselineSubmissionId").value(second)).andExpect(jsonPath("$.items.length()").value(2));
+        String answerBody = mapper.writeValueAsString(ApiData.object("expectedStateToken", review.path("stateToken").asText(), "round", 1, "answer", "합성 원본 금액의 미세 변경 근거를 확인했습니다."));
+        mvc.perform(put("/api/v1/review-items/" + reviewId + "/answer").header("Authorization", PLANNER).header("Idempotency-Key", "review-wrong-role").contentType("application/json").content(answerBody)).andExpect(status().isForbidden());
+        mvc.perform(put("/api/v1/review-items/" + reviewId + "/answer").header("Authorization", MANAGER).header("Idempotency-Key", "review-answer-01").contentType("application/json").content(answerBody)).andExpect(status().isOk()).andExpect(jsonPath("$.explanationState").value("ANSWERED"));
+        mvc.perform(put("/api/v1/review-items/" + reviewId + "/answer").header("Authorization", MANAGER).header("Idempotency-Key", "review-answer-01").contentType("application/json").content(answerBody)).andExpect(status().isOk()).andExpect(header().string("Idempotency-Replayed", "true"));
+        workflow(changed, "submit", "changed-submit-with-answer");
+        decision(changed, "approve-unaccepted", decisionBody(changed, "APPROVE", null)).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("EXPLANATIONS_NOT_ACCEPTED"));
+        reviewDecision(reviewId, "REQUEST_CHANGES", "원본 비교 설명을 더 구체화해 주세요.", "review-reopen-01").andExpect(status().isOk()).andExpect(jsonPath("$.currentRound").value(2)).andExpect(jsonPath("$.explanationState").value("UNANSWERED"));
+        mvc.perform(put("/api/v1/review-items/" + reviewId + "/answer").header("Authorization", MANAGER).header("Idempotency-Key", "review-old-round").contentType("application/json").content(answerBody)).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("EXPLANATION_ROUND_CHANGED"));
+        answerReview(reviewId, "합성 검증용: 이전 금액 대비 0.000001원 변경을 원본 셀에서 확인했습니다.", "review-answer-02");
+        reviewDecision(reviewId, "ACCEPT", null, "review-accept-02").andExpect(status().isOk()).andExpect(jsonPath("$.explanationState").value("ACCEPTED"));
+        assertThat(submissionView(changed).path("readiness").path("canApprove").asBoolean()).isTrue();
+        decision(changed, "approve-reviewed-01", decisionBody(changed, "APPROVE", null)).andExpect(status().isOk()).andExpect(jsonPath("$.submission.status").value("APPROVED"));
+        reviewDecision(reviewId, "REQUEST_CHANGES", "종료 뒤 재요청", "review-after-approval").andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("EXPLANATION_LOCKED"));
+    }
+
+    /** 기획자 권한·판단 입력·최신 토큰·대기 상태를 HTTP 경계에서 강제한다.
+     * Args: 없음. Returns: 없음. Raises: HTTP·검증 오류.
+     * Side Effects: 합성 초안과 대기본만 H2에 저장하고 모든 잘못된 판단은 보존 확인한다.
+     */
+    @Test
+    void decisionsEnforceRoleInputStateAndToken() throws Exception {
+        String request = createRequest();
+        String draft = upload(request, "decision-draft-01", workbook()).path("id").asText();
+        decision(draft, "decide-draft-01", decisionBody(draft, "REJECT", "초안 판단 금지"))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("INVALID_SUBMISSION_STATE"));
+        String id = pendingSubmission(request, "decision-input");
+        String body = decisionBody(id, "APPROVE", null);
+        mvc.perform(post("/api/v1/submissions/" + id + "/decisions").header("Authorization", MANAGER)
+                .header("Idempotency-Key", "manager-decide-01").contentType("application/json").content(body))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/submissions/" + id + "/decisions").contentType("application/json").content(body))
+                .andExpect(status().isUnauthorized());
+        String token = submissionView(id).path("stateToken").asText();
+        for (String invalid : new String[]{
+                "{}", "{\"expectedStateToken\":\"x\",\"action\":\"OTHER\"}",
+                "{\"expectedStateToken\":3,\"action\":\"APPROVE\"}",
+                mapper.writeValueAsString(ApiData.object("expectedStateToken", token, "action", "REJECT")),
+                mapper.writeValueAsString(ApiData.object("expectedStateToken", token, "action", "REJECT", "note", " \n\t ")),
+                mapper.writeValueAsString(ApiData.object("expectedStateToken", token, "action", "REJECT", "note", "가".repeat(2001))),
+                mapper.writeValueAsString(ApiData.object("expectedStateToken", token, "action", "APPROVE", "note", null)),
+                mapper.writeValueAsString(ApiData.object("expectedStateToken", token, "action", "APPROVE", "note", "메모 금지")),
+                mapper.writeValueAsString(ApiData.object("expectedStateToken", token, "action", "APPROVE", "unexpected", true))}) {
+            decision(id, "invalid-decision-01", invalid).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+        }
+        decision(id, "stale-decision-01", mapper.writeValueAsString(ApiData.object("expectedStateToken", "stale", "action", "APPROVE")))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("RESOURCE_CHANGED"));
+        assertThat(submissionView(id).path("status").asText()).isEqualTo("PENDING");
+        assertThat(submissionView(id).path("reviewedAt").isNull()).isTrue();
+    }
+
+    /** 승인 근거가 사라진 대기본은 승인 불가이지만 명시적인 사유로 반려할 수 있다.
+     * Args: 없음. Returns: 없음. Raises: HTTP·검증 오류.
+     * Side Effects: 메모리 검증 참조만 제거해 손상을 모사하고 반려 기록을 저장한다.
+     */
+    @Test
+    void missingFrozenValidationBlocksApprovalButAllowsRejection() throws Exception {
+        String id = pendingSubmission(createRequest(), "missing-validation");
+        jdbc.sql("DELETE FROM submission_validation WHERE submission_id=?").param(Long.parseLong(id)).update();
+        decision(id, "approve-no-proof-01", decisionBody(id, "APPROVE", null)).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("VALIDATION_REQUIRED"));
+        assertThat(submissionView(id).path("status").asText()).isEqualTo("PENDING");
+        decision(id, "reject-no-proof-01", decisionBody(id, "REJECT", "검증 근거를 확인할 수 없습니다."))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.submission.status").value("REJECTED"));
+    }
+
+    /** 저장된 검증과 실제 적재 개수가 달라지면 승인 상태로 넘기지 않는다.
+     * Args: 없음. Returns: 없음. Raises: HTTP·검증 오류.
+     * Side Effects: H2의 합성 금액 한 건을 제거하며 원본 파일이나 운영 DB에는 접근하지 않는다.
+     */
+    @Test
+    void changedFinancialRowsCannotPassFrozenApprovalCheck() throws Exception {
+        String id = pendingSubmission(createRequest(), "missing-fact");
+        jdbc.sql("DELETE FROM financial_value WHERE id=(SELECT MIN(id) FROM financial_value)").update();
+        decision(id, "approve-missing-fact-01", decisionBody(id, "APPROVE", null)).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SUBMISSION_NOT_READY"));
+        assertThat(submissionView(id).path("status").asText()).isEqualTo("PENDING");
+        assertThat(submissionView(id).path("reviewedBy").isNull()).isTrue();
+    }
+
+    /** 월간 승인은 확정 계획을 요구하며 잘못된 유형의 제출본 반려는 허용한다.
+     * Args: 없음. Returns: 없음. Raises: HTTP·검증 오류.
+     * Side Effects: H2 합성 요청 종류를 바꿔 확정 계획이 없는 월간 판단 경계를 검사한다.
+     */
+    @Test
+    void monthlyApprovalRequiresConfirmedPlanAndMatchingMonthlyValidation() throws Exception {
+        String request = createRequest();
+        String id = pendingSubmission(request, "monthly-decision");
+        jdbc.sql("UPDATE submission_request SET type='MONTHLY_ACTUAL',month=1,period_key='2031-01' WHERE id=?")
+                .param(Long.parseLong(request)).update();
+        decision(id, "approve-monthly-01", decisionBody(id, "APPROVE", null)).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ANNUAL_PLAN_NOT_CONFIRMED"));
+        decision(id, "reject-monthly-01", decisionBody(id, "REJECT", "원본 범위가 잘못되었습니다."))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.submission.status").value("REJECTED"));
+    }
+
+    /** 확정 계획과 새 기준으로 월간 실적 Gap을 검토한 뒤 승인까지 연결한다.
+     * Args: 없음. Returns: 없음. Raises: HTTP·DB·검증 오류. Side Effects: 합성 H2만 변경하며 파일은 생성하지 않는다.
+     */
+    @Test
+    void monthlyActualGapUsesFixedPlanAndRequiresAcceptedExplanation() throws Exception {
+        String annual = createRequest(); String plan = pendingSubmission(annual, "annual-fixed");
+        decision(plan, "annual-fixed-approve", decisionBody(plan, "APPROVE", null)).andExpect(status().isOk());
+        jdbc.sql("UPDATE request_target SET confirmed_plan_submission_id=? WHERE request_id=? AND organization_id=1").params(Long.parseLong(plan),Long.parseLong(annual)).update();
+        jdbc.sql("UPDATE annual_plan SET status='CONFIRMED'").update();
+        jdbc.sql("UPDATE request_target SET excluded=TRUE WHERE organization_id=2").update();
+        jdbc.sql("UPDATE organization SET active=FALSE WHERE id=2").update();
+        applyThreshold("ACTUAL", "5", "10000000", "actual-threshold");
+        applyThreshold("ESTIMATE", "10", "50000000", "estimate-threshold");
+        JsonNode request=mapper.readTree(mvc.perform(post("/api/v1/submission-requests").header("Authorization",PLANNER).header("Idempotency-Key","monthly-request-01").contentType("application/json").content("{\"type\":\"MONTHLY_ACTUAL\",\"year\":2031,\"month\":1}"))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        String monthly=mapper.readTree(mvc.perform(multipart("/api/v1/submission-requests/"+request.path("id").asText()+"/submissions")
+                .file(new MockMultipartFile("file","D100_2031-01.xlsx","application/octet-stream",workbook())).header("Authorization",MANAGER).header("Idempotency-Key","monthly-upload-01"))
+                .andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString()).path("id").asText();
+        seedAdapter(monthly,false);String objectKey="test-adapter/"+monthly;
+        var parsed=(com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(jdbc.sql("SELECT payload FROM stored_object WHERE object_key=?").param(objectKey).query(byte[].class).single());
+        var data=(com.fasterxml.jackson.databind.node.ObjectNode)parsed.path("submissionData");
+        for(JsonNode sheet:data.path("sheets"))for(JsonNode period:sheet.path("periodColumns"))if(period.path("year").asInt()==2031)((com.fasterxml.jackson.databind.node.ObjectNode)period).put("scenario",period.path("month").asInt()==1?"ACTUAL":"ESTIMATE");
+        for(JsonNode line:data.path("lines"))for(JsonNode value:line.path("values"))if(value.path("year").asInt()==2031)((com.fasterxml.jackson.databind.node.ObjectNode)value).put("scenario",value.path("month").asInt()==1?"ACTUAL":"ESTIMATE");
+        for(JsonNode control:data.path("controlValues"))if(control.path("year").asInt()==2031)((com.fasterxml.jackson.databind.node.ObjectNode)control).put("scenario",control.path("month").asInt()==1?"ACTUAL":"ESTIMATE");
+        ((com.fasterxml.jackson.databind.node.ObjectNode)data.path("lines").get(0).path("values").get(0)).put("amount","50");
+        for(JsonNode control:data.path("controlValues"))if(control.path("month").asInt()==1 && !"expense:salary".equals(control.path("reportItemKey").asText()) && !"COST_TOTAL".equals(control.path("calculationCode").asText()))((com.fasterxml.jackson.databind.node.ObjectNode)control).put("amount","50");
+        jdbc.sql("UPDATE stored_object SET payload=? WHERE object_key=?").params(mapper.writeValueAsBytes(parsed),objectKey).update();
+        JsonNode validated=workflow(monthly,"validation","monthly-validate-01");
+        assertThat(validated.path("submission").path("readiness").path("unansweredCount").asInt()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM financial_value v JOIN financial_line l ON l.id=v.line_id WHERE l.submission_id=? AND v.scenario='ACTUAL'").param(Long.parseLong(monthly)).query(Integer.class).single()).isEqualTo(2);
+        String reviewId=validated.path("answerRequiredReviewItemIds").get(0).asText();
+        applyThreshold("ACTUAL","6","10000000","actual-draft-new");
+        assertThat(submissionView(monthly).path("readiness").path("validationState").asText()).isEqualTo("STALE");
+        workflow(monthly,"validation","monthly-validate-new-context");
+        JsonNode item=reviewView(reviewId);
+        assertThat(item.path("comparisons").get(0).path("basis").asText()).isEqualTo("PLAN");
+        assertThat(item.path("comparisons").get(0).path("baselineAmount").decimalValue()).isZero();
+        assertThat(item.path("comparisons").get(0).path("gapRate").isNull()).isTrue();
+        String oldThreshold=item.path("comparisons").get(0).path("threshold").path("id").asText();
+        answerReview(reviewId,"합성 검증용: 최초 월 실적 50원을 원본과 대조했습니다.","monthly-answer-01");
+        workflow(monthly,"submit","monthly-submit-01");
+        applyThreshold("ACTUAL","99","999999999","actual-new-threshold");
+        assertThat(reviewView(reviewId).path("comparisons").get(0).path("threshold").path("id").asText()).isEqualTo(oldThreshold);
+        reviewDecision(reviewId,"ACCEPT",null,"monthly-review-accept").andExpect(status().isOk());
+        decision(monthly,"monthly-approve-01",decisionBody(monthly,"APPROVE",null)).andExpect(status().isOk()).andExpect(jsonPath("$.masterEffects[0].action").value("CREATED"));
+        mvc.perform(post("/api/v1/gap-thresholds/preview").header("Authorization",PLANNER).contentType("application/json").content(mapper.writeValueAsString(ApiData.object("requestId",request.path("id").asText(),"scenario","ACTUAL","percent","5","amount","10000000"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.evaluatedItemCount").value(1)).andExpect(jsonPath("$.exceededItemCount").value(1)).andExpect(jsonPath("$.excludedItemCount").value(0));
+    }
+
+    /** 같은 합계의 원천 추가·상쇄도 수정 소명으로 만들고 통째 누락은 차단한다.
+     * Args: 없음. Returns: 없음. Raises: HTTP·검증 실패. Side Effects: 합성 H2와 메모리 JSON만 변경한다.
+     */
+    @Test
+    void offsettingSourceChangesRequireExplanationAndRemovedReportBlocks() throws Exception {
+        String request=createRequest(), baseline=pendingSubmission(request,"offset-baseline");
+        decision(baseline,"offset-baseline-reject",decisionBody(baseline,"REJECT","합성 재제출 검증")).andExpect(status().isOk());
+        String changed=upload(request,"offset-upload",workbook()).path("id").asText();seedAdapter(changed,false);
+        var parsed=adapter(changed);var data=(com.fasterxml.jackson.databind.node.ObjectNode)parsed.path("submissionData");
+        var original=(com.fasterxml.jackson.databind.node.ObjectNode)data.path("lines").get(0);
+        var added=original.deepCopy();added.put("detailId","offset-extra");((com.fasterxml.jackson.databind.node.ObjectNode)added.path("source")).put("row",20);
+        for(JsonNode value:added.path("values"))((com.fasterxml.jackson.databind.node.ObjectNode)value).put("amount",value.path("month").asInt()==2?"-1":"0").put("sourceCell","B"+(20+value.path("month").asInt())).put("sourceRecordId","offset-"+value.path("month").asInt());
+        ((com.fasterxml.jackson.databind.node.ObjectNode)original.path("values").get(1)).put("amount","101.123456");
+        ((com.fasterxml.jackson.databind.node.ArrayNode)data.path("lines")).add(added);saveAdapter(changed,parsed);
+        JsonNode result=workflow(changed,"validation","offset-validate");
+        assertThat(result.path("submission").path("readiness").path("requiredCount").asInt()).isEqualTo(12);
+        JsonNode items=mapper.readTree(mvc.perform(get("/api/v1/review-items").header("Authorization",PLANNER).param("submissionId",changed).param("month","2")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        String item=items.path("items").get(0).path("id").asText();
+        assertThat(items.path("items").get(0).path("reportItem").path("kind").asText()).isEqualTo("REVENUE");
+        mvc.perform(get("/api/v1/review-items/"+item+"/evidence").header("Authorization",PLANNER).param("reason","CHANGE"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.netDelta").value("0.000000")).andExpect(jsonPath("$.items.length()").value(3));
+        String removed=upload(request,"removed-upload",workbook()).path("id").asText();seedAdapter(removed,false);var missing=adapter(removed);var missingData=(com.fasterxml.jackson.databind.node.ObjectNode)missing.path("submissionData");
+        ((com.fasterxml.jackson.databind.node.ArrayNode)missingData.path("lines")).remove(0);
+        for(JsonNode control:missingData.path("controlValues")){var c=(com.fasterxml.jackson.databind.node.ObjectNode)control;if("revenue:service".equals(c.path("reportItemKey").asText())||"REVENUE_TOTAL".equals(c.path("calculationCode").asText()))c.put("amount","0");if("OP".equals(c.path("calculationCode").asText()))c.put("amount",c.path("month").asInt()==1?"0":"-40.123456");}
+        saveAdapter(removed,missing);JsonNode removal=workflow(removed,"validation","removed-validate");
+        assertThat(removal.path("submission").path("readiness").path("blockers").findValuesAsText("code")).contains("REQUIRED_REPORT_ITEM_REMOVED");
+    }
+
+    /** 직전본에 없던 보고 항목도 추가 수정으로 판단하고 기준 원본의 상쇄 변조를 거부한다.
+     * Args: 없음. Returns: 없음. Raises: HTTP·DB·검증 실패. Side Effects: 합성 H2만 변경한다.
+     */
+    @Test
+    void addedReportRequiresExplanationAndBaselineIntegrityDetectsOffsettingMutation() throws Exception {
+        String request=createRequest(),baseline=pendingSubmission(request,"new-report-baseline");
+        decision(baseline,"new-report-reject",decisionBody(baseline,"REJECT","합성 신규 항목 검증")).andExpect(status().isOk());
+        assertThat(comparisons.complete(Long.parseLong(baseline))).isTrue();
+        var values=jdbc.sql("SELECT v.id,v.amount FROM financial_value v JOIN financial_line l ON l.id=v.line_id WHERE l.submission_id=? AND v.month=2 ORDER BY v.id").param(Long.parseLong(baseline)).query().listOfRows();
+        for(var value:values)jdbc.sql("UPDATE financial_value SET amount=amount+1 WHERE id=?").param(value.get("id")).update();
+        assertThat(comparisons.complete(Long.parseLong(baseline))).isFalse();
+        for(var value:values)jdbc.sql("UPDATE financial_value SET amount=? WHERE id=?").params(value.get("amount"),value.get("id")).update();
+        assertThat(comparisons.complete(Long.parseLong(baseline))).isTrue();
+        jdbc.sql("UPDATE parsing_job SET attempt_no=attempt_no+1 WHERE submission_id=?").param(Long.parseLong(baseline)).update();
+        assertThat(comparisons.complete(Long.parseLong(baseline))).isFalse();
+        jdbc.sql("UPDATE parsing_job SET attempt_no=attempt_no-1 WHERE submission_id=?").param(Long.parseLong(baseline)).update();
+        String changed=upload(request,"new-report-upload",workbook()).path("id").asText();seedAdapter(changed,false);var parsed=adapter(changed);var data=(com.fasterxml.jackson.databind.node.ObjectNode)parsed.path("submissionData");
+        var report=((com.fasterxml.jackson.databind.node.ObjectNode)data.path("reportItems").get(0)).deepCopy().put("key","revenue:new").put("name","신규 보고 항목");((com.fasterxml.jackson.databind.node.ArrayNode)data.path("reportItems")).add(report);
+        var added=((com.fasterxml.jackson.databind.node.ObjectNode)data.path("lines").get(0)).deepCopy().put("reportItemKey","revenue:new").put("detailId","new-report-row");((com.fasterxml.jackson.databind.node.ObjectNode)added.path("source")).put("row",20);
+        for(JsonNode value:added.path("values"))((com.fasterxml.jackson.databind.node.ObjectNode)value).put("amount","0").put("sourceCell","C"+(20+value.path("month").asInt())).put("sourceRecordId","new-report-"+value.path("month").asInt());
+        ((com.fasterxml.jackson.databind.node.ArrayNode)data.path("lines")).add(added);var controls=(com.fasterxml.jackson.databind.node.ArrayNode)data.path("controlValues");int count=controls.size();for(int index=0;index<count;index++)if("revenue:service".equals(controls.get(index).path("reportItemKey").asText()))controls.add(((com.fasterxml.jackson.databind.node.ObjectNode)controls.get(index)).deepCopy().put("reportItemKey","revenue:new").put("amount","0"));
+        saveAdapter(changed,parsed);JsonNode result=workflow(changed,"validation","new-report-validate");
+        assertThat(result.path("submission").path("readiness").path("requiredCount").asInt()).isEqualTo(12);
+        assertThat(result.path("submission").path("readiness").path("blockers").findValuesAsText("code")).containsOnly("REQUIRED_EXPLANATIONS_MISSING");
+    }
+
+    /** 보존된 합성 adapter JSON을 읽는다. Args: submission 제출. Returns: JSON. Raises: DB·JSON 오류. Side Effects: 읽기. */
+    private com.fasterxml.jackson.databind.node.ObjectNode adapter(String submission) throws Exception {return (com.fasterxml.jackson.databind.node.ObjectNode)mapper.readTree(jdbc.sql("SELECT payload FROM stored_object WHERE object_key=?").param("test-adapter/"+submission).query(byte[].class).single());}
+    /** 테스트 전용 adapter의 합성 근거를 저장한다. Args: submission 제출, parsed JSON. Returns: 없음. Raises: DB·JSON 오류. Side Effects: 합성 H2 payload만 변경한다. */
+    private void saveAdapter(String submission,JsonNode parsed) throws Exception {jdbc.sql("UPDATE stored_object SET payload=? WHERE object_key=?").params(mapper.writeValueAsBytes(parsed),"test-adapter/"+submission).update();}
+
+    /** 현재 검토 상세를 읽는다. Args: reviewId 항목. Returns: JSON. Raises: HTTP 오류. Side Effects: H2 읽기. */
+    private JsonNode reviewView(String reviewId) throws Exception {return mapper.readTree(mvc.perform(get("/api/v1/review-items/"+reviewId).header("Authorization",PLANNER)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());}
+    /** 최신 회차에 답변한다. Args: reviewId 항목, answer 내용, key 멱등키. Returns: 없음. Raises: HTTP 오류. Side Effects: H2 답변 저장. */
+    private void answerReview(String reviewId,String answer,String key) throws Exception {var row=reviewView(reviewId);mvc.perform(put("/api/v1/review-items/"+reviewId+"/answer").header("Authorization",MANAGER).header("Idempotency-Key",key).contentType("application/json").content(mapper.writeValueAsString(ApiData.object("expectedStateToken",row.path("stateToken").asText(),"round",row.path("currentRound").asInt(),"answer",answer)))).andExpect(status().isOk());}
+    /** 최신 회차의 수용·보완을 요청한다. Args: reviewId 항목, action 판단, note 사유, key 멱등키. Returns: 검증응답. Raises: HTTP 오류. Side Effects: H2 검토 저장. */
+    private org.springframework.test.web.servlet.ResultActions reviewDecision(String reviewId,String action,String note,String key) throws Exception {var row=reviewView(reviewId);return mvc.perform(post("/api/v1/review-items/"+reviewId+"/decisions").header("Authorization",PLANNER).header("Idempotency-Key",key).contentType("application/json").content(mapper.writeValueAsString(ApiData.object("expectedStateToken",row.path("stateToken").asText(),"round",row.path("currentRound").asInt(),"action",action,"note",note))));}
+    /** 기대 토큰으로 새 기준을 적용한다. Args: scenario 종류, percent 비율, amount 금액, key 멱등키. Returns: 없음. Raises: HTTP 오류. Side Effects: H2 기준 저장. */
+    private void applyThreshold(String scenario,String percent,String amount,String key) throws Exception {var current=mapper.readTree(mvc.perform(get("/api/v1/gap-thresholds/current").header("Authorization",PLANNER)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());mvc.perform(post("/api/v1/gap-thresholds").header("Authorization",PLANNER).header("Idempotency-Key",key).contentType("application/json").content(mapper.writeValueAsString(ApiData.object("expectedStateToken",current.path("stateToken").asText(),"scenario",scenario,"percent",percent,"amount",amount)))).andExpect(status().isCreated());}
+
+    /** 합성 전체 파일을 접수·검증·최종 제출해 실제 HTTP 검토 대기본을 준비한다.
+     * Args: request 요청 ID, keyPrefix 서로 다른 멱등키 접두사. Returns: PENDING 제출 ID.
+     * Raises: HTTP·검증 오류. Side Effects: H2의 원본·검증·금융값·제출 기록 저장.
+     */
+    private String pendingSubmission(String request, String keyPrefix) throws Exception {
+        String id = upload(request, keyPrefix + "-upload", workbook()).path("id").asText();
+        seedAdapter(id, false);
+        workflow(id, "validation", keyPrefix + "-validate");
+        assertThat(workflow(id, "submit", keyPrefix + "-submit").path("status").asText()).isEqualTo("PENDING");
+        return id;
+    }
+
+    /** 기획자에게 보이는 현재 제출 상세를 읽는다.
+     * Args: id 제출 ID. Returns: 상세 JSON. Raises: HTTP·JSON 오류. Side Effects: H2 읽기.
+     */
+    private JsonNode submissionView(String id) throws Exception {
+        return mapper.readTree(mvc.perform(get("/api/v1/submissions/" + id).header("Authorization", PLANNER))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+    }
+
+    /** 최신 토큰과 승인·반려별 허용 필드로 HTTP 판단 본문을 만든다.
+     * Args: id 제출 ID, action 판단, note 반려 사유 또는 null. Returns: JSON 문자열.
+     * Raises: HTTP·JSON 오류. Side Effects: 현재 제출 읽기만 수행한다.
+     */
+    private String decisionBody(String id, String action, String note) throws Exception {
+        var body = mapper.createObjectNode().put("expectedStateToken", submissionView(id).path("stateToken").asText()).put("action", action);
+        if (note != null) body.put("note", note);
+        return mapper.writeValueAsString(body);
+    }
+
+    /** 동일 인증 경계로 승인·반려 POST를 실행하고 검증 가능한 결과를 반환한다.
+     * Args: id 제출 ID, key 멱등키, body 검증할 원문 JSON. Returns: MockMvc 결과 검증기.
+     * Raises: HTTP 실행 오류. Side Effects: 성공 시 H2 검토·멱등 기록만 변경한다.
+     */
+    private org.springframework.test.web.servlet.ResultActions decision(String id, String key, String body) throws Exception {
+        return mvc.perform(post("/api/v1/submissions/" + id + "/decisions").header("Authorization", PLANNER)
+                .header("Idempotency-Key", key).contentType("application/json").content(body));
     }
 
     /** 파서 경계의 독립 합성 근거를 메모리 DB에 주입한다.

@@ -10,7 +10,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-/** 조직 담당자의 명시적 업무 검증·최종 제출 HTTP 진입점이다. */
+/** 조직 담당자의 검증·제출과 경영기획 담당자의 승인·반려 HTTP 진입점이다. */
 @RestController
 @RequestMapping("/api/v1/submissions/{submissionId}")
 public class SubmissionWorkflowController {
@@ -52,6 +52,19 @@ public class SubmissionWorkflowController {
             @Valid @RequestBody SubmissionWorkflowService.StateInput input, @RequestParam Map<String, String> query) {
         submissions.checkQuery(query, Set.of());
         return command(workflow.submit(actors.current(), submissionId, key, input));
+    }
+
+    /** 경영기획 담당자의 승인 또는 반려를 같은 제출본에 한 번만 반영한다.
+     * Args: submissionId 제출본, key 멱등키, input 상태 토큰·판단·사유, query 빈 쿼리.
+     * Returns: 제출 상세와 마스터 영향 목록 JSON 200. Raises: 인증·권한·입력·상태·검증 오류.
+     * Side Effects: 검토 헤더와 멱등 결과를 서비스 트랜잭션에 저장; 원본·금액은 보존.
+     */
+    @PostMapping("/decisions")
+    public ResponseEntity<String> decide(@PathVariable String submissionId,
+            @RequestHeader(value="Idempotency-Key", required=false) String key,
+            @Valid @RequestBody SubmissionWorkflowService.DecisionInput input, @RequestParam Map<String, String> query) {
+        submissions.checkQuery(query, Set.of());
+        return command(workflow.decide(actors.current(), submissionId, key, input));
     }
 
     /** 멱등 저장 결과의 상태·위치·재전달 헤더를 복원한다.

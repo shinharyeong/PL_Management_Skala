@@ -18,6 +18,38 @@ class FinancialValidationRulesTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private final FinancialValidationRules rules = new FinancialValidationRules(mapper);
 
+    /** 월간 선택은 요청 연도의 실적·추정 전체 월만 포함하고 누락은 0으로 만들지 않는다.
+     * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 JSON 메모리만 변경한다.
+     */
+    @Test
+    void monthlyScenarioSelectionRequiresEveryActualAndEstimateMonth() {
+        ObjectNode data=fixture();
+        for(JsonNode sheet:data.path("sheets"))for(JsonNode period:sheet.path("periodColumns"))if(period.path("year").asInt()==2031)((ObjectNode)period).put("scenario",period.path("month").asInt()<=3?"ACTUAL":"ESTIMATE");
+        for(JsonNode line:data.path("lines"))for(JsonNode value:line.path("values"))if(value.path("year").asInt()==2031)((ObjectNode)value).put("scenario",value.path("month").asInt()<=3?"ACTUAL":"ESTIMATE");
+        for(JsonNode value:data.path("controlValues"))if(value.path("year").asInt()==2031)((ObjectNode)value).put("scenario",value.path("month").asInt()<=3?"ACTUAL":"ESTIMATE");
+        JsonNode result=mapper.valueToTree(rules.evaluate(data,SOURCE_HASH,"D100",2031,"MONTHLY_ACTUAL",3));
+        assertThat(result.path("diagnostics").isEmpty()).isTrue();
+        assertThat(result.path("lines").get(0).path("values").get(2).path("scenario").asText()).isEqualTo("ACTUAL");
+        assertThat(result.path("lines").get(0).path("values").get(3).path("scenario").asText()).isEqualTo("ESTIMATE");
+        ((ArrayNode)data.path("lines").get(0).path("values")).remove(11);
+        JsonNode missing=mapper.valueToTree(rules.evaluate(data,SOURCE_HASH,"D100",2031,"MONTHLY_ACTUAL",3));
+        assertThat(missing.path("diagnostics").findValuesAsText("code")).contains("PLAN_AMOUNT_UNRESOLVED");
+        assertUnavailable(missing);
+    }
+
+    /** 마감·수정 메타만 바뀌면 지문을 유지하고 거래 설명은 보존한다.
+     * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 JSON만 변경한다.
+     */
+    @Test
+    void closingMetadataDoesNotChangeFingerprintButBusinessDescriptionDoes() {
+        ObjectNode data=fixture();String fingerprint=evaluate(data).path("fingerprint").asText();
+        var line=(ObjectNode)data.path("lines").get(0);String description=line.path("description").asText();
+        line.put("description","[2031년 1월 마감: 1월 실적 / 2~12월 추정] "+description);line.put("detailRevision","99");
+        assertThat(evaluate(data).path("fingerprint").asText()).isEqualTo(fingerprint);
+        line.put("description",description+" [계약 마감 정산 추가금]");
+        assertThat(evaluate(data).path("fingerprint").asText()).isNotEqualTo(fingerprint);
+    }
+
     /** 0원과 소수 여섯 자리를 보존하고 원본 JSON을 변경하지 않는다.
      * Args: 없음. Returns: 없음. Raises: AssertionError 검증 결과 불일치.
      * Side Effects: 합성 메모리 JSON 생성·검증만 수행; DB·파일 접근 없음.

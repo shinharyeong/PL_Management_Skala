@@ -35,15 +35,16 @@ export function dateTime(value) {
   }).format(date)
 }
 
-/** 십진 금액의 정밀도를 유지하며 천 단위 구분자를 붙인다.
- * Args: value 십진 문자열 또는 null. Returns: 금액 문자열. Raises: 없음. Side Effects: 없음.
+/** 십진 금액의 정밀도를 유지하며 소수부 끝의 0을 생략하고 천 단위 구분자를 붙인다.
+ * Args: value 십진 문자열 또는 null. Returns: 유효 소수 자릿수를 보존한 금액 문자열. Raises: 없음. Side Effects: 없음.
  * @param {string | null | undefined} value
  * @returns {string}
  */
 export function amount(value) {
   if (value === null || value === undefined || value === '') return '—'
   const [integer, fraction] = String(value).split('.')
-  return integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (fraction ? `.${fraction}` : '')
+  const decimal = fraction?.replace(/0+$/, '')
+  return integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (decimal ? `.${decimal}` : '')
 }
 
 /** 제출과 파싱 상태를 최종 제출과 혼동하지 않게 표시한다.

@@ -9,6 +9,8 @@ const session = useSession()
 const items = ref([])
 const nextCursor = ref(null)
 const selected = ref(null)
+const masterStatus = ref(null)
+const masterError = ref('')
 const selectedId = ref(typeof route.query.requestId === 'string' ? route.query.requestId : '')
 const loading = ref(false)
 const detailLoading = ref(false)
@@ -42,7 +44,7 @@ async function load(more = false) {
 
 /** 선택 요청의 최신 조직 현황을 읽고 이전 선택의 뒤늦은 응답을 버린다.
  * Args: id 요청 ID 문자열. Returns: Promise<void>. Raises: 없음(API 오류를 화면에 표시).
- * Side Effects: 이전 HTTP 취소·요청 상세/오류 갱신; 세대값으로 동일 요청 재조회도 구분한다.
+ * Side Effects: 이전 HTTP 취소·요청 상세/마스터 상태 독립 조회·오류 갱신; 구 응답을 버린다.
  */
 async function select(id) {
   detailController.abort()
@@ -50,16 +52,25 @@ async function select(id) {
   const current = ++detailGeneration
   selectedId.value = id
   selected.value = null
+  masterStatus.value = null
+  masterError.value = ''
   detailLoading.value = true
   error.value = ''
   try {
-    const result = await session.request(`/api/v1/submission-requests/${id}`, { signal: detailController.signal })
+    const [detail, master] = await Promise.allSettled([
+      session.request(`/api/v1/submission-requests/${id}`, { signal: detailController.signal }),
+      session.request(`/api/v1/submission-requests/${id}/annual-master`, { signal: detailController.signal }),
+    ])
     if (current !== detailGeneration) return
+    if (detail.status === 'rejected') throw detail.reason
+    const result = detail.value
     if (result.type !== 'ANNUAL_PLAN') {
       error.value = '연간 계획 요청을 선택해 주세요.'
       return
     }
     selected.value = result
+    if (master.status === 'fulfilled') masterStatus.value = master.value
+    else if (master.reason.name !== 'AbortError') masterError.value = errorText(master.reason)
   } catch (cause) {
     if (current === detailGeneration && cause.name !== 'AbortError') error.value = errorText(cause)
   } finally {
@@ -95,7 +106,7 @@ function shortDate(value, withTime = false) {
  */
 function targetStatus(target) {
   const states = {
-    PENDING: { label: '제출 완료', tone: 'submitted' },
+    PENDING: { label: '검토 대기', tone: 'submitted' },
     APPROVED: { label: '승인 완료', tone: 'approved' },
     REJECTED: { label: '반려', tone: 'overdue' },
   }
@@ -149,6 +160,16 @@ onBeforeUnmount(dispose)
       <div v-if="error" class="alert error" role="alert">{{ error }}</div>
       <p v-if="loading || detailLoading" class="progress-empty" role="status">요청 현황을 불러오고 있습니다.</p>
       <template v-else-if="selected">
+        <div v-if="masterError" class="alert error" role="alert">마스터 상태를 확인하지 못했습니다. {{ masterError }}</div>
+        <section v-if="masterStatus" class="master-status" aria-labelledby="annual-master-status-title">
+          <div>
+            <h3 id="annual-master-status-title">연간 계획 마스터</h3>
+            <p v-if="masterStatus.publicationState === 'PUBLISHED'"><strong>{{ masterStatus.latestVersionLabel }}</strong> 발행됨</p>
+            <p v-else><strong>첫 발행 대기</strong> · 승인 {{ masterStatus.approvedOrganizationCount }}/{{ masterStatus.requiredOrganizationCount }}곳</p>
+            <p class="muted">전 조직 승인 시 승인본을 통합해 자동 발행합니다. 이후에는 새로 승인한 조직만 교체하며, Contingency를 입력하는 연간 계획 확정은 별도입니다.</p>
+          </div>
+          <RouterLink v-if="masterStatus.latestMasterId" :to="`/planning/annual-masters/${masterStatus.latestMasterId}`" class="button">마스터 확인 →</RouterLink>
+        </section>
         <div class="progress-table-wrap">
           <table>
             <caption class="visually-hidden">{{ selected.year }}년도 조직별 연간 계획 요청 진행 현황</caption>
@@ -170,7 +191,7 @@ onBeforeUnmount(dispose)
                   <span :class="['request-state', targetStatus(target).tone]">{{ targetStatus(target).label }}</span>
                   <small v-if="target.draftCount">업로드 초안 {{ target.draftCount }}건</small>
                 </td>
-                <td><RouterLink :to="targetLink(target)" class="detail-link">보기</RouterLink></td>
+                <td><RouterLink :to="targetLink(target)" class="detail-link">{{ target.latestStatus === 'PENDING' ? '검토' : '보기' }}</RouterLink></td>
               </tr>
             </tbody>
             <tfoot>
@@ -186,7 +207,7 @@ onBeforeUnmount(dispose)
             </tfoot>
           </table>
         </div>
-        <p class="progress-note">업로드 초안은 최종 제출 완료에 포함하지 않습니다.</p>
+        <p class="progress-note">최종 제출 {{ selected.submittedCount }}/{{ selected.targetCount }}곳 · 승인 {{ selected.approvedCount }}/{{ selected.targetCount }}곳. 업로드 초안은 최종 제출 완료에 포함하지 않습니다.</p>
       </template>
       <div v-else-if="!error" class="progress-empty">
         <p>아직 발송한 연간 계획 요청이 없습니다.</p>
@@ -310,6 +331,8 @@ onBeforeUnmount(dispose)
 .submission-progress progress::-moz-progress-bar { background: #14171e; border-radius: 999px; }
 .summary-state { font-size: 11px; }
 .progress-note { margin-top: 12px; color: #9a9690; font-size: 11px; }
+.master-status { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:24px; padding:18px; border:1px solid #e7e4de; border-radius:10px; background:#faf9f6; }
+.master-status h3 { margin-bottom:8px; }.master-status p { font-size:13px; line-height:1.7; }.master-status .muted { max-width:720px; margin-top:7px; font-size:12px; }.master-status .button { flex-shrink:0; }
 .progress-empty { display: flex; min-height: 220px; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #7c808a; font-size: 13px; text-align: center; }
 .empty-link { color: #75552f; font-size: 12px; }
 .more-link { display: block; margin: 16px auto 0; }
@@ -318,6 +341,7 @@ onBeforeUnmount(dispose)
   .progress-heading { align-items: flex-start; flex-wrap: wrap; gap: 14px; }
 }
 @media (max-width: 760px) {
+  .master-status { align-items:flex-start; flex-direction:column; }
   .request-progress { margin-top: 54px; }
   .request-types { flex-wrap: wrap; }
   .progress-heading { margin-bottom: 22px; }

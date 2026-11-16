@@ -49,7 +49,7 @@ public class DemoTemplateService {
      * Raises: IllegalStateException 메모리 ZIP 실패. Side Effects: 메모리만 사용; 파일 생성 없음.
      */
     private byte[] workbook(Actor actor, int year) {
-        String[] names = {"매출", "비용", "조직코드", "예산코드", "집계근거"};
+        String[] names = {"매출", "비용", "조직코드", "예산코드", "보고"};
         var entries = new LinkedHashMap<String, String>();
         entries.put("[Content_Types].xml", "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
                 + "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
@@ -73,10 +73,7 @@ public class DemoTemplateService {
                 + "</row><row r=\"2\">" + text("A2", actor.organization().code()) + text("B2", actor.organization().name()) + "</row>"));
         entries.put("xl/worksheets/sheet4.xml", worksheet("<row r=\"1\">" + text("A1", "예산코드") + text("B1", "예산명칭")
                 + text("C1", "실적집계기준") + "</row><row r=\"2\">" + text("A2", "77001") + text("B2", "사용료") + text("C2", "사용료") + "</row>"));
-        String formula = "SUMIFS('매출'!F:F,'매출'!$B:$B,\"서비스매출\",'매출'!$A:$A,\""
-                + actor.organization().name().replace("\"", "\"\"") + "\")";
-        entries.put("xl/worksheets/sheet5.xml", worksheet("<row r=\"1\">" + text("A1", "합성 집계 근거 · 승인 재무값 아님")
-                + "</row><row r=\"2\"><c r=\"A2\"><f>" + xml(formula) + "</f><v>1000000.50</v></c></row>"));
+        entries.put("xl/worksheets/sheet5.xml", reportSheet(actor.organization().name(), year));
         try (var buffer = new ByteArrayOutputStream(); var zip = new ZipOutputStream(buffer)) {
             for (Map.Entry<String, String> entry : entries.entrySet()) {
                 ZipEntry member = new ZipEntry(entry.getKey());
@@ -129,6 +126,45 @@ public class DemoTemplateService {
             rows.append("<c r=\"").append(column(headers.length + month)).append("5\"><v>").append(amount).append("</v></c>");
         }
         return worksheet(rows.append("</row>").toString());
+    }
+
+    /** 월별 상세와 보고 분류를 SUMIFS로 연결하고 매출·비용·손익 대조 근거를 만든다.
+     * Args: organization 요청 조직명, year 요청 연도.
+     * Returns: 12개월 PLAN 보고 worksheet XML. Raises: 없음.
+     * Side Effects: 합성 수식과 정확한 캐시값을 메모리에 구성; 수식 실행·파일 쓰기 없음.
+     */
+    private String reportSheet(String organization, int year) {
+        var rows = new StringBuilder("<row r=\"1\">").append(text("A1", "단위: 원"))
+                .append("</row><row r=\"2\">").append(text("A2", "체험용 합성 보고 · 실제 계획 아님"))
+                .append("</row><row r=\"5\">").append(text("A5", organization));
+        for (int month = 1; month <= 12; month++) rows.append(text(column(month + 9) + "5", year + "년"));
+        rows.append("</row><row r=\"6\">");
+        for (int month = 1; month <= 12; month++) rows.append(text(column(month + 9) + "6", "계획"));
+        rows.append("</row><row r=\"8\">");
+        for (int month = 1; month <= 12; month++) rows.append(text(column(month + 9) + "8", month + "월"));
+        rows.append("</row>");
+        String[] labels = {"매출", "서비스매출", "영업비용", "사용료", "영업이익"};
+        for (int row = 9; row <= 13; row++) {
+            rows.append("<row r=\"").append(row).append("\">")
+                    .append(text((row == 10 ? "D" : row == 12 ? "E" : "C") + row, labels[row - 9]));
+            for (int month = 1; month <= 12; month++) {
+                String letter = column(month + 9);
+                String expression = switch (row) {
+                    case 9 -> "SUM(" + letter + "10:" + letter + "10)";
+                    case 10 -> "SUMIFS('매출'!" + column(month + 5) + ":" + column(month + 5)
+                            + ",'매출'!$B:$B,$D10,'매출'!$A:$A,$A$5)";
+                    case 11 -> "SUM(" + letter + "12:" + letter + "12)";
+                    case 12 -> "SUMIFS('비용'!" + column(month + 8) + ":" + column(month + 8)
+                            + ",'비용'!$D:$D,$A$5,'비용'!$H:$H,$E12)";
+                    default -> letter + "9-" + letter + "11";
+                };
+                String amount = month == 2 ? "0" : row <= 10 ? "1000000.50" : row <= 12 ? "300000.25" : "700000.25";
+                rows.append("<c r=\"").append(letter).append(row).append("\"><f>")
+                        .append(xml(expression)).append("</f><v>").append(amount).append("</v></c>");
+            }
+            rows.append("</row>");
+        }
+        return worksheet(rows.toString());
     }
 
     /** 행 XML을 worksheet로 감싼다.

@@ -4,15 +4,15 @@
 
 | 항목 | 내용 |
 | --- | --- |
-| 상태 | ERD 방향 합의 반영 · DB 적재 어댑터 구현 전 |
-| 문서 버전 | 0.2-design |
+| 상태 | API 0.9-draft · V1~V5 접수·검증 적재·소명·연간 확정·승인 마스터 연결 |
+| 문서 버전 | 0.9-draft · 논리 설계 v0.2와 물리 구현 경계 |
 | 갱신일 | 2026-11-16 |
-| 대상 설계 | [ERD](erd.md)의 17개 테이블과 제약 |
+| 대상 설계 | [ERD](erd.md)의 업무 도식 19개 테이블과 V1~V5 물리 확장·제약 |
 | 실제 파서 계약 | `parser/src/excel_parser/`와 [출력 계약](../../parser/docs/development/output-contract.md) |
-| 구현 확인 기준 | `23f1daf39c267588f4ae2d9545dd7363498a42af` (`develop`, 2026-11-16 확인) |
-| 구현 상태 | 추출·정규화·업무필드 검증·기술 월별 마스터 조립은 구현됨. HTTP API·DB 적재·업무 승인·공식 master 발행은 미구현 |
+| 구현 확인 기준 | 현재 작업 소스의 Spring 컨트롤러·서비스·Flyway V1~V5. 과거 파서 조사 기준은 `23f1daf39c267588f4ae2d9545dd7363498a42af` |
+| 구현 상태 | 파서 추출·정규화와 서비스 HTTP 36/39개, 전체 스냅샷 검증 적재·수정/Gap 소명·연간 확정·연간/월간 승인 마스터 구현. 실제 실행 검증 범위는 [로컬 환경](local-environment.md)에서 별도 관리 |
 
-이 문서는 실제 파서 출력과 합의한 DB 설계를 연결합니다. **설계 방향, 이미 존재하는 파서 필드, 앞으로 구현할 적재 어댑터를 구분**합니다. 파서 필드명과 DB 컬럼명은 자동으로 같아지지 않으며, HTTP 전송 방식과 호출 계약은 별도 구현 결정입니다.
+이 문서는 파서 출력, HTTP 연결용 submissionData 어댑터, 서비스 DB의 저장·비교 책임을 구분합니다. 파서 필드명과 DB 컬럼명이 자동으로 같아지는 것은 아닙니다. 서비스는 `service_bridge.py`·`submission_adapter.py`의 `financial-submission/1.0`을 받아 검증하고 선택 상세를 적재합니다. HTTP 계약은 [API 0.9-draft](api-contract.md), 물리 컬럼 차이는 [ERD 구현 확장](erd.md#11-구현-확장-월-실적소명v4v5)을 따릅니다.
 
 개발 문서 작성은 원본 수정, 실행 산출물 생성, DB 쓰기를 수행할 권한이나 구현 완료를 뜻하지 않습니다. `Data/`는 계속 읽기 전용이며 이 문서 갱신에서는 결과 파일·SQL·마이그레이션을 만들지 않습니다.
 
@@ -69,21 +69,21 @@
 
 별도 기술 조립기는 조직 전체 교체, 최고 개정 선택, 전체 월별 의미·금액·상태가 같은 `exact_duplicate_delivery`의 한 번 반영과 모든 중복 출처 보존을 지원합니다. 월별 기술 마스터는 필수 상세·조직 누락을 부분 생성으로 표시할 수 있습니다. 이러한 검증은 ERD의 요청별 필수 조직·월·항목과 승인 조건을 모두 검사한 결과가 아닙니다.
 
-`report_item_id` DB 매핑, 버전 간 보고 칸의 금액 수정·손익 Gap 비교, 소명·승인·불변 마스터 발행은 추가 구현입니다. 기술 마스터의 `business_master_issued=False`와 서비스의 승인 마스터를 구분합니다. `source-contract-v4`는 특정 더미의 생성 계약이므로 해당 제외 규칙을 일반 제출의 승인 규칙으로 자동 적용하지 않습니다. 기존 구현 세부는 [의미 매핑](../../parser/docs/development/mapping-rules.md)과 [비교·마스터 검증 계약](../../parser/docs/development/parser-comparison.md)을 참조합니다.
+`report_item_id` DB 매핑과 버전 간 보고 칸의 수정·손익 Gap 비교, 소명·승인·불변 마스터 발행은 파서가 아닌 현재 백엔드 서비스에서 구현합니다. 기술 마스터의 `business_master_issued=False`와 서비스의 승인 마스터를 구분합니다. `source-contract-v4`는 특정 더미의 생성 계약이므로 해당 제외 규칙을 일반 제출의 승인 규칙으로 자동 적용하지 않습니다. 기존 구현 세부는 [의미 매핑](../../parser/docs/development/mapping-rules.md)과 [비교·마스터 검증 계약](../../parser/docs/development/parser-comparison.md)을 참조합니다.
 
 ## 4. 실제 필드 → DB 매핑
 
-아래 DB 컬럼은 [ERD](erd.md)의 설계 대상입니다. `어댑터 추가` 표시는 현재 파서가 이미 그 값을 반환한다는 뜻이 아닙니다.
+아래 표는 표준 파서 근거와 실제 서비스 저장 위치를 연결합니다. 표준 레코드를 그대로 DB에 복사하지 않고 HTTP용 submissionData의 조직·보고 분류·원본행·월 슬롯·대조값을 검증한 뒤 저장합니다. 원본 계층은 기존 파서 계약을 유지합니다.
 
 ### 제출본과 추적 정보
 
 | 입력·현재 필드 | 대상 | 변환·검증 | 상태 |
 | --- | --- | --- | --- |
-| 인증 사용자·열린 요청·요청 대상 조직 | `submission`의 요청·조직·제출자 연결 | `request_target` 소속과 권한 검사. 파일명만으로 소유 조직을 확정하지 않음 | 백엔드 구현 필요 |
+| 인증 사용자·열린 요청·요청 대상 조직 | `submission`의 요청·조직·제출자 연결 | `request_target` 소속과 권한 검사. 파일명만으로 소유 조직을 확정하지 않음 | 접수 서비스 구현 |
 | `workbook.file.file_id`, `source.file_id` | `submission.source_sha256` | 원본 바이트 SHA-256. 파일명과 구분 | 현재 출력 사용 |
-| 업로드 원본의 저장 참조 | `submission.source_object_key` | 저장은 백엔드 책임. 로컬 `source.path`를 객체 저장 키로 간주하지 않음 | 백엔드 구현 필요 |
-| 엔진·파서 코드·출력 계약·매핑 규칙 버전 | `parsing_job.engine`, `parser_version`, `contract_version`, `mapping_version` | 계약 버전과 코드 버전을 구별. 메모리 호출도 계약 버전을 명시적으로 전달 | 어댑터 추가 |
-| 원본 추출·표준 후보·진단 자료의 보관 참조 | `parsing_job.result_object_key` | 서비스 DB에는 결과 참조를 두고 원본 셀·스타일 전체를 업무 테이블로 펼치지 않음 | 저장 연동 구현 필요 |
+| 업로드 원본의 저장 참조 | `submission.source_object_key` | 저장은 백엔드 책임. 로컬 `source.path`를 객체 저장 키로 간주하지 않음 | 접수 서비스 구현 |
+| 엔진·파서 코드·출력 계약·매핑 규칙 버전 | `parsing_job.engine`, `parser_version`, `contract_version`, `mapping_version` | 계약 버전과 코드 버전을 구별. 메모리 호출도 계약 버전을 명시적으로 전달 | HTTP 어댑터·서비스 연결 구현 |
+| 원본 추출·표준 후보·진단 자료의 보관 참조 | `parsing_job.result_object_key` | 서비스 DB에는 결과 참조를 두고 원본 셀·스타일 전체를 업무 테이블로 펼치지 않음 | stored_object 보관·작업 참조 구현 |
 | `source.source_id`, `source.raw_record_id`, `source.sheet`, `source.cell` | 금융행/금액의 원본 추적 및 결과 연결 | 경로를 포함한 `source_id`는 실행 출처 식별자. 제출 PK나 버전 간 업무키로 사용하지 않음 | 현재 출력 사용 |
 
 파일 SHA-256과 업무 요청 멱등키는 다릅니다. 같은 파일을 다른 요청에 제출할 수 있고, 같은 업무 요청이 네트워크 재시도로 반복될 수도 있습니다. 제출 채번·재시도·동시성은 파서 밖에서 처리합니다.
@@ -92,16 +92,16 @@
 
 | 현재 필드·원본 근거 | 대상 | 변환·검증 | 상태 |
 | --- | --- | --- | --- |
-| `organization.code`, `organization.name`, `organization.provenance` | `submission.organization_id`와 금융행 소속 검증 | 원본 조직을 마스터와 대조. 다른 조직 행을 조용히 덮어쓰지 않음. 금융행의 조직은 제출본을 통해 연결 | 어댑터 검증 추가 |
-| `dimensions["관리분류"].value`와 해당 `source` | 매출 `financial_line.report_item_id` | 확인된 매출 보고행의 분류로 연결 | 어댑터 추가 |
-| `dimensions["실적집계기준"].value`와 해당 `source` | 비용 `financial_line.report_item_id` | 확인된 비용 보고행의 집계 기준으로 연결 | 어댑터 추가 |
-| `item.code`, `item.name`, `item.header_path`, 매출/비용 구조 | `account_item.source_type`, `source_code`, `source_name`과 `financial_line.account_item_id` | 원본 계정의 의미 확인 후 연결. 숫자처럼 보이는 코드도 문자열 유지. 계층 원문은 파서 결과에 보존 | 현재 출력+어댑터 |
+| `organization.code`, `organization.name`, `organization.provenance` | `submission.organization_id`와 금융행 소속 검증 | 원본 조직을 마스터와 대조. 다른 조직 행을 조용히 덮어쓰지 않음. 금융행의 조직은 제출본을 통해 연결 | 어댑터 근거·서비스 검증 구현 |
+| `dimensions["관리분류"].value`와 해당 `source` | 매출 `financial_line.report_item_id` | 확인된 매출 보고행의 분류로 연결 | HTTP 어댑터·서비스 연결 구현 |
+| `dimensions["실적집계기준"].value`와 해당 `source` | 비용 `financial_line.report_item_id` | 확인된 비용 보고행의 집계 기준으로 연결 | HTTP 어댑터·서비스 연결 구현 |
+| `item.code`, `item.name`, `item.header_path`, 매출/비용 구조 | `account_item.source_type`, `source_code`, `source_name`과 `financial_line.account_item_id` | 원본 계정의 의미 확인 후 연결. 숫자처럼 보이는 코드도 문자열 유지. 계층 원문은 파서 결과에 보존 | 현재 출력·HTTP 어댑터·서비스 연결 |
 | `dimensions["중분류"].value`, `item.code` | 매출 원본 분류/계정 근거 | 명시된 선행 숫자 코드 추출은 현재 구현 사용. 보고 항목 매핑의 관리분류를 대체하지 않음 | 현재 출력 사용 |
 | `dimensions["팀Code"].value`, `dimensions["팀명"].value` | `financial_line.team_code` 및 원본 이름 추적 | 없는 코드는 null. 이름은 파서 결과 참조에 보존 | 현재 출력 사용 |
 | `dimensions["실행과제Code"].value`, `dimensions["실행과제명"].value` | `financial_line.task_code` 및 원본 이름 추적 | 보고용 집계 키에 자동 포함하지 않음. 이름은 결과 참조에 보존 | 현재 출력 사용 |
-| `dimensions["본부명"].value`와 같은 원본 조직 코드표 | `financial_line.headquarters_code` | 표준 레코드의 본부명만으로 코드를 만들지 않음. 유일한 코드 근거가 없으면 null | 코드 연결 어댑터 추가 |
+| `dimensions["본부명"].value`와 같은 원본 조직 코드표 | `financial_line.headquarters_code` | 표준 레코드의 본부명만으로 코드를 만들지 않음. 유일한 코드 근거가 없으면 null | 확인된 코드가 없으면 null 유지 |
 | `dimensions["관리분류"].value`, `dimensions["실적집계기준"].value`, `dimensions["비용구분"].value` | `financial_line.management_category`, `actual_basis`, `cost_type` | 원문과 의미를 보존 | 현재 출력 사용 |
-| `dimensions["거래내역 및 산출근거"].value` | `financial_line.description` | 원문을 보존하고 비교용 의미 정보는 별도로 정규화 | 현재 출력+어댑터 |
+| `dimensions["거래내역 및 산출근거"].value` | `financial_line.description` | 원문을 보존하고 비교용 의미 정보는 별도로 정규화 | 현재 출력·HTTP 어댑터·서비스 연결 |
 | `item.detail_id`, `item.detail_revision` | `financial_line.detail_id`, `detail_revision` | 원본 근거와 업무검증·수정본 선택 확인. 없으면 null. 행 번호나 파일명으로 업무 ID를 발급하지 않음 | 현재 출력 + 유효성·선택 검증 |
 | `source.sheet`와 `raw_record_id`로 연결한 원본 `row` | `financial_line.source_sheet`, `source_row` | 한 제출본 안에서 월별 셀을 원본행으로 묶는 위치 | 현재 출력에서 결합 |
 
@@ -111,19 +111,19 @@
 
 | 현재 필드 | 대상 | 변환·검증 | 상태 |
 | --- | --- | --- | --- |
-| 원본행 그룹 | `financial_value.line_id` | 검증·선택한 `financial_line`에 연결 | 어댑터 추가 |
+| 원본행 그룹 | `financial_value.line_id` | 검증·선택한 `financial_line`에 연결 | HTTP 어댑터·서비스 연결 구현 |
 | `period.year`, `period.month` | `financial_value.year`, `month` | 대상 금액의 기간. 제출 요청월과 별개. 월은 1~12 | 현재 출력 사용 |
-| `period.scenario` | `financial_value.scenario` | `plan/actual/estimate`를 `PLAN/ACTUAL/ESTIMATE`로 명시 변환 | 어댑터 추가 |
-| `period.aggregation`, `role.kind`, `value.value_kind` | 적재 대상 판정 | 월별 상세 금액만 선택. 연간합계·소계·비율·참고표를 함께 합산하지 않음 | 어댑터 추가 |
-| `value.normalized_value` | `financial_value.amount` | 원 단위 정밀 십진수. 금액 확정·원화 단위와 별도로 업무키·분류·전체 범위 검증 확인 | 현재 출력 + 어댑터 검증 |
+| `period.scenario` | `financial_value.scenario` | `plan/actual/estimate`를 `PLAN/ACTUAL/ESTIMATE`로 명시 변환 | HTTP 어댑터·서비스 연결 구현 |
+| `period.aggregation`, `role.kind`, `value.value_kind` | 적재 대상 판정 | 월별 상세 금액만 선택. 연간합계·소계·비율·참고표를 함께 합산하지 않음 | HTTP 어댑터·서비스 연결 구현 |
+| `value.normalized_value` | `financial_value.amount` | 원 단위 정밀 십진수. 금액 확정·원화 단위와 별도로 업무키·분류·전체 범위 검증 확인 | 현재 출력·원 단위 정밀도/완전성 검증 구현 |
 | 표준 `record_id`, `source.cell` | `financial_value.source_record_id`, `source_cell` | 표준 레코드 ID와 원본 셀 주소를 저장. 해당 결과의 `source.raw_record_id`로 원본 셀까지 추적 | 현재 출력 사용 |
 | `raw_value`, `value.source_unit`, `value.multiplier`, `formula` | `parsing_job.result_object_key`로 연결한 표준/원본 결과 | 원문·적용 배율·수식·캐시 상태는 결과에 보존. 표시용 배율을 다시 곱하지 않음 | 현재 출력 사용 |
 
-빈칸·금액 미확정·수식 캐시 누락을 0으로 바꾸지 않습니다. 기준 금액 부재에 Gap의 기준 0 특례를 적용하지 않습니다. 실제로 확인한 숫자 0만 0으로 사용합니다. 금액과 Gap 판정은 반올림 전 십진값으로 계산하고 화면 반올림은 표시 단계에서 수행합니다. DB 정밀도·소수 자릿수와 범위 초과 오류는 DDL 작성 전에 확정합니다.
+빈칸·금액 미확정·수식 캐시 누락을 0으로 바꾸지 않습니다. 기준 금액 부재에 Gap의 기준 0 특례를 적용하지 않습니다. 실제로 확인한 숫자 0만 0으로 사용합니다. 금액과 Gap 판정은 반올림 전 십진값으로 계산하고 화면 반올림은 표시 단계에서 수행합니다. 현재 상세 amount는 PostgreSQL NUMERIC(30,6)이며 서비스가 정밀도·범위를 검사합니다. V5의 검토 집계·차액·비율은 여러 상세행의 합계를 수용하도록 더 넓은 정밀도를 사용합니다. 구체 타입은 [V2](../../backend/src/main/resources/db/migration/V2__validated_financial_submissions.sql)와 [V5](../../backend/src/main/resources/db/migration/V5__submission_reviews_and_gap_thresholds.sql)가 기준입니다.
 
-## 5. 추가 적재 어댑터의 처리 계약
+## 5. 서비스 적재 어댑터의 처리 계약
 
-다음은 기존 추출·업무검증·선택 정책을 서비스 DB 적재로 연결할 계약입니다. 기존 기능의 재사용 여부와 요청별 완전성·승인 검사를 구분하며, `map_workbook()` 하나가 이 전체 흐름을 구현하지는 않습니다.
+다음은 기존 추출·업무검증·선택 정책을 현재 서비스 DB 적재로 연결하는 계약입니다. 기존 기능의 재사용 여부와 요청별 완전성·승인 검사를 구분하며, `map_workbook()` 하나가 이 전체 흐름을 구현하지는 않습니다.
 
 1. **백엔드 문맥 고정:** 제출 ID, 요청, 조직, 대상기간, 원본 해시를 확인합니다. 요청 대상 조직 집합은 `request_target`으로 고정합니다.
 2. **원본과 표준 후보 연결:** `source.raw_record_id`로 원본행·빈칸·수식 상태를 추적합니다. 표준 후보에 없는 셀을 모두 0으로 간주하지 않습니다.
@@ -143,37 +143,56 @@
 | --- | --- | --- |
 | `review_item.current_amount` | 보고 항목 집계/확인된 지표 계산 | 표준 레코드에 존재하지 않는 업무 집계값 |
 | `review_item.amount_present` | 완전성 검사 후 항목의 존재/제거 판정 | false와 null 금액은 허용된 선택 항목 제거에만 사용. 필수 누락·파싱 실패를 제거로 표현하지 않음 |
-| `review_item.change_detected` | 직전 제출본과 상세 구성 비교 | 신규 구현. 파일 해시나 보고 합계만 비교하지 않음 |
-| `review_item.gap_exceeded` | 고정한 기준본·임계값으로 비교 | 신규 구현. 파서 `gap_relationships`와 다른 개념 |
-| `gap_comparison.baseline_submission_id`, `baseline_scenario`, `baseline_amount` | 계획/직전 기준본과 확인된 기준값 보존 | 신규 구현. 기준 제출본은 업무 규칙에 따라 선택 |
+| `review_item.change_detected` | 직전 제출본과 상세 구성 비교 | 백엔드 비교 구현. 파일 해시나 보고 합계만 비교하지 않음 |
+| `review_item.gap_exceeded` | 고정한 기준본·임계값으로 비교 | 백엔드 비교 구현. 파서 `gap_relationships`와 다른 개념 |
+| `gap_comparison.baseline_submission_id`, `baseline_scenario`, `baseline_amount` | 계획/직전 기준본과 확인된 기준값 보존 | 백엔드 비교 구현. 기준 제출본은 업무 규칙에 따라 선택 |
 | `review_explanation` | 최초 작성·재요청·수용 이력 및 이어받기 | 숫자/파일/제출 회차를 변경하지 않는 업무 처리 |
 
-비교 문맥은 `submission.previous_submission_id`, `plan_submission_id`, `actual_threshold_id`, `estimate_threshold_id`, `review_policy_version`으로 고정합니다. 임계값은 제출본에 고정된 시나리오별 기준을 사용하며 `gap_comparison`에 별도 임계값 FK나 변경 가능한 차액/비율을 중복 저장하지 않습니다. `report_item.calculation_code=OP`인 확인된 영업이익에 손익 Gap을 적용하고, 매출·비용 보고 항목은 금액 수정 검토에 사용합니다. 자동 계산된 OP의 값이 변했다는 이유만으로 원천 금액 수정 소명을 중복 생성하지 않습니다.
+논리 설계의 비교 문맥은 이전 제출·확정 계획·시나리오별 기준·검토 정책입니다. 현재 물리 구현은 직전 제출 ID를 `submission.previous_submission_id`에 저장하고, 전체 `comparisonContext`를 `submission_validation.validation_result_object_key`로 연결한 불변 검증 객체에 고정합니다. `plan_submission_id`·기준 ID·정책을 submission 컬럼에 추가로 복제하지 않습니다. V5 `gap_comparison`은 검토 시 사용한 `threshold_id`와 기준/현재 금액·차액·표시 비율·초과 여부를 고정 저장합니다. 이는 논리 ERD의 계산 최소화와 다른 물리 스냅샷 선택이며 세부 차이는 ERD 구현 확장을 따릅니다. `report_item.calculation_code=OP`인 확인된 영업이익에 손익 Gap을 적용하고, 매출·비용 보고 항목은 금액 수정 검토에 사용합니다. 자동 계산된 OP의 값이 변했다는 이유만으로 원천 금액 수정 소명을 중복 생성하지 않습니다.
 
 합계가 같아도 상세 구성이나 금액이 바뀌면 `change_detected=true`가 될 수 있어야 합니다. 보고 칸별 상세 의미 정보와 금액의 **중복 개수를 보존한 집합(multiset)**을 비교합니다. 한 상세 금액 증가와 다른 상세 금액 감소가 상쇄되더라도 변경을 감지합니다.
 
 비교 자료에는 보고 항목, 원본 계정/분류, 조직·팀·과제, 비용·집계 속성 등 확인된 의미와 대상 기간·시나리오·원화 금액을 포함합니다. 파일명·파일 해시·시트 행 번호·셀 주소·배치 순서는 제외합니다. 원본에 명시된 안정적인 상세 ID는 확인 후 사용하고 개정번호 증가 자체나 설명에 붙은 기술적 수정 표식만으로 금액 변경을 만들지 않습니다. 설명 원문은 보존하되 의미 비교용 표현의 정규화 규칙을 별도로 명세합니다.
 
-동일한 숫자·의미의 행이 두 개라면 두 번 존재한다는 사실을 남깁니다. 동일한 업무 ID의 수정본/동일 전달을 한 번 선택하는 정책과 근거 없이 서로 다른 행을 중복 제거하는 동작을 구별합니다. 지문 해시를 추가하더라도 구성과 비교 근거를 복원할 수 있어야 합니다. 이 비교 규칙과 지문 형식은 ERD의 버전 간 보고 칸 변경 비교에 아직 연결되지 않았습니다.
+동일한 숫자·의미의 행이 두 개라면 두 번 존재한다는 사실을 남깁니다. 동일한 업무 ID의 수정본/동일 전달을 한 번 선택하는 정책과 근거 없이 서로 다른 행을 중복 제거하는 동작을 구별합니다. 지문 해시를 추가하더라도 구성과 비교 근거를 복원할 수 있어야 합니다. 현재 ReviewComparisonService는 보고 칸별 의미 속성·금액을 중복 개수를 보존해 정렬한 지문으로 비교합니다. 설명 원문은 유지하면서 비교 표현에서는 지원 양식의 마감 안내 머리말, 명시 ID/개정 기술 표식과 연속 공백을 정규화합니다. 확인되지 않은 일반 문구나 임의 설명을 지우는 정책은 아닙니다.
 
 ## 7. 승인과 월 master 반영
 
-아래는 승인 기반 DB의 공식 master 규칙입니다. 기존 파일 기반 기술 마스터의 생성·평가 기능은 업무 승인을 수행하지 않으며, 이 규칙은 별도 백엔드 적재 어댑터와 트랜잭션으로 구현합니다.
+아래는 승인 기반 DB의 공식 master 규칙입니다. 기존 파일 기반 기술 마스터의 생성·평가 기능은 업무 승인을 수행하지 않으며, 이 규칙은 현재 백엔드의 MonthlyMasterService와 승인 트랜잭션으로 구현합니다.
 
 최초 월 master는 `request_target`에 고정한 모든 대상 조직의 승인본이 준비되어야 생성합니다. 이후에는 일부 조직의 새 제출본이 승인될 때 해당 월의 조직 스냅샷 전체를 교체하여 새 master 버전을 만듭니다. 다른 조직은 이전 master의 참조를 유지하고 이전 master는 덮어쓰지 않습니다.
 
 `master_source`는 조직별로 **완전한 월 스냅샷을 제공하는 승인 제출본 하나**를 가리킵니다. 부분 파일의 일부 행을 기존 승인본에 덧붙이지 않습니다. 이후 월 제출본이 과거 월을 수정했다면 과거 월 master의 source도 그 이후 월 제출본을 가리킬 수 있으므로 요청월과 master 대상월이 같다는 제약을 두지 않습니다.
 
-승인 전 제출본·파싱 실패·검토 중 변경은 master에 반영하지 않습니다. 소명만 변경한 경우에도 숫자 master 버전을 만들지 않습니다. 월별 변경 판정에는 손익 합계뿐 아니라 보고 대상 매출·비용과 상세 구성도 반영하여 상쇄된 변경이 사라지지 않게 합니다. 승인·source 교체·영향받은 월의 버전 생성에는 백엔드 트랜잭션과 동시성 제어가 필요합니다.
+승인 전 제출본·파싱 실패·검토 중 변경은 master에 반영하지 않습니다. 소명만 변경한 경우에도 숫자 master 버전을 만들지 않습니다. 월별 변경 판정에는 손익 합계뿐 아니라 보고 대상 매출·비용과 상세 구성도 반영하여 상쇄된 변경이 사라지지 않게 합니다. 현재 승인·source 교체·영향받은 월의 버전 생성·멱등 응답은 같은 백엔드 트랜잭션에서 처리하고 연간 계획/제출 잠금으로 경합을 제어합니다.
 
 현재 파서의 `submission.status=provided/unknown`은 메타데이터 확인 상태이고, `mapped`, `confirmed`, `validation_passed`는 추출·정규화 관련 상태입니다. 이를 DB 승인 상태나 공식 master 발행 조건으로 직접 매핑하지 않습니다.
 
-## 8. 구현 전에 남은 계약과 검증
+## 8. 구현 경계와 추가 검증
 
-- DB 제품에 맞는 십진 정밀도, 문자열 길이, FK·유일 제약·동시 제출/승인 제어를 DDL에서 확정합니다.
-- 실제 호출 방식·HTTP 전송 규격, 요청 멱등키, 재시도와 원본·파싱 결과 보관 방식은 백엔드 구현 전에 확정합니다. 호출용 추적 ID와 업무 `submission_request.id`, 파싱 성공과 PENDING 전환을 구분합니다.
-- 양식별 필수 월·항목과 빈칸 허용 범위, 원본 소스 선택·동일 전달 판정, 의미 비교 정규화 규칙을 테스트 가능한 계약으로 만듭니다.
+- PostgreSQL과 V1~V5의 십진 정밀도·길이·FK·유일 제약을 사용합니다. H2 테스트 결과를 실제 PostgreSQL 잠금·대용량 운영 성능 검증으로 간주하지 않습니다.
+- 현재 multipart 접수·Python stdin/stdout·DB BYTEA 원본/결과 보관·24시간 영속 멱등·제한 재시도를 연결합니다. 운영 로그인, 객체 저장소 교체·보관 기간은 별도 결정이며 호출 추적 ID와 업무 `submission_request.id`, 파싱 성공과 PENDING 전환을 구분합니다.
+- 지원 양식은 연간 PLAN 전체 12개월 또는 월간 ACTUAL 1~요청월·이후 ESTIMATE를 검증합니다. 추가 양식의 필수 항목·빈칸 허용·선택·정규화 규칙은 독립 근거와 테스트가 필요합니다.
 - 같은 계정의 다른 관리분류, 비용 코드표 중복 코드, 누락과 0, 수식 캐시 누락, 상세 상쇄 변경, 행 순서만 변경, 전체 재제출의 누락 항목을 검증합니다.
 - 모든 조직 승인 전 master 미생성, 일부 조직 재승인 후 전체 조직 스냅샷 구성, 과거 월 변경, 동시 승인, 이전 master 재현을 검증합니다.
 
-이 문서는 ERD와 파서 사이의 인계 방향을 구체화한 개발 설계입니다. 실제 DB 적재·업무 흐름·수식 재계산 테스트를 수행했다고 표시하지 않습니다.
+위 사례는 인수·검증 대상이며 이 문서 수정 자체가 실제 원본·DB·화면 검증의 성공 기록은 아닙니다. 실행 결과는 [로컬 환경](local-environment.md)에 따로 기록합니다. 원본 수식 실행·Excel 재계산은 현재 서비스가 수행하지 않습니다.
+
+## 9. 연간 확정·승인 마스터 구현 연결
+
+V1/V2는 접수·원본 보존·선택 상세와 검증 객체 저장, V3는 아래 연간 PLAN 마스터, V4는 월간 ACTUAL 마스터, V5는 수정/Gap 검토와 기준 이력을 담당한다. 실행 가능한 경로는 [백엔드 연결](backend-integration.md)과 API 0.9의 36개 구현 목록을 따른다. 현재 연간 확정·월간 비교·수정 소명도 같은 제출/승인 흐름에 연결한다.
+
+| 근거 | 저장·계산 |
+| --- | --- |
+| `request_target.excluded=false` | 최초 발행에 필요한 조직 집합. local,demo의 D100/D200은 이력 보존 후 제외 |
+| 제출 당시 validation의 `fingerprint` | 조직별 의미·금액 구성 해시를 계산 정책·요청과 묶어 `annual_master.content_sha256`으로 변경 감지 |
+| 유효 APPROVED 제출 ID | `annual_master_source.submission_id`에 고정. 일부 조직 새 승인 시 해당 조직 전체 참조만 교체 |
+| 고정 검증 `reportValues`·`financial_value` | 건수·연간 범위·항목 및 파생 합계가 일치하는지 대조 후 원 단위 BigDecimal 집계 |
+| 연간 마스터 ID | 12개월 PLAN 전사·조직별 조회. 파서의 기술 마스터와 월간 ACTUAL 마스터를 대체하지 않음 |
+
+금액이 같은 재제출·원본 배치만 바뀐 경우에는 새 버전을 발행하지 않는다. 과거 마스터를 최신 제출본으로 다시 조립하지 않는다. 발행이 실패하면 승인과 함께 롤백하며 연간 계획 상태·Contingency는 변경하지 않는다.
+
+
+연간 확정은 `annual_plan`에 Contingency·확정자/시각·CONFIRMED를, `request_target.confirmed_plan_submission_id`에 조직별 최종 승인 계획본을 저장하고 연간 요청을 CLOSED로 만든다. 월간 비교·마스터 계획 대비 값은 이 고정 참조만 사용한다. Contingency는 전사 연간 값으로 보존하며 월간 master 금액에 차감하거나 배분하지 않는다.
+
+현재 서비스의 남은 설계 API는 보고 항목 목록·요청 수정·보고 데이터 구성 3개다. 기술 마스터 생성 여부나 파서 상태로 이 API의 구현·업무 승인을 대신 표시하지 않는다.

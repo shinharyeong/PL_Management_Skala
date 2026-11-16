@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.skala.backend.common.ApiException;
 import io.skala.backend.security.Actor;
+import io.skala.backend.review.ReviewComparisonService;
+import io.skala.backend.review.ReviewService;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -25,6 +27,8 @@ public class SubmissionValidationService {
     private final JdbcClient jdbc;
     private final ObjectMapper mapper;
     private final FinancialValidationRules rules;
+    private final ReviewComparisonService comparisons;
+    private final ReviewService reviews;
     private static final String ROW_SQL = """
             SELECT s.*,o.code AS organization_code,r.type,r.month,r.status AS request_status,p.year,
                 p.status AS plan_status,j.status AS parsing_status,j.attempt_no,j.result_object_key
@@ -33,8 +37,8 @@ public class SubmissionValidationService {
             JOIN parsing_job j ON j.submission_id=s.id WHERE s.id=?
             """;
 
-    /** DB와 순수 검증기를 연결한다. Args: jdbc DB, mapper JSON, rules 검증기. Returns: 없음. Raises: 없음. Side Effects: 없음. */
-    public SubmissionValidationService(JdbcClient jdbc, ObjectMapper mapper, FinancialValidationRules rules) { this.jdbc = jdbc; this.mapper = mapper; this.rules = rules; }
+    /** DB와 순수 검증기를 연결한다. Args: jdbc DB, mapper JSON, rules 검증기, comparisons 고정 비교, reviews 소명 준비상태. Returns: 없음. Raises: 없음. Side Effects: 없음. */
+    public SubmissionValidationService(JdbcClient jdbc, ObjectMapper mapper, FinancialValidationRules rules, ReviewComparisonService comparisons, ReviewService reviews) { this.jdbc = jdbc; this.mapper = mapper; this.rules = rules; this.comparisons = comparisons; this.reviews = reviews; }
 
     /** 잠긴 초안을 검사하고 유효 상세·검증 근거를 같은 트랜잭션에 저장한다.
      * Args: actor 조직 담당자, submissionId 초안. 호출자가 조직·제출 잠금과 트랜잭션을 소유한다.
@@ -46,14 +50,10 @@ public class SubmissionValidationService {
         Map<String, Object> row = accessible(actor, submissionId);
         if (!"DRAFT".equals(row.get("status")) || !"SUCCEEDED".equals(row.get("parsing_status"))) throw conflict("VALIDATION_NOT_ALLOWED", "파싱을 완료한 초안만 검증할 수 있습니다.");
         JsonNode parsed = result(row);
-        var evaluated = rules.evaluate(parsed.path("submissionData"), row.get("source_sha256").toString(), row.get("organization_code").toString(), ((Number) row.get("year")).intValue(), row.get("type").toString());
+        var evaluated = rules.evaluate(parsed.path("submissionData"), row.get("source_sha256").toString(), row.get("organization_code").toString(), ((Number) row.get("year")).intValue(), row.get("type").toString(), row.get("month") == null ? null : ((Number) row.get("month")).intValue());
         var diagnostics = (List<Map<String, Object>>) evaluated.get("diagnostics");
-        Long previous = previous(row);
-        if (previous != null) {
-            JsonNode baseline = validationResult(previous.toString());
-            if (baseline == null || !baseline.path("complete").asBoolean()) diagnostics.add(blocker("COMPARISON_BASELINE_UNAVAILABLE", "이전 제출본의 검증된 금액 구성을 확인할 수 없습니다.", "COMPARISON"));
-            else if (!Objects.equals(evaluated.get("fingerprint"), baseline.path("fingerprint").asText())) diagnostics.add(blocker("CHANGE_EXPLANATION_REQUIRED", "이전 제출본과 금액 구성이 달라 수정 소명이 필요합니다. 소명 연결 전에는 재제출할 수 없습니다.", "COMPARISON"));
-        }
+        Map<String,Object> context = comparisons.context(id(submissionId));
+        Long previous = comparisons.nullableId(context.get("previousSubmissionId"));
         jdbc.sql("DELETE FROM financial_value WHERE line_id IN (SELECT id FROM financial_line WHERE submission_id=?)").param(id(submissionId)).update();
         jdbc.sql("DELETE FROM financial_line WHERE submission_id=?").param(id(submissionId)).update();
         var reportIds = new HashMap<String, Long>();
@@ -80,7 +80,10 @@ public class SubmissionValidationService {
             value.put("organizationId", row.get("organization_id").toString());
             if (!complete) { value.put("valueStatus", "UNRESOLVED"); value.put("amount", null); }
         }
-        Map<String, Object> snapshot = object("policyVersion", POLICY_VERSION, "previousSubmissionId", previous == null ? null : previous.toString(),
+        diagnostics.addAll(comparisons.prepare(id(submissionId), context, complete));
+        complete = diagnostics.stream().noneMatch(item -> "ERROR".equals(item.get("severity")));
+        if (!complete) for (var value : values) { value.put("valueStatus", "UNRESOLVED"); value.put("amount", null); }
+        Map<String, Object> snapshot = object("policyVersion", policy(row), "comparisonContext", context, "previousSubmissionId", previous == null ? null : previous.toString(),
                 "fingerprint", evaluated.get("fingerprint"), "complete", complete, "diagnostics", diagnostics, "reportValues", values,
                 "summary", object("lineCount", ((List<?>) evaluated.get("lines")).size(), "valueCount", valueCount, "complete", complete, "validationState", "CURRENT"));
         String resultKey = "validation/" + UUID.randomUUID();
@@ -89,7 +92,7 @@ public class SubmissionValidationService {
         jdbc.sql("""
                 INSERT INTO submission_validation(submission_id,attempt_no,source_sha256,parser_result_object_key,policy_version,
                     validation_result_object_key,validated_by,validated_at) VALUES (?,?,?,?,?,?,?,?)
-                """).params(id(submissionId), row.get("attempt_no"), row.get("source_sha256"), row.get("result_object_key"), POLICY_VERSION, resultKey, id(actor.id()), OffsetDateTime.now(ZoneOffset.UTC)).update();
+                """).params(id(submissionId), row.get("attempt_no"), row.get("source_sha256"), row.get("result_object_key"), policy(row), resultKey, id(actor.id()), OffsetDateTime.now(ZoneOffset.UTC)).update();
         jdbc.sql("UPDATE submission SET previous_submission_id=? WHERE id=? AND status='DRAFT'").params(previous, id(submissionId)).update();
     }
 
@@ -102,6 +105,54 @@ public class SubmissionValidationService {
         var state = readiness(row);
         if ("STALE".equals(state.get("validationState"))) throw conflict("REVIEW_CONTEXT_CHANGED", "비교 기준 또는 파싱 시도가 달라졌습니다. 다시 검증해 주세요.");
         if (!Boolean.TRUE.equals(state.get("canSubmit"))) throw conflict("SUBMISSION_NOT_READY", "최종 제출 조건을 충족하지 못했습니다. 검증 결과를 확인해 주세요.");
+    }
+
+    /** 최종 제출 때 고정한 검증 근거·소명 수용·적재 완전성을 승인 전에 확인한다.
+     * Args: actor 경영기획 담당자, submissionId 호출자가 조직·제출 잠금을 소유한 제출본.
+     * Returns: 없음. Raises: ApiException 제출 당시 근거 부재·불일치·미완료·적재 누락.
+     * Side Effects: DB 읽기만 수행. 최신 요청 상태·비교본·정책으로 재검증하거나 금융값을 변경하지 않는다.
+     */
+    public void assertReadyForApproval(Actor actor, String submissionId) {
+        actor.requireRole("PLANNER");
+        Map<String, Object> row = accessible(actor, submissionId);
+        var saved = rows("SELECT * FROM submission_validation WHERE submission_id=?", id(submissionId));
+        if (saved.isEmpty()) throw conflict("VALIDATION_REQUIRED", "제출 당시 업무 검증 근거가 없어 승인할 수 없습니다.");
+        Map<String, Object> validation = saved.getFirst();
+        JsonNode snapshot = objectResult(validation.get("validation_result_object_key").toString());
+        if (!"PENDING".equals(row.get("status"))
+                || !"SUCCEEDED".equals(row.get("parsing_status"))
+                || !policy(row).equals(validation.get("policy_version"))
+                || !Objects.equals(validation.get("policy_version"), snapshot.path("policyVersion").asText())
+                || !Objects.equals(validation.get("attempt_no"), row.get("attempt_no"))
+                || !Objects.equals(validation.get("source_sha256"), row.get("source_sha256"))
+                || !Objects.equals(validation.get("parser_result_object_key"), row.get("result_object_key"))
+                || !Objects.equals(nullableId(snapshot.path("previousSubmissionId")), row.get("previous_submission_id"))) {
+            throw conflict("REVIEW_CONTEXT_CHANGED", "제출 당시 검증 근거와 현재 제출본이 일치하지 않아 승인할 수 없습니다.");
+        }
+        if (!snapshot.path("complete").asBoolean() || !snapshot.path("summary").path("complete").asBoolean()
+                || !snapshot.path("diagnostics").isArray() || !snapshot.path("reportValues").isArray()
+                || snapshot.path("reportValues").isEmpty() || snapshot.path("fingerprint").asText().isBlank()) {
+            throw conflict("SUBMISSION_NOT_READY", "완전한 검증 근거가 확인된 제출본만 승인할 수 있습니다.");
+        }
+        for (JsonNode diagnostic : snapshot.path("diagnostics")) {
+            if ("ERROR".equals(diagnostic.path("severity").asText())) {
+                throw conflict("SUBMISSION_NOT_READY", "미해결 검증 오류 또는 필수 수정 소명이 있어 승인할 수 없습니다.");
+            }
+        }
+        var reviewCounts = reviews.counts(id(submissionId));
+        if (((Number) reviewCounts.get("pendingReviewCount")).intValue() != 0) throw conflict("EXPLANATIONS_NOT_ACCEPTED", "필수 소명을 모두 수용한 뒤 승인할 수 있습니다.");
+        if ("MONTHLY_ACTUAL".equals(row.get("type"))) {
+            var fixed = snapshot.path("comparisonContext");
+            if (!Objects.equals(stringNode(fixed.path("planSubmissionId")), comparisons.context(id(submissionId)).get("planSubmissionId"))) throw conflict("REVIEW_CONTEXT_CHANGED", "조직별 확정 계획 기준이 일치하지 않습니다.");
+        }
+        long lines = jdbc.sql("SELECT COUNT(*) FROM financial_line WHERE submission_id=?")
+                .param(id(submissionId)).query(Long.class).single();
+        long values = jdbc.sql("SELECT COUNT(*) FROM financial_value v JOIN financial_line l ON l.id=v.line_id WHERE l.submission_id=?")
+                .param(id(submissionId)).query(Long.class).single();
+        if (lines == 0 || values == 0 || lines != snapshot.path("summary").path("lineCount").asLong(-1)
+                || values != snapshot.path("summary").path("valueCount").asLong(-1)) {
+            throw conflict("SUBMISSION_NOT_READY", "제출 당시 검증한 금액의 적재 구성이 일치하지 않습니다.");
+        }
     }
 
     /** 저장된 근거로 현재 준비 상태를 계산한다.
@@ -120,14 +171,14 @@ public class SubmissionValidationService {
             Map<String, Object> validation = saved.getFirst();
             JsonNode snapshot = objectResult(validation.get("validation_result_object_key").toString());
             attempt = validation.get("attempt_no");
-            boolean current = Objects.equals(validation.get("attempt_no"), row.get("attempt_no")) && Objects.equals(validation.get("source_sha256"), row.get("source_sha256")) && Objects.equals(validation.get("parser_result_object_key"), row.get("result_object_key")) && POLICY_VERSION.equals(validation.get("policy_version"));
-            if ("DRAFT".equals(row.get("status")) && !Objects.equals(nullableId(snapshot.path("previousSubmissionId")), previous(row))) current = false;
+            boolean current = Objects.equals(validation.get("attempt_no"), row.get("attempt_no")) && Objects.equals(validation.get("source_sha256"), row.get("source_sha256")) && Objects.equals(validation.get("parser_result_object_key"), row.get("result_object_key")) && policy(row).equals(validation.get("policy_version"));
+            if ("DRAFT".equals(row.get("status")) && !Objects.equals(snapshot.has("comparisonContext") ? mapper.convertValue(snapshot.path("comparisonContext"), Map.class) : legacyContext(snapshot), comparisons.context(((Number) row.get("id")).longValue()))) current = false;
             validationState = current ? "CURRENT" : "STALE";
             if (!current) blockers.add(blocker("VALIDATION_STALE", "파싱 또는 비교 문맥이 변경되어 다시 검증해야 합니다.", "COMPARISON"));
             else for (JsonNode item : snapshot.path("diagnostics")) if ("ERROR".equals(item.path("severity").asText())) blockers.add(mapper.convertValue(item, Map.class));
         }
         if (!"SUCCEEDED".equals(row.get("parsing_status")) && !preparing) blockers.add(blocker("PARSING_REQUIRES_ATTENTION", "파싱 진단을 해결한 파일을 다시 접수해 주세요.", "PARSING"));
-        if (!"OPEN".equals(row.get("request_status"))) blockers.add(blocker("REQUEST_CLOSED", "닫힌 요청에는 최종 제출할 수 없습니다.", "COMPLETENESS"));
+        if ("DRAFT".equals(row.get("status")) && !"OPEN".equals(row.get("request_status"))) blockers.add(blocker("REQUEST_CLOSED", "닫힌 요청에는 최종 제출할 수 없습니다.", "COMPLETENESS"));
         if ("ANNUAL_PLAN".equals(row.get("type")) && !"COLLECTING".equals(row.get("plan_status"))) blockers.add(blocker("ANNUAL_PLAN_LOCKED", "확정된 연간 계획입니다.", "COMPLETENESS"));
         if (!rows("SELECT id FROM submission WHERE organization_id=? AND status='PENDING' AND id<>?", row.get("organization_id"), row.get("id")).isEmpty()) blockers.add(blocker("PENDING_ALREADY_EXISTS", "검토 중인 다른 제출본이 있습니다.", "COMPLETENESS"));
         if (!rows("""
@@ -137,17 +188,33 @@ public class SubmissionValidationService {
                     WHERE latest.organization_id=rejected.organization_id AND latest.request_id=rejected.request_id
                       AND latest.status<>'DRAFT')
                 """, row.get("organization_id"), row.get("request_id")).isEmpty()) blockers.add(blocker("RESUBMISSION_SCOPE_CONFLICT", "재제출 요청을 받은 기간부터 제출해 주세요.", "COMPLETENESS"));
-        boolean ready = "CURRENT".equals(validationState) && blockers.isEmpty() && "DRAFT".equals(row.get("status"));
-        boolean countsKnown = "CURRENT".equals(validationState) && blockers.isEmpty();
-        return object("state", preparing ? "PREPARING" : "STALE".equals(validationState) ? "STALE" : ready ? "READY" : "BLOCKED", "validationState", validationState, "validatedAttemptNo", attempt, "canSubmit", ready, "blockers", blockers,
-                "requiredCount", countsKnown ? 0 : null, "unansweredCount", countsKnown ? 0 : null, "pendingReviewCount", countsKnown ? 0 : null);
+        if (rows("SELECT request_id FROM request_target WHERE request_id=? AND organization_id=? AND excluded=FALSE", row.get("request_id"), row.get("organization_id")).isEmpty()) blockers.add(blocker("REQUEST_TARGET_EXCLUDED", "현재 제출·승인 대상에서 제외된 조직입니다.", "COMPLETENESS"));
+        if ("MONTHLY_ACTUAL".equals(row.get("type")) && !"CONFIRMED".equals(row.get("plan_status"))) blockers.add(blocker("ANNUAL_PLAN_NOT_CONFIRMED", "확정된 연간 계획이 필요합니다.", "COMPLETENESS"));
+        boolean countsKnown = "CURRENT".equals(validationState) && saved.size() == 1;
+        var counts = reviews.counts(((Number) row.get("id")).longValue());
+        boolean draft = "DRAFT".equals(row.get("status"));
+        if (countsKnown && draft && ((Number) counts.get("unansweredCount")).intValue() > 0) blockers.add(blocker("REQUIRED_EXPLANATIONS_MISSING", "수정·Gap 필수 소명을 작성해 주세요.", "EXPLANATION"));
+        if (countsKnown && "PENDING".equals(row.get("status")) && ((Number) counts.get("pendingReviewCount")).intValue() > 0) blockers.add(blocker("EXPLANATIONS_NOT_ACCEPTED", "필수 소명 수용이 필요합니다.", "EXPLANATION"));
+        boolean ready = "CURRENT".equals(validationState) && blockers.isEmpty() && draft;
+        return object("state", preparing ? "PREPARING" : "STALE".equals(validationState) ? "STALE" : ready ? "READY" : "BLOCKED", "validationState", validationState, "validatedAttemptNo", attempt, "canSubmit", ready,
+                "canApprove", "PENDING".equals(row.get("status")) && "CURRENT".equals(validationState) && blockers.isEmpty(), "blockers", blockers,
+                "requiredCount", countsKnown ? counts.get("requiredCount") : null, "unansweredCount", countsKnown ? counts.get("unansweredCount") : null, "pendingReviewCount", countsKnown ? counts.get("pendingReviewCount") : null);
     }
 
     /** 검증 결과 변경을 상태 토큰에 연결한다. Args: submissionId 제출. Returns: 참조문자열/빈문자열. Raises: 없음. Side Effects: DB 읽기. */
-    public String validationFingerprint(String submissionId) { var found = rows("SELECT validation_result_object_key FROM submission_validation WHERE submission_id=?", id(submissionId)); var row = row(submissionId); return json(object("result", found.isEmpty() ? null : found.getFirst().get("validation_result_object_key"), "previous", "DRAFT".equals(row.get("status")) ? previous(row) : row.get("previous_submission_id"))); }
+    public String validationFingerprint(String submissionId) { var found = rows("SELECT validation_result_object_key FROM submission_validation WHERE submission_id=?", id(submissionId)); var row = row(submissionId); return json(object("result", found.isEmpty() ? null : found.getFirst().get("validation_result_object_key"), "context", "DRAFT".equals(row.get("status")) ? comparisons.context(id(submissionId)) : comparisonContext(submissionId), "reviews", reviews.revision(id(submissionId)))); }
 
     /** 고정된 비교 문맥을 읽는다. Args: submissionId 제출. Returns: 비교 DTO. Raises: 없음. Side Effects: DB 읽기. */
-    public Map<String, Object> comparisonContext(String submissionId) { JsonNode snapshot = validationResult(submissionId); return object("previousSubmissionId", snapshot == null ? null : stringNode(snapshot.path("previousSubmissionId")), "planSubmissionId", null, "actualThresholdId", null, "estimateThresholdId", null, "reviewPolicyVersion", snapshot == null ? null : POLICY_VERSION); }
+    public Map<String, Object> comparisonContext(String submissionId) { JsonNode snapshot = validationResult(submissionId); return snapshot != null && snapshot.has("comparisonContext") ? mapper.convertValue(snapshot.path("comparisonContext"), Map.class) : legacyContext(snapshot); }
+
+    /** 이전 연간 검증 근거를 원래 비교 범위로 읽는다. Args: snapshot 기존 JSON/null. Returns: 문맥. Raises: 없음. Side Effects: 없음. */
+    private Map<String,Object> legacyContext(JsonNode snapshot) { return object("previousSubmissionId",snapshot == null ? null : stringNode(snapshot.path("previousSubmissionId")),"planSubmissionId",null,"actualThresholdId",null,"estimateThresholdId",null,"reviewPolicyVersion",snapshot == null ? null : POLICY_VERSION); }
+
+    /** 요청 유형의 검증 정책을 선택한다. Args: row 제출문맥. Returns: 정책명. Raises: 없음. Side Effects: 없음. */
+    private String policy(Map<String,Object> row) { return "MONTHLY_ACTUAL".equals(row.get("type")) ? "monthly-actual/1.0" : POLICY_VERSION; }
+
+    /** 검증에서 구성한 검토 ID를 명령 응답에 연결한다. Args: submissionId 제출, unanswered 미답변만. Returns: ID목록. Raises: DB 오류. Side Effects: 읽기. */
+    public List<String> reviewIds(String submissionId, boolean unanswered) { return reviews.ids(id(submissionId), unanswered); }
 
     /** 현재 검증 진단을 읽는다. Args: submissionId 제출. Returns: 진단 목록. Raises: 저장 손상. Side Effects: DB 읽기. */
     public List<JsonNode> diagnostics(String submissionId) { JsonNode snapshot = validationResult(submissionId); var result = new ArrayList<JsonNode>(); if (snapshot != null) { if ("STALE".equals(readiness(row(submissionId)).get("validationState"))) result.add(mapper.valueToTree(blocker("VALIDATION_STALE", "파싱 또는 비교 문맥이 변경되어 다시 검증해야 합니다.", "COMPARISON"))); else snapshot.path("diagnostics").forEach(result::add); } return result; }
@@ -250,9 +317,6 @@ public class SubmissionValidationService {
         var found = rows("SELECT id FROM account_item WHERE source_type=? AND source_code=? AND source_name=?", type, account.get("code"), name);
         return found.isEmpty() ? insert("INSERT INTO account_item(source_type,source_code,source_name) VALUES (?,?,?)", type, account.get("code"), name) : ((Number) found.getFirst().get("id")).longValue();
     }
-
-    /** 같은 요청의 직전 제출 완료본을 찾는다. Args: row 현재 제출. Returns: ID/null. Raises: 없음. Side Effects: DB 읽기; DRAFT 제외·반려 포함. */
-    private Long previous(Map<String, Object> row) { var found = rows("SELECT id FROM submission WHERE request_id=? AND organization_id=? AND id<>? AND status<>'DRAFT' ORDER BY seq DESC LIMIT 1", row.get("request_id"), row.get("organization_id"), row.get("id")); return found.isEmpty() ? null : ((Number) found.getFirst().get("id")).longValue(); }
 
     /** 조회 권한을 DB 소속에 맞춰 검사한다. Args: actor 행위자, submissionId 제출. Returns: 내부 행. Raises: ApiException 권한 밖은 404. Side Effects: DB 읽기. */
     private Map<String, Object> accessible(Actor actor, String submissionId) { var value = row(submissionId); if (!actor.canAccessOrganization(value.get("organization_id").toString())) throw new ApiException(HttpStatus.NOT_FOUND, "SUBMISSION_NOT_FOUND", "제출본을 찾을 수 없습니다."); return value; }

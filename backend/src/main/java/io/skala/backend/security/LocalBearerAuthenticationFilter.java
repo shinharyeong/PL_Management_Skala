@@ -74,7 +74,7 @@ final class LocalBearerAuthenticationFilter extends OncePerRequestFilter {
      * <p>Args: request·response는 현재 HTTP 교환, chain은 뒤의 보안 필터 체인이다.
      * Returns: 인증 헤더가 없으면 익명 상태로 진행하고 실패하면 401 응답으로 종료한다.
      * Raises: 뒤 필터의 ServletException·IOException 및 DB 장애는 그대로 전파한다.
-     * Side Effects: SecurityContext를 설정한다. 추가 사업부는 고정 조직 Actor를 principal로 전달하며 토큰은 보관하지 않는다.
+     * Side Effects: SecurityContext를 설정한다. demo 담당자는 F10 환경 토큰을 포함해 고정 조직 Actor로 전달하며 토큰은 보관하지 않는다.
      */
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
@@ -98,7 +98,7 @@ final class LocalBearerAuthenticationFilter extends OncePerRequestFilter {
             if (plannerDigest != null && MessageDigest.isEqual(plannerDigest, digest)) {
                 email = plannerEmail;
             }
-            if (organizationDigest != null && MessageDigest.isEqual(organizationDigest, digest)) {
+            if (demoAccounts == null && organizationDigest != null && MessageDigest.isEqual(organizationDigest, digest)) {
                 email = organizationEmail;
             }
             Actor selectedActor = email == null && demoAccounts != null

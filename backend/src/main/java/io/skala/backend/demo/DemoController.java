@@ -97,7 +97,7 @@ public class DemoController {
                 .body(file.bytes());
     }
 
-    /** 실제 로그인 자격이 아닌 체험 역할·선택 조직이며 생략한 조직은 기존 D100이다. */
+    /** 실제 로그인 자격이 아닌 체험 역할·선택 조직이며 생략한 조직은 F10이다. */
     public record SessionInput(@NotBlank @Pattern(regexp="PLANNER|ORG_MANAGER") String role,
             @Size(max=80) String organizationCode) {}
 }

@@ -1,14 +1,14 @@
 # backend
 
 Spring Boot 3.4.1 · Java 21 · JDBC/Flyway · PostgreSQL 기반 제출 접수 백엔드다.
-전체 API 설계 35개 중 요청·업로드·실제 Python 파싱·최초 연간 PLAN 검증/적재·최종 제출·상태/금액/진단/원본 조회 17개 경로를 구현했다.
+전체 API 설계 35개 중 요청·업로드·실제 Python 파싱·최초 연간 PLAN 검증/적재·최종 제출·상태/금액/진단/원본 조회·승인/반려 18개 경로를 구현했다.
 
 - [전체 API 명세](../docs/development/api-contract.md)
 - [설정·실행·파서 연결·남은 작업](../docs/development/backend-integration.md)
 - [함수 명세](../docs/development/backend-function-reference.md)
 
 파싱 직후 초안은 validationState=NOT_RUN, canSubmit=false다. 담당자의 validation 명령은 원본 조직·연간 월·보고 분류·정확한 금액·합계 근거를 검증하고, 준비된 초안만 submit으로 PENDING·제출 회차를 부여한다. 기획자는 선택 적재행·보고 집계·진단·정확한 원본 셀을 조회한다. 파싱 후보는 amountUnit=KRW일 때만 원 단위이며 미확정 단위의 숫자는 후보로 보존한다.
-수정 소명·월간 Gap 비교·승인·연간 확정·공식 마스터 발행은 후속 구현이다.
+경영기획팀의 연간 제출 승인·반려와 검토자·시각·반려 사유 조회를 지원한다. 수정 소명·월간 Gap 비교/승인·연간 확정·공식 마스터 발행은 후속 구현이다.
 
 ## 실행
 

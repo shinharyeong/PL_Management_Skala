@@ -247,4 +247,3 @@ API 예시 본문·성공 응답을 확정하기 전에 다음을 결정한다.
 - **S8** [원본 셀·수식·공유 수식 기준의 읽기 전용 조회: SubmissionValidationService.java 204~231행](https://github.com/shinharyeong/skala_final_project/blob/3f57b1dd15c49570dbcab82e33d4b2a7eb828fd8/backend/src/main/java/io/skala/backend/submission/SubmissionValidationService.java#L204)
 - **S9** [공통 명령 멱등·충돌 처리: CommandExecutor.java 72~113행](https://github.com/shinharyeong/skala_final_project/blob/3f57b1dd15c49570dbcab82e33d4b2a7eb828fd8/backend/src/main/java/io/skala/backend/foundation/CommandExecutor.java#L72)
 - **S10** [현재 검증 상태·차단 사유·제출 가능 판정: SubmissionValidationService.java 111~143행](https://github.com/shinharyeong/skala_final_project/blob/3f57b1dd15c49570dbcab82e33d4b2a7eb828fd8/backend/src/main/java/io/skala/backend/submission/SubmissionValidationService.java#L111)
-

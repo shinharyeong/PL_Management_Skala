@@ -8,6 +8,7 @@ const DUMMY_ORGANIZATION_CODES = Object.freeze([
  * Args: originalName 선택 파일명, expectedName 요청의 계약 파일명, organizationCode 현재 조직 코드.
  * Returns: allowed 허용 여부, requiresConsent 이름 보정 동의 필요 여부, reason 거절 사유.
  * Raises: 없음. Side Effects: 없음; 비교 문자열만 NFC로 정규화하며 원본 이름·바이트는 변경하지 않는다.
+ * 월마감 원본은 파일명 연도와 요청 연도, 월간 요청이면 마감 월도 일치해야 한다.
  * 파일 바이트·로컬 파일·업무 내용의 조직 일치는 검사하지 않는다.
  * @param {string} originalName
  * @param {string} expectedName
@@ -21,7 +22,7 @@ export function inspectUploadFilename(originalName, expectedName, organizationCo
   const comparisonName = originalName.normalize('NFC')
   const comparisonExpectedName = expectedName.normalize('NFC')
   if (comparisonName === comparisonExpectedName) return { allowed: true, requiresConsent: false, reason: '' }
-  const match = /^(0[1-9]|1[0-7])_(F\d{2})_사업부(\d{1,2})_재무제표\.xlsx$/.exec(comparisonName)
+  const match = /^(0[1-9]|1[0-7])_(F\d{2})_사업부(\d{1,2})_(?:재무제표|(\d{4})_(0[1-9]|1[0-2])월마감)\.xlsx$/.exec(comparisonName)
   if (match) {
     const index = Number(match[1]) - 1
     if (match[3] !== String(index + 1) || DUMMY_ORGANIZATION_CODES[index] !== match[2]) {
@@ -29,6 +30,12 @@ export function inspectUploadFilename(originalName, expectedName, organizationCo
     }
     if (match[2] !== organizationCode) {
       return { allowed: false, requiresConsent: false, reason: `이 파일은 ${match[2]} 조직의 파일입니다. 요청함에서 해당 조직으로 전환해 주세요.` }
+    }
+    if (match[4]) {
+      const period = new RegExp(`^${organizationCode}_(\\d{4})-(PLAN|0[1-9]|1[0-2])\\.xlsx$`).exec(comparisonExpectedName)
+      if (!period || period[1] !== match[4] || (period[2] !== 'PLAN' && period[2] !== match[5])) {
+        return { allowed: false, requiresConsent: false, reason: '원본 파일명의 연도·마감 월이 현재 제출 요청과 일치하지 않습니다.' }
+      }
     }
     return { allowed: true, requiresConsent: true, reason: '' }
   }

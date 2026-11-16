@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { useSession } from '../stores/session'
 import { query, requestTitle, submissionStatus, dateTime, amount, errorText, saveBlob } from '../lib/display'
 import SubmissionData from './SubmissionData.vue'
+import SubmissionReviews from './SubmissionReviews.vue'
 
 const session = useSession()
 const route = useRoute()
@@ -12,6 +13,9 @@ const loading = ref(false)
 const busy = ref('')
 const error = ref('')
 const actionMessage = ref('')
+const masterEffects = ref([])
+const decisionAction = ref('')
+const rejectNote = ref('')
 const diagnostics = ref([])
 const diagnosticCursor = ref(null)
 const records = ref([])
@@ -48,12 +52,20 @@ const canValidate = computed(function allowsValidation() { return session.actor?
  */
 const canSubmit = computed(function allowsSubmission() { return session.actor?.role === 'ORG_MANAGER' && submission.value?.status === 'DRAFT' && submission.value?.readiness.canSubmit === true })
 
+/** 기획 담당자에게 검토 대기 중인 연간·월간 제출본의 판단을 제공한다.
+ * Args: 없음. Returns: 현재 승인·반려 화면 제공 여부. Raises: 없음. Side Effects: 없음.
+ */
+const canReview = computed(function allowsReview() { return session.actor?.role === 'PLANNER' && submission.value?.status === 'PENDING' && ['ANNUAL_PLAN', 'MONTHLY_ACTUAL'].includes(submission.value?.type) })
+
 /** 허용한 화면 종류와 식별자만 사용해 진입 문맥으로 돌아간다.
  * Args: 없음. Returns: RouterLink 대상·표시 이름. Raises: 없음. Side Effects: 없음; 임의 URL을 사용하지 않는다.
  */
 const returnLink = computed(function submissionReturn() {
   const requestId = typeof route.query.requestId === 'string' ? route.query.requestId : submission.value?.requestId
   const organizationId = typeof route.query.organizationId === 'string' ? route.query.organizationId : submission.value?.organizationId
+  if (session.actor?.role === 'PLANNER' && route.query.from === 'annual-master' && typeof route.query.masterId === 'string' && /^\d+$/.test(route.query.masterId)) return { to: `/planning/annual-masters/${route.query.masterId}`, label: '연간 계획 마스터' }
+  if (session.actor?.role === 'PLANNER' && route.query.from === 'monthly-master' && typeof route.query.masterId === 'string' && /^\d+$/.test(route.query.masterId)) return { to: `/planning/masters/${route.query.masterId}`, label: '월간 실적 마스터' }
+  if (session.actor?.role === 'PLANNER' && route.query.from === 'gap') return { to: { path: '/planning/gap', query: { requestId } }, label: '월간 시트 관리' }
   if (session.actor?.role === 'PLANNER' && route.query.from === 'requests') return { to: { path: '/planning/requests', query: { requestId } }, label: '요청별 조직 현황' }
   if (session.actor?.role === 'PLANNER' && route.query.from === 'organizations') return { to: { path: '/planning/organizations', query: { mode: 'actual', organizationId, year: submission.value?.year || route.query.year, month: submission.value?.month || 0 } }, label: '조직별 현황' }
   return { to: { path: '/history', query: { requestId: route.query.requestId, organizationId: route.query.organizationId, from: route.query.from } }, label: '제출 이력 관리' }
@@ -65,8 +77,8 @@ const returnLink = computed(function submissionReturn() {
 const stateMessage = computed(function describeState() {
   const item = submission.value
   if (!item) return ''
-  if (item.status === 'PENDING') return '최종 제출이 완료되었습니다. 경영기획팀이 이 제출본의 적재 내역과 진단을 확인할 수 있습니다.'
-  if (item.status === 'APPROVED') return '승인된 제출본입니다. 제출 당시의 적재 내역과 원본을 확인할 수 있습니다.'
+  if (item.status === 'PENDING') return session.actor?.role === 'PLANNER' ? '검토 대기 중인 제출본입니다. 적재 내역과 진단·원본을 확인한 뒤 승인하거나 반려해 주세요.' : '최종 제출이 완료되었습니다. 경영기획팀의 검토를 기다리고 있습니다.'
+  if (item.status === 'APPROVED') return item.type === 'ANNUAL_PLAN' ? '승인된 계획 제출본입니다. 제출 당시의 적재 내역과 원본을 확인할 수 있습니다. 연간 계획 확정은 별도 절차입니다.' : '승인된 월간 제출본입니다. 발행 마스터는 해당 월의 고정 승인본으로 집계하며 원본과 소명 이력을 보존합니다.'
   if (item.status === 'REJECTED') return '반려된 제출본입니다. 반려 사유를 확인하고 전체 파일을 다시 제출해 주세요.'
   if (item.parsing.status === 'FAILED') return '파일을 처리하지 못했습니다. 진단을 확인하고 파일을 다시 선택해 주세요.'
   if (item.parsing.status === 'NEEDS_REVIEW') return '확인이 필요한 항목이 있습니다. 아래 진단의 원본 셀을 확인해 주세요.'
@@ -118,6 +130,7 @@ async function load() {
     if (current !== generation || lifetime.signal.aborted) return
     if (submission.value?.parsing.attemptNo !== item.parsing.attemptNo || ['QUEUED', 'RUNNING'].includes(item.parsing.status)) closeCell()
     submission.value = item
+    if (item.status !== 'PENDING') { decisionAction.value = ''; rejectNote.value = '' }
     if (parsing.value) {
       diagnostics.value = []; records.value = []; summary.value = null
       diagnosticCursor.value = null; recordCursor.value = null
@@ -176,6 +189,64 @@ async function command(action) {
   } finally { if (!lifetime.signal.aborted) busy.value = '' }
 }
 
+/** 승인 또는 반려 확인 폼을 열거나 취소한다.
+ * Args: action APPROVE/REJECT 또는 취소를 뜻하는 빈 문자열. Returns: 없음.
+ * Raises: 없음. Side Effects: 화면의 판단 선택·안내 변경; 서버 상태는 바꾸지 않는다.
+ */
+function chooseDecision(action) {
+  if (!canReview.value || busy.value || loading.value || !['', 'APPROVE', 'REJECT'].includes(action)) return
+  if (action === 'APPROVE' && submission.value?.readiness?.canApprove !== true) return
+  decisionAction.value = action
+  error.value = ''; actionMessage.value = ''
+}
+
+/** 검토 대기 제출본에 명시한 판단을 저장하고 서버의 검토 결과를 표시한다.
+ * Args: 없음(선택한 action과 반려 사유 사용). Returns: Promise<void>. Raises: 없음(화면 표시).
+ * Side Effects: 토큰·멱등키를 포함한 POST와 최신 GET·마스터 발행 결과 표시; 실패 시 키를 보존한다.
+ */
+async function decide() {
+  if (!canReview.value || busy.value || loading.value || !['APPROVE', 'REJECT'].includes(decisionAction.value)) return
+  if (decisionAction.value === 'APPROVE' && submission.value?.readiness?.canApprove !== true) return
+  const action = decisionAction.value
+  const note = rejectNote.value.trim()
+  if (action === 'REJECT' && (!note || note.length > 2000)) {
+    error.value = '반려 사유를 앞뒤 공백을 제외한 1~2,000자로 입력해 주세요.'
+    return
+  }
+  const payload = { expectedStateToken: submission.value.stateToken, action }
+  if (action === 'REJECT') payload.note = note
+  const fingerprint = `decisions:${JSON.stringify(payload)}`
+  if (!commandKeys.has(fingerprint)) commandKeys.set(fingerprint, crypto.randomUUID())
+  busy.value = 'decisions'; error.value = ''; actionMessage.value = ''; masterEffects.value = []
+  try {
+    const result = await session.request(`${base}/decisions`, { method: 'POST', headers: { 'Idempotency-Key': commandKeys.get(fingerprint) }, body: JSON.stringify(payload), signal: lifetime.signal })
+    if (lifetime.signal.aborted) return
+    submission.value = result.submission
+    commandKeys.delete(fingerprint)
+    decisionAction.value = ''; rejectNote.value = ''
+    actionMessage.value = action === 'APPROVE' ? '제출본을 승인했습니다.' : '제출본을 반려했습니다. 조직 담당자가 반려 사유를 확인할 수 있습니다.'
+    masterEffects.value = result.masterEffects || []
+    await load()
+  } catch (cause) {
+    if (cause.name !== 'AbortError' && !lifetime.signal.aborted) {
+      if (['RESOURCE_CHANGED', 'INVALID_SUBMISSION_STATE', 'REVIEW_CONTEXT_CHANGED'].includes(cause.code)) await load()
+      error.value = errorText(cause)
+    }
+  } finally { if (!lifetime.signal.aborted) busy.value = '' }
+}
+
+/** 승인 명령이 반환한 계획·실적 마스터 결과를 발행·대기·변경 없음으로 구분한다.
+ * Args: effect 서버가 반환한 기간별 마스터 효과. Returns: 표시 문자열. Raises: 없음.
+ * Side Effects: 없음; 과거 월 갱신을 포함한 모든 효과를 표시하며 응답에 없는 발행을 추정하지 않는다.
+ */
+function describeMasterEffect(effect) {
+  if (!effect) return ''
+  if (effect.action === 'WAITING_INITIAL') return `${effect.year}년 ${effect.month ? `${effect.month}월 ` : ''}첫 마스터 발행 대기 · 승인 ${effect.approvedOrganizationCount}/${effect.requiredOrganizationCount}곳. 전 조직 승인 시 자동 발행됩니다.`
+  if (['CREATED', 'UPDATED'].includes(effect.action)) return `${effect.kind === 'ANNUAL_PLAN' ? '연간 계획' : '월간 실적'} 마스터 ${effect.versionLabel}을 발행했습니다.`
+  if (effect.action === 'UNCHANGED') return `승인본의 내용이 같아 기존 마스터 ${effect.versionLabel}을 유지했습니다.`
+  return ''
+}
+
 /** 지정한 원본 위치를 조회하고 최신 선택만 패널에 표시한다.
  * Args: source 서버가 반환한 sheet/cell. Returns: Promise<void>. Raises: 없음(화면 표시).
  * Side Effects: 이전 셀 조회 취소·GET·표시 패널 초점 이동.
@@ -222,19 +293,33 @@ onBeforeUnmount(dispose)
   <RouterLink :to="returnLink.to" class="back-link">← {{ returnLink.label }}</RouterLink>
   <header class="page-heading"><div><p class="overline">업로드한 전체 파일</p><h1>{{ requestTitle(submission) }}</h1></div><button class="button" :disabled="loading || !!busy" @click="load()">새로고침</button></header>
   <div v-if="error" class="alert error" role="alert">{{ error }}</div><p v-if="actionMessage" class="notice" role="status">{{ actionMessage }}</p>
+  <div v-for="effect in masterEffects" :key="`${effect.kind}:${effect.year}:${effect.month}`" class="notice master-outcome" role="status"><span>{{ describeMasterEffect(effect) }}</span><RouterLink v-if="effect.masterId" :to="`/planning/${effect.kind === 'ANNUAL_PLAN' ? 'annual-masters' : 'masters'}/${effect.masterId}`" class="text-button">마스터 확인 →</RouterLink></div>
   <p v-if="!submission && loading" class="panel empty" role="status">제출본을 불러오고 있습니다…</p>
   <template v-if="submission">
     <section class="panel">
-      <div class="section-heading"><h2>파일 처리 상태</h2><span :class="['badge', { green: submission.status === 'PENDING' || submission.status === 'APPROVED', red: submission.parsing.status === 'FAILED' }]">{{ submissionStatus(submission) }}</span></div>
+      <div class="section-heading"><h2>파일 처리 상태</h2><span :class="['badge', { green: submission.status === 'PENDING' || submission.status === 'APPROVED', red: submission.status === 'REJECTED' || submission.parsing.status === 'FAILED' }]">{{ submissionStatus(submission) }}</span></div>
       <div class="progress-steps"><div class="done"><b>1</b><span>파일 업로드</span></div><span class="step-line"></span><div :class="{ current: parsing, done: ['SUCCEEDED', 'NEEDS_REVIEW'].includes(submission.parsing.status), failed: submission.parsing.status === 'FAILED' }"><b>2</b><span>엑셀 파싱</span></div><span class="step-line"></span><div :class="{ current: !parsing && submission.status === 'DRAFT', done: submission.status !== 'DRAFT' }"><b>3</b><span>검증 및 최종 제출</span></div></div>
       <div v-if="parsing" class="notice" role="status"><span class="spinner"></span>엑셀을 읽고 있습니다. 처리 결과를 자동으로 확인합니다.</div><p v-else class="notice">{{ stateMessage }}</p>
       <dl class="file-meta"><div><dt>파일명</dt><dd>{{ submission.originalFilename }}</dd></div><div><dt>업로드</dt><dd>{{ submission.uploadedBy?.name }} · {{ dateTime(submission.uploadedAt) }}</dd></div><div><dt>저장본</dt><dd>{{ submission.versionLabel || '초안 · 제출 회차 없음' }}</dd></div><div><dt>파싱 시도</dt><dd>{{ submission.parsing.attemptNo }}회</dd></div><div v-if="submission.submittedAt"><dt>제출</dt><dd>{{ submission.submittedBy?.name }} · {{ dateTime(submission.submittedAt) }}</dd></div><div v-if="submission.reviewedAt"><dt>검토</dt><dd>{{ submission.reviewedBy?.name }} · {{ dateTime(submission.reviewedAt) }}</dd></div></dl>
-      <div v-if="submission.rejectReason" class="alert warning">반려 사유: {{ submission.rejectReason }}</div>
+      <div v-if="submission.rejectReason" class="alert warning reject-reason"><strong>반려 사유</strong><p>{{ submission.rejectReason }}</p></div>
+      <p v-if="submission.status === 'REJECTED' && session.actor.role === 'ORG_MANAGER'" class="notice">반려 사유를 반영한 전체 파일을 새 초안으로 올려 주세요. 업무 검증 후 금액이 변경된 모든 항목과 기준을 초과한 손익 Gap의 필수 소명을 작성해 제출합니다.</p>
       <div v-if="submission.status === 'DRAFT' && !parsing && submission.readiness.blockers?.length" class="readiness"><h3>최종 제출 전 확인</h3><div v-for="(blocker, index) in submission.readiness.blockers" :key="index" class="diagnostic-row"><span class="badge amber">확인</span><div><strong>{{ blockerMessage(blocker) }}</strong><small>{{ blocker.code }}</small><button v-if="blocker.source?.cell" class="text-button" @click="openCell(blocker.source)">{{ blocker.source.sheet }} {{ blocker.source.cell }} 원본 확인</button></div></div></div>
-      <div class="panel-footer"><button class="button" :disabled="!!busy || loading" @click="download">{{ busy === 'download' ? '다운로드 중…' : '원본 다운로드' }}</button><div v-if="session.actor.role === 'ORG_MANAGER'" class="button-row"><button v-if="submission.parsing.retryAllowed" class="button" :disabled="!!busy || loading" @click="command('parsing-retries')">같은 파일 다시 파싱</button><RouterLink v-if="['DRAFT', 'REJECTED'].includes(submission.status)" :to="`/requests/${submission.requestId}/upload`" class="button">다른 파일 선택</RouterLink><button v-if="submission.status === 'DRAFT'" class="button" :disabled="!!busy || loading || !canValidate" @click="command('validation')">{{ busy === 'validation' ? '검증 중…' : submission.readiness.validationState === 'CURRENT' ? '업무 검증 다시 실행' : '업무 검증' }}</button><button v-if="submission.status === 'DRAFT'" class="button primary" :disabled="!!busy || loading || !canSubmit" @click="command('submit')">{{ busy === 'submit' ? '제출 중…' : '최종 제출' }}</button></div></div>
+      <div class="panel-footer"><button class="button" :disabled="!!busy || loading" @click="download">{{ busy === 'download' ? '다운로드 중…' : '원본 다운로드' }}</button><div v-if="session.actor.role === 'ORG_MANAGER'" class="button-row"><button v-if="submission.parsing.retryAllowed" class="button" :disabled="!!busy || loading" @click="command('parsing-retries')">같은 파일 다시 파싱</button><RouterLink v-if="['DRAFT', 'REJECTED'].includes(submission.status)" :to="`/requests/${submission.requestId}/upload`" class="button">{{ submission.status === 'REJECTED' ? '전체 파일 다시 제출' : '다른 파일 선택' }}</RouterLink><button v-if="submission.status === 'DRAFT'" class="button" :disabled="!!busy || loading || !canValidate" @click="command('validation')">{{ busy === 'validation' ? '검증 중…' : submission.readiness.validationState === 'CURRENT' ? '업무 검증 다시 실행' : '업무 검증' }}</button><button v-if="submission.status === 'DRAFT'" class="button primary" :disabled="!!busy || loading || !canSubmit" @click="command('submit')">{{ busy === 'submit' ? '제출 중…' : '최종 제출' }}</button></div></div>
+    </section>
+    <section v-if="canReview" class="panel decision-panel" aria-labelledby="decision-title">
+      <div class="section-heading"><h2 id="decision-title">제출본 검토</h2><span class="badge amber">검토 대기</span></div>
+      <p class="muted section-description">아래 적재 내역·소명·원본을 확인해 주세요. 필수 소명을 모두 수용해야 승인할 수 있습니다. 전 조직 최초 승인 시 해당 계획 또는 실적 마스터가 발행됩니다.</p>
+      <p v-if="submission.readiness.canApprove !== true" class="notice">승인 조건을 확인해 주세요. 필수 소명 {{ submission.readiness.requiredCount ?? '—' }}건 · 미답변 {{ submission.readiness.unansweredCount ?? '—' }}건 · 수용 대기 {{ submission.readiness.pendingReviewCount ?? '—' }}건</p>
+      <div v-if="!decisionAction" class="button-row decision-actions"><button class="button" :disabled="!!busy || loading" @click="chooseDecision('REJECT')">반려</button><button class="button primary" :disabled="!!busy || loading || submission.readiness.canApprove !== true" @click="chooseDecision('APPROVE')">승인</button></div>
+      <form v-else class="decision-form" @submit.prevent="decide">
+        <template v-if="decisionAction === 'REJECT'"><label for="reject-note">반려 사유 <span class="muted">필수 · 최대 2,000자</span></label><textarea id="reject-note" v-model="rejectNote" :disabled="!!busy || loading" maxlength="2000" required aria-describedby="reject-note-help" placeholder="조직 담당자가 수정해야 할 내용과 근거를 적어 주세요."></textarea><p id="reject-note-help" class="muted">사유는 조직 담당자에게 표시되며, 기존 제출본과 적재 금액은 이력에 보존됩니다.</p></template>
+        <p v-else class="notice">{{ submission.versionLabel }} 제출본을 승인하시겠습니까? 검토자와 검토 시각이 기록됩니다.</p>
+        <div class="button-row decision-actions"><button type="button" class="button" :disabled="!!busy || loading" @click="chooseDecision('')">취소</button><button type="submit" class="button primary" :disabled="!!busy || loading || (decisionAction === 'APPROVE' && submission.readiness.canApprove !== true) || (decisionAction === 'REJECT' && !rejectNote.trim())">{{ busy === 'decisions' ? '처리 중…' : decisionAction === 'APPROVE' ? '승인 확정' : '반려 확정' }}</button></div>
+      </form>
     </section>
     <section v-if="sourceTarget" ref="sourcePanel" class="panel source-panel" tabindex="-1" aria-labelledby="source-cell-title"><div class="section-heading"><h2 id="source-cell-title">원본 셀 · {{ sourceTarget.sheet }} {{ sourceTarget.cell }}</h2><button class="text-button" @click="closeCell">닫기</button></div><p v-if="sourceLoading" class="empty compact" role="status">원본 셀을 불러오는 중…</p><p v-if="sourceError" class="alert error" role="alert">{{ sourceError }}</p><dl v-if="sourceCell" class="source-grid"><div><dt>셀 상태</dt><dd>{{ sourceCell.presence === 'EMPTY' ? '빈 셀' : '값 있음' }} · {{ sourceCell.dataType }}</dd></div><div><dt>원본 값</dt><dd>{{ sourceCell.rawValue ?? '—' }}</dd></div><div><dt>수식</dt><dd v-if="sourceCell.formula">{{ sourceCell.formula }}</dd><dd v-else-if="sourceCell.sharedFormulaBase">공유 수식 · 기준 셀 {{ sourceCell.sharedFormulaBase.sheet }} {{ sourceCell.sharedFormulaBase.cell }}<small class="shared-formula">기준 셀 수식: {{ sourceCell.sharedFormulaBase.formula || '기준 수식 원문 미확인' }}</small><small v-if="sourceCell.sharedFormulaBase.range" class="shared-formula">공유 범위: {{ sourceCell.sharedFormulaBase.range }}</small></dd><dd v-else>{{ sourceCell.cacheStatus === 'NOT_FORMULA' ? '없음' : '수식 원문 미확인' }}</dd></div><div><dt>저장된 계산값</dt><dd>{{ sourceCell.cachedValue ?? '—' }} · {{ sourceCell.cacheStatus }}</dd></div><div><dt>정규화 값</dt><dd>{{ amount(sourceCell.normalizedAmount) }}<small v-if="sourceCell.normalizedAmount !== null && sourceCell.normalizedAmount !== undefined"> · {{ sourceCell.sourceUnit ? '원' : '단위 미확인' }}</small></dd></div><div><dt>단위 · 배율</dt><dd>{{ sourceCell.sourceUnit ?? '—' }} · {{ sourceCell.multiplier ?? '—' }}</dd></div><div><dt>정규화 상태</dt><dd>{{ sourceCell.normalizationStatus }}</dd></div></dl></section>
     <template v-if="!parsing">
+      <SubmissionReviews v-if="submission.readiness.validationState === 'CURRENT' || submission.status !== 'DRAFT'" :key="`reviews:${submission.id}:${submission.stateToken}`" :submission="submission" @changed="load" />
       <SubmissionData :key="`${submission.id}:${submission.parsing.attemptNo}:${submission.stateToken}`" :submission="submission" @open-cell="openCell" />
       <div v-if="resultError" class="alert error" role="alert">{{ resultError }} <button class="text-button" :disabled="resultsLoading || loading || !!busy" @click="load()">결과 다시 조회</button></div>
       <section class="panel"><div class="section-heading"><h2>파싱 · 업무 검증 진단</h2><span class="muted">{{ diagnostics.length }}건{{ diagnosticCursor ? ' 이상' : '' }}</span></div><p v-if="resultsLoading && !diagnostics.length" class="empty" role="status">진단을 불러오는 중…</p><p v-else-if="!diagnostics.length" class="empty compact">{{ resultError ? '진단 조회 상태를 확인해 주세요.' : '표시할 진단이 없습니다.' }}</p><div v-for="(diagnostic, index) in diagnostics" :key="index" class="diagnostic-row"><span :class="['badge', diagnostic.severity === 'ERROR' ? 'red' : 'amber']">{{ diagnostic.severity === 'ERROR' ? '오류' : '확인' }}</span><div><strong>{{ diagnostic.message }}</strong><small>{{ diagnostic.code }} · {{ diagnostic.stage }}</small><small v-if="diagnostic.code === 'CONTROL_CACHE_PRECISION'">저장 캐시 {{ amount(diagnostic.cachedAmount) }}원 · 상세 합계 {{ amount(diagnostic.calculatedAmount) }}원 · 차이 {{ amount(diagnostic.difference) }}원</small><button v-if="diagnostic.source?.cell" class="text-button" @click="openCell(diagnostic.source)">{{ diagnostic.source.sheet }} {{ diagnostic.source.cell }} 원본 확인</button><small v-else-if="diagnostic.source">{{ diagnostic.source.sheet }}</small></div></div><button v-if="diagnosticCursor" class="button load-more" :disabled="!!busy || loading" @click="more('diagnostics')">진단 더 보기</button></section>
@@ -244,5 +329,7 @@ onBeforeUnmount(dispose)
 </template>
 
 <style scoped>
+.master-outcome { display:flex; align-items:center; flex-wrap:wrap; gap:12px; }
+.decision-actions { justify-content:flex-end; margin-top:18px; }.decision-form { margin-top:20px; }.decision-form label span { margin-left:6px; font-weight:400; }.decision-form>p.muted { margin-top:8px; font-size:12px; line-height:1.7; }.reject-reason p { margin:4px 0 0; white-space:pre-wrap; }
 .shared-formula { display:block; margin-top:8px; line-height:1.7; }.readiness { margin-top:20px; }.source-panel { outline-offset:4px; }.source-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }.source-grid dt { color:var(--muted); font-size:12px; }.source-grid dd { margin:5px 0 0; font-size:13px; overflow-wrap:anywhere; white-space:pre-wrap; }.source-grid>div:nth-child(3) { grid-column:1/-1; }@media(max-width:700px) { .source-grid { grid-template-columns:1fr; } }
 </style>

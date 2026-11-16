@@ -1,12 +1,12 @@
-# 백엔드·Excel 파서·최초 연간 제출 연결
+# 백엔드·Excel 파서·연간/월간 제출 연결
 
 ## 기준과 구현 범위
 
-[API 0.6-draft](api-contract.md)와
+[API 0.9-draft](api-contract.md)와
 [ERD PR #16](https://github.com/shinharyeong/skala_final_project/blob/8c84d2783c9beb2f876810387baa7f9e3f503a50/docs/development/erd.md)을 기준으로 한다.
 전체 스냅샷 재제출, 모든 금액 변경 소명, 조직·보고 항목·연월·시나리오별 비교, 확인된 OP의 Gap,
 전 조직 최초 승인 후 마스터 발행·이후 승인 조직만 교체하는 업무 규칙을 유지한다.
-현재 구현은 원본 접수·파싱에서 최초 연간 PLAN 검증·적재·최종 제출과 기획자 조회까지 연결한다. 승인·공식 마스터는 아직 생성하지 않는다.
+현재 구현은 원본 접수·파싱에서 연간 PLAN과 월간 ACTUAL/ESTIMATE의 검증·적재·수정/Gap 소명·최종 제출·기획자 검토·승인/반려까지 연결한다. 전 사업조직 최초 승인 시 연간 PLAN 또는 월간 ACTUAL 마스터를 자동 발행한다. 연간 확정 명령은 조직별 승인 계획본과 명시적으로 입력한 전사 Contingency를 고정한다. 구현 범위와 실제 실행 검증 결과는 구분하며 결과는 [로컬 환경](local-environment.md)에서 관리한다.
 
 공통 접두사는 /api/v1이다. P는 PLANNER, O는 ORG_MANAGER, B는 둘 다다.
 
@@ -24,14 +24,32 @@
 | GET /submissions/{submissionId}/diagnostics | B | 현재 진단·필터·페이지 |
 | GET /submissions/{submissionId}/file | B | 최초 원본 바이트 |
 | GET /submissions/{submissionId}/parsed-records | B | 추출 후보·nullable 단위·원본 위치 미리보기 |
-| POST /submissions/{submissionId}/validation | O | 현재 초안의 연간 12개월·분류·금액·합계 근거 검증과 선택 상세 적재 |
+| POST /submissions/{submissionId}/validation | O | 연간/월간 전체 범위·분류·금액·합계 검증, 선택 상세 적재·비교·필수 소명 준비 |
 | POST /submissions/{submissionId}/submit | O | 준비된 초안에 회차·제출자·시각 부여, PENDING |
+| POST /submissions/{submissionId}/decisions | P | 최신 PENDING의 연간/월간 승인·반려와 영향 마스터 발행 |
 | GET /submissions/{submissionId}/financial-values | B | 실제 적재한 상세 월별 금액과 원본 위치 |
 | GET /submissions/{submissionId}/report-values | B | 검증된 보고 집계 또는 UNRESOLVED/null |
 | GET /submissions/{submissionId}/source-cells | B | 지정한 보존 원본 셀의 값·수식·캐시·단위 |
+| GET /annual-plans/{year} | P | 수집/확정 상태·후보 또는 고정 계획본 |
+| POST /annual-plans/{year}/confirm | P | 전 조직 승인 계획본·Contingency·연간 요청 종료 고정 |
+| GET /submission-requests/{requestId}/annual-master | P | 연간 승인 수·미승인 조직·최신 발행 상태 |
+| GET /annual-masters | P | 지정 연간 요청의 버전 목록 |
+| GET /annual-masters/{masterId} | P | 고정 출처·전사/조직 연간·월 합계 |
+| GET /annual-masters/{masterId}/report-values | P | 고정 PLAN의 항목·조직·월별 값 |
+| GET /review-items | B | 수정/Gap 검토 칸 필터·페이지 |
+| GET /review-items/{reviewItemId} | B | 비교 기준·소명 전체 회차·상태 토큰 |
+| GET /review-items/{reviewItemId}/evidence | B | 변경/Gap 원천 양쪽 금액·출처 |
+| PUT /review-items/{reviewItemId}/answer | O | 현재 회차의 명시적 소명 답변 |
+| POST /review-items/{reviewItemId}/decisions | P | 소명 수용·새 회차 보완 요청 |
+| GET /gap-thresholds/current | B | 현재 ACTUAL/ESTIMATE 기준 또는 미설정 null |
+| POST /gap-thresholds/preview | P | 후보 기준의 읽기 전용 영향 계산 |
+| POST /gap-thresholds | P | 시나리오별 새 기준 이력 적용 |
+| GET /master-periods | P | 연도 12개월의 발행 현황·승인 수·미승인 조직 |
+| GET /masters | P | 지정 ACTUAL 월의 불변 버전 목록 |
+| GET /masters/{masterId} | P | 실제·확정 계획 비교·전사/조직 합계·고정 출처 |
+| GET /masters/{masterId}/report-values | P | 고정 ACTUAL 월의 보고 항목 값 |
 
-전체 설계 35개 중 위 17개를 구현했다. 나머지 18개 경로와 소명·승인·연간 확정·Gap·공식 마스터·보고 생성은 후속 구현이다. 아직 없는 기능이 성공한 것처럼 응답하지 않는다.
-월간 접수의 확정 계획 조건은 검사하지만 확정 API는 아직 없으므로 초기 연결은 ANNUAL_PLAN 흐름으로 확인한다.
+전체 설계 39개 중 위 36개 경로를 구현했다. 남은 3개는 GET /report-items(COM-03), PATCH /submission-requests/{requestId}(REQ-04), POST /reports/preview(REP-01)다. 개발 전용 /api/dev/session과 /api/dev/template는 별도 2개다. 아직 없는 기능이 성공한 것처럼 응답하지 않는다. 월간 요청·접수는 CONFIRMED 연간 계획과 해당 조직의 고정 계획본이 있어야 진행한다.
 
 ## 연결 구조
 
@@ -45,8 +63,14 @@ flowchart LR
     F --> G["결과 저장·상태/진단 조회"]
     G --> H["담당자의 업무 검증 명령"]
     H --> I["원본 근거·전체 월·금액 대조 / 유효 상세 적재"]
-    I --> J["준비 완료 후 최종 제출 → PENDING"]
+    I --> R["수정·OP Gap 비교 / 필수 소명 답변"]
+    R --> J["준비 완료 후 최종 제출 → PENDING"]
     J --> K["기획자 적재행·보고 집계·진단·원본 셀 조회"]
+    K --> V["기획자 소명 수용 / 보완 요청"]
+    V --> L["조직 승인 / 연간 PLAN 또는 영향 ACTUAL 월 마스터 발행"]
+    L --> M["고정 승인본·집계·보고 항목 조회"]
+    L --> N["연간 승인본·Contingency 별도 확정"]
+    N --> O["월간 요청 / 고정 계획과 실적 비교"]
 ```
 
 Java는 업로드 바이트를 별도 셸 없이 Python stdin으로 전달한다.
@@ -58,17 +82,17 @@ Decimal·원본 단위·배율·수식·출처를 내부 JSON에 보존하며, �
 접수 전에 파일명·크기·ZIP 시그니처를 확인하고, OOXML 구조·암호화·자원 제한은 비동기 파서가 검사한다.
 따라서 잘못된 구조는 202 접수 후 FAILED로 나타날 수 있다.
 파싱 SUCCEEDED는 업무 검증 성공이 아니다. 검증 전 초안은 NOT_RUN·canSubmit=false다.
-명시적 validation은 인증 조직과 원본 소유/각 행 조직, 요청 연도의 PLAN 1~12월, 관리분류·실적집계기준, 원 금액 정밀도, 원본 답안지의 말단·총계·OP 대조를 확인한다. 오류가 있으면 유효한 일부 행만 검증 초안으로 적재하고 complete=false·canSubmit=false·보고값 UNRESOLVED/null을 반환한다. 최초 연간 범위를 넘는 월간 비교와 수정 소명은 차단 사유로 남긴다.
+명시적 validation은 인증 조직과 원본 소유/각 행 조직, 요청 연도의 PLAN 1~12월 또는 월간 ACTUAL 1~요청월·ESTIMATE 다음 달~12월, 관리분류·실적집계기준, 원 금액 정밀도, 원본 답안지의 말단·총계·OP 대조를 확인한다. 오류가 있으면 유효한 일부 행만 검증 초안으로 적재하고 complete=false·canSubmit=false·보고값 UNRESOLVED/null을 반환한다. 완전한 초안은 직전 제출본과 원천 의미·금액 다중집합으로 변경을 판정하고 고정 계획/직전 값과 OP를 비교해 필수 검토 칸을 만든다. 소명 미답변은 파싱 실패가 아닌 제출 준비 차단이다.
 
 답안지의 저장 캐시와 상세 합계의 절대 차이가 0보다 크고 0.00001원 이하이면 CONTROL_CACHE_PRECISION 경고와 캐시·계산값·차이를 보존한다. 그보다 큰 차이·누락·미확정은 오류다. 적재 원 금액과 보고 집계는 상세의 정확한 Decimal 값을 사용하며 캐시 오차를 숫자 보정이나 빈칸 0 처리에 사용하지 않는다.
 
 ## 초기 DB와 동시성
 
 V1은 organization, app_user, annual_plan, submission_request, request_target, submission, parsing_job의
-접수 범위를 만든다. V2는 account_item, report_item, financial_line, financial_value, submission_validation 및 submission.previous_submission_id를 추가한다. 소명·마스터 테이블은 후속 대상이다.
+접수 범위를 만든다. V2는 account_item, report_item, financial_line, financial_value, submission_validation 및 submission.previous_submission_id를 추가한다. V3는 request_target.excluded와 annual_master/annual_master_source, V4는 master_version/master_source, V5는 gap_threshold/review_item/gap_comparison/review_explanation을 추가한다. 연간 확정은 기존 annual_plan과 request_target.confirmed_plan_submission_id를 사용한다.
 추가한 물리 요소는 app_user.active(인증 해제), submission_request.period_key(연간 null 월 포함 중복 방지),
 stored_object(원본/결과 BYTEA), idempotency_record(성공 응답 보존)다.
-뒤의 두 테이블은 초기 운영 저장 장치이며 도메인 17개 전체 구현을 뜻하지 않는다.
+뒤의 두 테이블은 초기 운영 저장 장치다. V5의 gap_threshold_guard는 기준 최초 설정까지 직렬화하는 기술 테이블이며 업무 기준값을 자동 생성하지 않는다. 논리 도식과 실제 물리 컬럼·검증 문맥 저장 위치의 차이는 [ERD 구현 확장](erd.md#11-구현-확장-월-실적소명v4v5)을 따른다.
 대용량 운영에서는 객체 저장소로 교체하고 접수 원자성을 유지해야 한다. S3는 아직 연결하지 않았다.
 
 Flyway만 스키마 초기화에 사용한다.
@@ -166,6 +190,34 @@ env -u EXCEL_PARSER_TEST_DATA PYTHONPATH=src:tests python3 -B -m unittest test_e
 ```
 
 현재 단계의 검증 함수·HTTP/H2 테스트는 [함수 명세](backend-function-reference.md)에 기록하며 실제 17개 원본 대조는 [verify-submission.py](../../scripts/verify-submission.py)를 사용한다. 실행 방법·범위는 [로컬 환경](local-environment.md#최초-연간-검증최종-제출-대조)에 있다.
-남은 업무 순서는 모든 수정 항목·OP Gap 비교/소명 → 연간 확정·승인·불변 마스터다.
-로그인 제공자·OpenAPI 산출물·운영 모니터링도 남아 있다.
+남은 API는 보고 항목 목록·요청 수정·보고 데이터 구성 3개다. 로그인 제공자·OpenAPI 산출물·운영 모니터링도 남아 있다. 신규 월간·소명 흐름의 실제 원본·DB·화면 검증 결과는 [로컬 환경](local-environment.md)에 별도 기록하며 앞선 실행 기록으로 대신하지 않는다.
 구현 함수·테스트와 부작용은 [백엔드 함수 명세](backend-function-reference.md)에 관리한다.
+
+## 연간·월간 제출 승인·반려
+
+`decisions`는 조직·제출 잠금 아래 최신 회차와 상태 토큰을 다시 확인한다. 연간·월간 승인은 제출 때 고정된 검증 객체와 실제 적재 건수·필수 소명 수용을 확인하고 `APPROVED`로 변경한다. 요청이 닫혀도 이미 접수한 제출본은 검토할 수 있다. `REJECTED`에는 1~2000자 사유와 검토자·시각을 기록하며 원본·금액·제출 회차는 보존한다. 새 DB 마이그레이션 없이 기존 `submission`의 검토 컬럼을 사용한다.
+
+종료한 제출본을 새 멱등키로 다시 판단하면 409이며, 성공한 같은 키는 처음 응답을 재전달한다. 승인과 반려의 경합은 한 전이만 성공한다. 승인 응답과 저장을 같은 트랜잭션에서 처리하므로 실패하면 검토 기록도 남지 않는다.
+
+반려본을 초안으로 되돌리지 않는다. 같은 요청의 새 전체 파일 업로드 → 검증 → 최종 제출에서만 다음 회차를 부여하며, 비교 대상은 직전 반려본이다. 금액이 바뀐 모든 보고 항목에 필수 소명을 준비한다. 소명 보완은 같은 PENDING에서 새 소명 회차를 만들며 금융값·제출 회차를 바꾸지 않는다. 연간 승인과 연간 계획 확정은 별도이고 월간 승인과 영향 ACTUAL 월의 마스터 발행은 같은 트랜잭션이다.
+
+## 연간 계획 마스터 연결
+
+V3의 `annual_master`와 `annual_master_source`는 금액을 복제하지 않고 승인된 불변 제출본을 연결한다. API의 AMAS-01~04와 프런트 연간 요청/마스터 화면에서 진행 상태·버전·조직별 출처·월별 금액을 확인한다. 승인과 발행은 같은 트랜잭션이며 다른 조직 동시 승인은 연간 계획 잠금으로 직렬화한다. 전체 최초 승인 전에는 WAITING_INITIAL, 최초 완성은 CREATED, 조직 참조 교체로 의미·금액이 달라지면 UPDATED, 같으면 UNCHANGED다.
+
+연간 마스터를 발행해도 연간 계획을 CONFIRMED로 만들지 않으며 Contingency도 설정하지 않는다. 확정 전 금액 변경 재제출은 필수 소명 작성·수용을 거쳐 승인한다. 연간 확정 이후에는 계획본 교체를 허용하지 않는다. local,demo는 17개 사업조직만 활성화하고 기존 D100/D200은 행·제출·원본 이력을 보존하면서 대상에서 제외한다.
+
+## 홈 전사 손익의 계획·실적 조회
+
+홈은 `ANNUAL_PLAN` 요청의 발행 현황을 확인하고 최신 마스터 ID의 상세를 조회한다. 상세의 `organizations`는 고정 source별 연간·12개월 집계이며 전사 합계와 같은 검증된 근거에서 한 번 계산한다. source별 HTTP 조회나 새 업무 테이블을 추가하지 않는다. 프런트는 연도·월/연간·조직 선택에 따라 반환된 합계를 표시한다. 실적 보기에서는 master-periods의 발행 상태와 고정 월간 master를 조회하고 그 source의 확정 계획과 ACTUAL을 비교한다. 미발행·조회 오류를 구분하고 실적 부재를 0이나 PLAN으로 대체하지 않는다.
+
+금액은 기존 원 단위 십진 문자열이고 이익률·전사 손익 기여도만 BigDecimal로 백분율 소수2자리 HALF_UP 처리한다. 해당 분모가0이면null이다. 차트에서만 표시 좌표를 계산하며 금액을 이진 부동소수점으로 합산하지 않는다. 실제 마스터 버전·발행시각·조직별 원본 참조를 통해 화면에서 근거를 추적할 수 있다.
+
+
+## 연간 확정·Gap 기준·월간 마스터 연결
+
+PLAN-02는 전 조직 최신 승인본, 상태 토큰, 명시적인 0 이상 원 단위 Contingency를 확인하고 조직별 확정 계획본·금액·확정자/시각·CONFIRMED와 연간 요청 CLOSED를 함께 저장한다. 확정값은 월간 비교의 불변 기준이며 연간 PLAN 마스터 발행만으로 자동 확정하지 않는다.
+
+Gap 기준은 ACTUAL·ESTIMATE별로 기획자가 명시적으로 설정한다. 새 기준 이력을 적용해도 제출 완료본의 고정 기준을 바꾸지 않는다. DRAFT는 비교본·기준이 바뀌면 STALE이 되어 재검증해야 한다. 비교 문맥은 submission_validation의 불변 결과 객체에 저장하고 이전 제출 ID는 submission.previous_submission_id에도 연결한다. 원천 구성 지문과 비교 문맥이 맞는 답변만 유지·이어받으며 최초 검증에서는 가짜 답변을 생성하지 않는다.
+
+V4 월간 마스터는 ACTUAL만 반영한다. 첫 발행은 대상 전 조직의 최신 완료본 승인 후, 이후 발행은 이전 source 전체 중 새 승인 조직만 교체한다. 이후 월 제출에서 과거 ACTUAL이 바뀌면 이미 발행된 과거 월도 새 버전으로 반영할 수 있으며 월별 원천 의미·금액 구성으로 변경을 판단한다. 승인·영향 월 발행·멱등 응답은 같은 트랜잭션이고 조회는 고정 source와 해당 월만 사용한다. 월간 detail은 같은 출처에서 totals·planTotals·comparisons·organizations를 반환하므로 조직별 HTTP 팬아웃이 필요 없다. 전사 Contingency는 별도로 표시하며 월별 차감·배분은 하지 않는다.

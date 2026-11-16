@@ -2,6 +2,7 @@
 
 합성 양식은 메모리에서만 전송한다. 사용자 원본·자격 증명·응답 본문은 출력하지 않는다.
 실행하면 개발 DB에 초안 두 개(정상/손상 예시)가 추가되며 기존 자료를 삭제하지 않는다.
+기본 F10 담당자와 2027 합성 요청만 사용하며 2026 사업 자료의 제출·승인·마스터는 변경하지 않는다.
 """
 
 import argparse
@@ -90,7 +91,7 @@ def expect(response: Response, status: int, label: str) -> None:
 
 
 def session(base: str, role: str) -> str:
-    """개발 전용 역할 선택 API에서 메모리 토큰을 받는다.
+    """개발 전용 역할 선택 API와 기본 F10·사업 조직 선택 범위를 확인한다.
 
     Args:
         base: 로컬 출처.
@@ -98,7 +99,7 @@ def session(base: str, role: str) -> str:
     Returns:
         화면과 동일한 개발 세션 토큰.
     Raises:
-        AssertionError: 세션 상태·역할이 예상과 다른 경우.
+        AssertionError: 세션 상태·역할 또는 기본 F10·17개 사업 조직 범위가 다른 경우.
         OSError: HTTP 연결 실패.
     Side Effects:
         세션 API 호출. 토큰을 저장하거나 출력하지 않는다.
@@ -110,6 +111,11 @@ def session(base: str, role: str) -> str:
     expect(response, 200, "session " + role)
     data = json.loads(response.body)
     assert data["actor"]["role"] == role
+    if role == "ORG_MANAGER":
+        assert data["actor"]["organization"]["code"] == "F10", "default business organization must be F10"
+        codes = {organization["code"] for organization in data["organizations"]}
+        assert len(data["organizations"]) == 17 and len(codes) == 17, "expected 17 business organizations"
+        assert "F10" in codes and not codes.intersection({"D100", "D200"}), "legacy demo organizations must not be selectable"
     return data["token"]
 
 
@@ -161,7 +167,7 @@ def await_parsing(base: str, token: str, submission_id: str) -> dict:
 
 
 def run(base: str) -> None:
-    """브라우저와 같은 출처로 정상·중복·권한·오류 흐름을 실제 검증한다.
+    """사업 조직 범위와 2027 합성 요청의 정상·중복·권한·오류 흐름을 검증한다.
 
     Args:
         base: localhost 또는 127.0.0.1의 프런트 출처.
@@ -172,6 +178,7 @@ def run(base: str) -> None:
         OSError: HTTP 연결 실패.
     Side Effects:
         개발 DB에 정상/손상 예시 초안을 추가하고 검증 결과만 콘솔로 출력한다.
+        2026 자료의 검증·최종 제출·승인·반려 API는 호출하지 않는다.
         Data 및 임시 XLSX 파일은 읽거나 쓰지 않는다.
     """
     planner = session(base, "PLANNER")
@@ -185,6 +192,12 @@ def run(base: str) -> None:
     requests = json.loads(requests_response.body)["items"]
     assert len(requests) == 1, "expected one 2027 demo annual request"
     request_id = requests[0]["id"]
+    request_response = call(base, "/api/v1/submission-requests/" + request_id, token=planner)
+    expect(request_response, 200, "business organization request scope")
+    request = json.loads(request_response.body)
+    target_codes = {target["organization"]["code"] for target in request["targets"]}
+    assert request["targetCount"] == 17 and len(target_codes) == 17, "expected 17 required business organizations"
+    assert organization_code in target_codes and not target_codes.intersection({"D100", "D200"}), "request scope must exclude legacy demo organizations"
     template = call(base, "/api/dev/template?requestId=" + request_id, token=manager)
     expect(template, 200, "generated XLSX template")
     assert template.body.startswith(b"PK"), "template is not OOXML ZIP"
