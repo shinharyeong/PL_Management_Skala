@@ -10,6 +10,7 @@
 - [논리 ERD 상세](development/erd.md) — 설계 v0.2의 컬럼·제약·상태 전이·검증 조건
 - [파서 결과와 DB 매핑](development/db-mapping.md) — 현재 파서 필드, 기술 마스터와 승인 마스터의 차이, 미구현 적재 어댑터
 - [아키텍처](architecture.png) — AWS EKS · S3 · RDS 기반 인프라 구성도
+- [월간 시트 관리 연결 과제](development/monthly-sheet-workflow-gap.md) — 월간 중심 업무·사용자 선택 소명·조직별 작업공간 요구, 현재 구현과 추가 개발·QA 조건 구분
 - [서비스 API 명세](development/api-contract.md) — 0.6-draft, 업무 계약 35개 중 최초 연간 제출·적재 조회 17개 경로
 - [백엔드·파서 연결](development/backend-integration.md) — 설정·실행·파싱·검증 범위
 - [백엔드 함수 명세](development/backend-function-reference.md) — demo·parsed-records를 포함한 소스·테스트 함수와 호출 관계
@@ -21,6 +22,9 @@
 
 ## 문서 적용 기준
 
+월간 시트 관리의 사용자 정정 요구와 기존 설계의 충돌은 [월간 연결 과제](development/monthly-sheet-workflow-gap.md#3-기존-설계-문서와-정합성을-맞출-항목)에 기록합니다. 해당 문서는 모든 금액 변경의 자동 필수 소명과 OP 전용 Gap 규칙을 제품 요구로 확정하지 않습니다. 관련 도메인·API·검증 규칙의 정합성 수정은 후속 설계·개발 과제이며, 문서 추가가 실행 코드의 정책 변경을 뜻하지 않습니다.
+
 업무 규칙·논리 스키마는 [논리 ERD 상세](development/erd.md)가 기준입니다. 현재 파서의 실제 필드·타입은 [parser 출력 계약](../parser/docs/development/output-contract.md)을 따릅니다. 설계 문서 갱신은 기존 파서의 출력 형식이나 서비스 구현 완료를 뜻하지 않습니다.
 
 입력 Excel, 원본 셀 값, 실행 결과·로그·캐시·비밀 설정은 문서 PR에 포함하지 않습니다. 수식 조사 근거는 원본 파일명·시트·셀 주소와 집계 규칙만 기록합니다.
+
