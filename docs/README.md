@@ -5,11 +5,10 @@
 ## 문서 목록
 
 - [도메인 규칙](domain-rules.md) — 전체 제출·보고 항목 Gap·명시 소명 요청·승인 마스터 업무 규칙
-- [업무 흐름도](flow.md) — 연간 계획·월 실적·소명 검토·최초 및 후속 마스터 흐름
-- [ERD 도식](erd.md) — 19개 테이블·154개 필드·33개 핵심 관계의 직선 SVG
 - [논리 ERD 상세](development/erd.md) — 현재 논리 설계와 V1~V8 물리 구현의 컬럼·제약·상태 전이·검증 조건
 - [파서 결과와 DB 매핑](development/db-mapping.md) — 현재 파서 필드, 기술 마스터와 승인 마스터의 차이, 서비스 적재·비교 연결
-- [아키텍처](architecture.png) — AWS EKS · S3 · RDS 기반 인프라 구성도
+- [인프라 구성](infrastructure.md) — SKALA 플랫폼 EKS 공유 클러스터 기준 요청 경로·워크로드·RabbitMQ·S3·RDS·배포
+- [인프라 구성도](architecture.png) — 위 문서의 구성도
 - [월간 시트 관리 연결 과제](development/monthly-sheet-workflow-gap.md) — 작성 당시의 월간 업무·선택 소명·조직별 작업공간 요구와 설계 차이 기록. 최신 구현은 API 명세 기준
 - [서비스 API 명세](development/api-contract.md) — 0.11-draft, V1~V8 기반 서비스 56개 메서드·경로와 PRD 검토·첨부·비교·양식·인앱 알림 계약
 - [백엔드·파서 연결](development/backend-integration.md) — 설정·실행·파싱·검증 범위
