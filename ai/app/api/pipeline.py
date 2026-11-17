@@ -20,6 +20,28 @@ async def run_pipeline(files: list[UploadFile] = File(..., description="엑셀(.
     return await run_in_threadpool(pipeline_run.run, blobs, ai=ai, keep_files=keep_files)
 
 
+@router.post("/start")
+async def start_pipeline(files: list[UploadFile] = File(..., description="엑셀(.xlsx)·JSON(.json) 또는 이를 담은 .zip. 표준 이름·폴더가 아니어도 일반 모드로 읽음"),
+                         ai: bool = Form(False), keep_files: bool | None = Form(None)):
+    """업로드 직후 run_id 를 돌려주고 백그라운드에서 실행한다. 진행은 GET /v1/pipeline/runs/{run_id}/status."""
+    blobs = [(f.filename or "", await f.read()) for f in files]
+    return await run_in_threadpool(pipeline_run.start, blobs, ai=ai, keep_files=keep_files)
+
+
+@router.get("/runs")
+def list_runs(limit: int = 30):
+    """실행 목록(최근 순). 보고서·챗봇의 실행 선택에 쓴다."""
+    return {"runs": pipeline_run.list_runs(limit=min(max(limit, 1), 100))}
+
+
+@router.get("/runs/{run_id}/status")
+def get_status(run_id: str):
+    r = pipeline_run.read_status(run_id)
+    if r is None:
+        raise HTTPException(status_code=404, detail="해당 실행이 없습니다.")
+    return r
+
+
 @router.get("/runs/{run_id}")
 def get_run(run_id: str):
     r = pipeline_run.load_run(run_id)

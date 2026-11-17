@@ -53,6 +53,7 @@ class Settings:
     openai_api_key: str | None = field(default=None, repr=False)   # 값은 repr·로그에 나오지 않음
     key_source: str = "none"
     openai_model: str = "gpt-4o-mini"
+    vlm_model: str = ""                          # 그림 읽기(VLM) 전용 모델. 비우면 openai_model
     ai_temperature: float = 0.2
     ai_max_output_tokens: int = 500
     ai_timeout_seconds: float = 30.0
@@ -82,6 +83,10 @@ class Settings:
     chat_memory: bool = True                    # 대화 기억(서버 메모리에만, 최근 6턴·2시간). off 면 이전 대화를 전혀 쓰지 않음
     chat_test_log: bool = False                 # 질문마다 비용 측정 한 줄을 AI_CACHE_DIR/chat/test_log.jsonl 에 남김(질문 원문·키는 남기지 않음)
     upload_keep_files: bool = True              # 실행 후 업로드 파일 보존(False 면 삭제)
+    # AI 보고서 틀(개발 전용 API). 켜야만 /v1/templates 가 열린다
+    template_dev: bool = False
+    template_dir: Path | None = None            # 틀·분류표 JSON 저장 폴더(비우면 AI_CACHE_DIR/templates)
+    pdf_dev: bool = False                       # PDF 구조 추출 데모 엔드포인트(/v1/dev/pdf-structure). 켜야만 열린다
 
     @property
     def key_present(self) -> bool:
@@ -131,6 +136,7 @@ def get_settings() -> Settings:
     s = Settings(
         openai_api_key=key, key_source=key_src if key else "none",
         openai_model=_read("OPENAI_MODEL", "gpt-4o-mini")[0],
+        vlm_model=_read("AI_VLM_MODEL", "")[0],
         ai_temperature=float(_read("AI_TEMPERATURE", "0.2")[0]),
         ai_max_output_tokens=int(_read("AI_MAX_OUTPUT_TOKENS", "500")[0]),
         ai_timeout_seconds=float(_read("AI_TIMEOUT_SECONDS", "30")[0]),
@@ -150,6 +156,9 @@ def get_settings() -> Settings:
         chat_memory=str(_read("CHAT_MEMORY", "true")[0]).strip().lower() not in ("0", "false", "no", "off"),
         chat_test_log=str(_read("CHAT_TEST_LOG", "0")[0]).strip().lower() in ("1", "true", "yes", "on"),
         upload_keep_files=str(_read("AI_UPLOAD_KEEP", "true")[0]).strip().lower() not in ("0", "false", "no", "off"),
+        template_dev=str(_read("AI_TEMPLATE_DEV", "0")[0]).strip().lower() in ("1", "true", "yes", "on"),
+        template_dir=_path(_read("AI_TEMPLATE_DIR")[0]),
+        pdf_dev=str(_read("AI_PDF_DEV", "0")[0]).strip().lower() in ("1", "true", "yes", "on"),
     )
     return s
 

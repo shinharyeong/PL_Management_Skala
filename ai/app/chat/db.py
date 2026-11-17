@@ -65,3 +65,14 @@ def previous_version(con: sqlite3.Connection, version: str) -> str | None:
         return None
     earlier = [v for v in vs if (v["year"], v["month"]) < (cur["year"], cur["month"])]
     return earlier[-1]["version"] if earlier else None
+
+
+def clear_all(settings: Settings | None = None) -> None:
+    """조회 DB 를 비운다. 챗봇은 마지막에 적재·선택한 실행의 데이터만 본다(다른 실행의 조직·버전이 섞이지 않게)."""
+    con = open_writer(settings)
+    try:
+        with con:
+            for t in ("fact", "gap", "explanation", "dim_version", "dim_org"):
+                con.execute(f"DELETE FROM {t}")
+    finally:
+        con.close()

@@ -69,6 +69,13 @@ def load_run(run_id: str | None = None, settings: Settings | None = None) -> dic
         raise FileNotFoundError("적재할 업로드 실행 결과가 없습니다(.cache/runs/<id>/result.json). 먼저 flow.html 에서 업로드 실행을 하세요.")
     run_dir = s.ai_cache_dir / "runs" / run_id
     result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    if result.get("mode") == "generic":              # 일반 모드 실행: 보관된 업로드 원본을 다시 읽어 적재한다
+        from ..generic import build as generic_build
+        root = s.ai_cache_dir / "uploads" / run_id / "data" / "01_excel"
+        if not root.exists():
+            raise FileNotFoundError("업로드 원본이 보관되지 않아 이 실행을 챗봇 DB 에 다시 적재할 수 없습니다(AI_UPLOAD_KEEP=false 로 지워졌을 수 있습니다).")
+        out = generic_build.reload(root, s)
+        return {"run_id": run_id, "mode": "generic", "versions": out["versions"], "seconds": round((datetime.now() - t0).total_seconds(), 2)}
     mf = json.loads((run_dir / "output" / "master_final.json").read_text(encoding="utf-8"))
     mp = json.loads((run_dir / "output" / "master_provisional.json").read_text(encoding="utf-8"))
     st = result["stages"]
@@ -94,6 +101,7 @@ def load_run(run_id: str | None = None, settings: Settings | None = None) -> dic
     if not versions:
         raise ValueError("master 결과가 없어 적재할 수 없습니다(마스터 단계가 실패했을 수 있습니다).")
 
+    db.clear_all(s)
     con = db.open_writer(s)
     summary = {"run_id": run_id, "versions": []}
     try:

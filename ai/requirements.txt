@@ -5,3 +5,4 @@ python-dotenv
 pytest
 httpx  # 테스트(FastAPI TestClient)에 필요
 python-multipart  # 파일 업로드(multipart)
+pdfplumber  # PDF 구조 추출 데모(글자·위치)
