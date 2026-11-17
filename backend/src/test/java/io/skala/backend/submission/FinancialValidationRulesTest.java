@@ -80,10 +80,106 @@ class FinancialValidationRulesTest {
             ArrayNode values = (ArrayNode) data.path("lines").get(0).path("values");
             if (removeSlot) values.remove(11);
             else ((ObjectNode) values.get(11)).putNull("amount");
+            JsonNode before = data.deepCopy();
             JsonNode result = evaluate(data);
             assertThat(result.path("diagnostics").findValuesAsText("code")).contains("PLAN_AMOUNT_UNRESOLVED");
+            JsonNode problem = result.path("diagnostics").get(0);
+            assertThat(problem.path("source").path("sheet").asText()).isEqualTo("매출 상세");
+            assertThat(problem.path("source").path("cell").isNull()).isEqualTo(removeSlot);
+            if (!removeSlot) assertThat(problem.path("source").path("cell").asText()).isEqualTo("Q6");
+            assertThat(problem.path("month").asInt()).isEqualTo(12);
+            assertThat(problem.path("message").asText()).contains("전체 파일을 다시 업로드");
             assertThat(result.path("lines").size()).isEqualTo(1);
             assertUnavailable(result);
+            assertThat(data).isEqualTo(before);
+        }
+    }
+
+    /** 업무키 오류는 코드표가 아닌 관측 셀을 사용하고 관련 fieldSources로만 보완한다.
+     * Args: 없음. Returns: 없음. Raises: AssertionError 잘못된 위치·사유·금액 보정.
+     * Side Effects: 합성 JSON 메모리만 사용하며 원본·파일·DB를 변경하지 않는다.
+     */
+    @Test
+    void businessKeyDiagnosticsUseObservedCellsAndRelatedFieldEvidence() {
+        ObjectNode data = fixture();
+        ObjectNode line = (ObjectNode) data.path("lines").get(1);
+        ObjectNode validation = line.putObject("businessValidation").put("status", "INVALID");
+        ArrayNode issues = validation.putArray("issues");
+        ArrayNode account = issues.addObject().put("field", "account_code")
+                .put("code", "BUSINESS_ACCOUNT_CODE_INVALID").putArray("provenance");
+        account.addObject().put("sheet", "예산코드").put("cell", "A7");
+        account.addObject().put("sheet", "비용 상세").put("cell", "I7");
+        issues.addObject().put("field", "detail_id").put("code", "BUSINESS_DETAIL_ID_MISSING")
+                .putArray("provenance").addObject().put("sheet", "비용 상세").put("cell", "O8");
+        ObjectNode fields = line.putObject("fieldSources");
+        fields.putArray("account").addObject().put("sheet", "비용 상세").put("cell", "I7");
+        fields.putArray("detailId").addObject().put("sheet", "비용 상세").put("cell", "O7");
+        JsonNode before = data.deepCopy();
+        JsonNode result = evaluate(data);
+        JsonNode first = result.path("diagnostics").get(0), second = result.path("diagnostics").get(1);
+        assertThat(first.path("code").asText()).isEqualTo("LINE_BUSINESS_KEY_INVALID");
+        assertThat(second.path("code").asText()).isEqualTo("LINE_BUSINESS_KEY_INVALID");
+        assertThat(first.path("source").path("cell").asText()).isEqualTo("I7");
+        assertThat(second.path("source").path("cell").asText()).isEqualTo("O7");
+        assertThat(first.path("source").path("sheet").asText()).isEqualTo("비용 상세");
+        assertThat(first.path("message").asText()).contains("예산코드", "전체 파일을 다시 업로드");
+        assertThat(second.path("message").asText()).contains("상세 식별자", "누락");
+        assertUnavailable(result);
+        assertThat(data).isEqualTo(before);
+    }
+
+    /** 같은 행의 무관한 금액·수식 셀이 이슈 출처 앞에 있어도 관련 필드만 표시한다.
+     * Args: 없음. Returns: 없음. Raises: AssertionError 무관한 셀 선택 또는 입력 변경.
+     * Side Effects: 합성 JSON만 구성·조회하며 파일·DB·원본을 변경하지 않는다.
+     */
+    @Test
+    void businessKeyProvenanceMustMatchItsFieldEvidence() {
+        ObjectNode data = fixture();
+        ObjectNode line = (ObjectNode) data.path("lines").get(1);
+        ArrayNode references = line.putObject("businessValidation").put("status", "INVALID")
+                .putArray("issues").addObject().put("field", "account_code")
+                .put("code", "BUSINESS_ACCOUNT_CODE_INVALID").putArray("provenance");
+        references.addObject().put("sheet", "비용 상세").put("cell", "F7");
+        references.addObject().put("sheet", "비용 상세").put("cell", "H7");
+        references.addObject().put("sheet", "비용 상세").put("cell", "C7");
+        ArrayNode fields = line.putObject("fieldSources").putArray("account");
+        fields.addObject().put("sheet", "비용 상세").put("cell", "A7");
+        fields.addObject().put("sheet", "비용 상세").put("cell", "C7");
+        JsonNode before = data.deepCopy();
+        JsonNode result = evaluate(data), problem = result.path("diagnostics").get(0);
+        assertThat(problem.path("code").asText()).isEqualTo("LINE_BUSINESS_KEY_INVALID");
+        assertThat(problem.path("source").path("sheet").asText()).isEqualTo("비용 상세");
+        assertThat(problem.path("source").path("cell").asText()).isEqualTo("C7");
+        assertUnavailable(result);
+        assertThat(data).isEqualTo(before);
+        references.remove(2);
+        assertThat(evaluate(data).path("diagnostics").get(0).path("source").path("cell").isNull()).isTrue();
+    }
+
+    /** 관측 위치가 없으면 코드표·다른 행·첫 금액 셀을 문제 위치로 사용하지 않는다.
+     * Args: 없음. Returns: 없음. Raises: AssertionError 모르는 위치를 표시하거나 오류를 허용한 경우.
+     * Side Effects: 합성 JSON 메모리만 사용한다.
+     */
+    @Test
+    void businessKeyWithoutObservedEvidenceLeavesCellUnknown() {
+        for (boolean hasIssue : List.of(false, true)) {
+            ObjectNode data = fixture();
+            ObjectNode line = (ObjectNode) data.path("lines").get(1);
+            ObjectNode validation = line.putObject("businessValidation").put("status", "INVALID");
+            if (hasIssue) {
+                ArrayNode references = validation.putArray("issues").addObject().put("field", "account_code")
+                        .put("code", "BUSINESS_ACCOUNT_CODE_INVALID").putArray("provenance");
+                references.addObject().put("sheet", "예산코드").put("cell", "I7");
+                references.addObject().put("sheet", "비용 상세").put("cell", "I8");
+            }
+            line.putObject("fieldSources").putArray("account").addObject().put("sheet", "예산코드").put("cell", "A7");
+            JsonNode before = data.deepCopy();
+            JsonNode result = evaluate(data), problem = result.path("diagnostics").get(0);
+            assertThat(problem.path("code").asText()).isEqualTo("LINE_BUSINESS_KEY_INVALID");
+            assertThat(problem.path("source").path("sheet").asText()).isEqualTo("비용 상세");
+            assertThat(problem.path("source").path("cell").isNull()).isTrue();
+            assertUnavailable(result);
+            assertThat(data).isEqualTo(before);
         }
     }
 
@@ -100,8 +196,11 @@ class FinancialValidationRulesTest {
         assertUnavailable(ownerResult);
         ObjectNode wrongLine = fixture();
         ((ObjectNode) wrongLine.path("lines").get(1).path("organization")).put("code", "D200");
+        ((ObjectNode) wrongLine.path("lines").get(1)).putObject("fieldSources").putArray("organization")
+                .addObject().put("sheet", "비용 상세").put("cell", "D7");
         JsonNode lineResult = evaluate(wrongLine);
         assertThat(lineResult.path("diagnostics").findValuesAsText("code")).contains("LINE_ORGANIZATION_MISMATCH");
+        assertThat(lineResult.path("diagnostics").get(0).path("source").path("cell").asText()).isEqualTo("D7");
         assertThat(lineResult.path("lines").size()).isEqualTo(1);
         assertUnavailable(lineResult);
     }
@@ -257,8 +356,12 @@ class FinancialValidationRulesTest {
         ObjectNode duplicateId = fixture();
         ObjectNode copied = duplicateId.path("lines").get(0).deepCopy();
         ((ObjectNode) copied.path("source")).put("row", 8);
+        copied.putObject("fieldSources").putArray("detailId").addObject().put("sheet", "매출 상세").put("cell", "E8");
         ((ArrayNode) duplicateId.path("lines")).add(copied);
-        assertThat(evaluate(duplicateId).path("diagnostics").findValuesAsText("code")).contains("DUPLICATE_DETAIL_ID");
+        JsonNode duplicateResult = evaluate(duplicateId);
+        assertThat(duplicateResult.path("diagnostics").findValuesAsText("code")).contains("DUPLICATE_DETAIL_ID");
+        assertThat(duplicateResult.path("diagnostics").get(0).path("source").path("cell").asText()).isEqualTo("E8");
+        assertUnavailable(duplicateResult);
         ObjectNode duplicateRow = fixture();
         ObjectNode sameRow = duplicateRow.path("lines").get(0).deepCopy();
         sameRow.put("detailId", "another-id");
@@ -287,7 +390,11 @@ class FinancialValidationRulesTest {
         assertThat(evaluate(wrongHash).path("diagnostics").findValuesAsText("code")).contains("SOURCE_HASH_MISMATCH");
         ObjectNode unresolved = fixture();
         ((ObjectNode) unresolved.path("lines").get(0)).put("reportMappingStatus", "UNRESOLVED");
-        assertThat(evaluate(unresolved).path("diagnostics").findValuesAsText("code")).contains("LINE_REPORT_MAPPING_UNRESOLVED");
+        ((ObjectNode) unresolved.path("lines").get(0)).putObject("fieldSources").putArray("managementCategory")
+                .addObject().put("sheet", "매출 상세").put("cell", "B6");
+        JsonNode unresolvedResult = evaluate(unresolved);
+        assertThat(unresolvedResult.path("diagnostics").findValuesAsText("code")).contains("LINE_REPORT_MAPPING_UNRESOLVED");
+        assertThat(unresolvedResult.path("diagnostics").get(0).path("source").path("cell").asText()).isEqualTo("B6");
     }
 
     /** 행 이동·수정차수만 바뀌면 지문을 유지하고 실제 금액 변화는 구별한다.

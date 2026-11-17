@@ -12,6 +12,7 @@ export const useSession = defineStore('session', function sessionStore() {
   const organizations = ref([])
   const entering = ref(false)
   const entryError = ref('')
+  const unreadCount = ref(0)
   let lifetime = new AbortController()
 
   /** 진행 중인 요청을 취소하고 역할을 초기화한다.
@@ -25,6 +26,7 @@ export const useSession = defineStore('session', function sessionStore() {
     organizations.value = []
     entering.value = false
     entryError.value = ''
+    unreadCount.value = 0
   }
 
   /** 인증 헤더와 취소 신호를 적용하고 안전한 API 오류를 변환한다.
@@ -85,5 +87,24 @@ export const useSession = defineStore('session', function sessionStore() {
     }
   }
 
-  return { actor, token, organizations, entering, entryError, clear, request, enter }
+  /** 검증된 코드 로그인 결과를 메모리에 반영한다.
+   * Args: result 서버 세션. Returns: 없음. Raises: 없음. Side Effects: 이전 요청 취소·인증 교체.
+   */
+  function accept(result) { clear(); token.value = result.token; actor.value = result.actor; organizations.value = result.organizations || [] }
+
+  /** 실제 알림 수를 읽어 공통 메뉴에 반영한다.
+   * Args: 없음. Returns: Promise<void>. Raises: 없음(알림 화면에서 오류 확인). Side Effects: GET·배지 갱신.
+   */
+  async function refreshUnread() {
+    if (actor.value?.role !== 'PLANNER') return
+    try { const value = await request('/api/v1/notifications?limit=1'); unreadCount.value = value.summary.unreadCount }
+    catch { return }
+  }
+
+  /** 서버 세션을 폐기하고 메모리 인증을 지운다.
+   * Args: 없음. Returns: Promise<void>. Raises: API 오류. Side Effects: 세션 삭제·진행 요청 취소.
+   */
+  async function logout() { await request('/api/v1/auth/session', { method: 'DELETE' }); clear() }
+
+  return { actor, token, organizations, entering, entryError, unreadCount, clear, request, enter, accept, refreshUnread, logout }
 })

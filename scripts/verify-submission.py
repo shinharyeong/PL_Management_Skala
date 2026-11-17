@@ -68,7 +68,7 @@ def page_items(http: ModuleType, check, base: str, token: str, endpoint: str) ->
 
 
 def run(base: str, source: Path, submit: bool, codes: set[str]) -> None:
-    """동일 원본의 최신 초안을 검증하고 기획자 조회·독립 금액 대조를 수행한다.
+    """호환 브리지 1.3·1.4의 동일 원본 최신 초안을 기획자 조회·독립 금액과 대조한다.
     Args: base 루프백, source 원본 폴더, submit 최종 제출 여부, codes 선택 조직(비면17개).
     Returns: 없음. Raises: 검증/HTTP/원본 오류.
     Side Effects: 로컬 DB 검증·선택적 PENDING 제출·콘솔 요약; 원본·과거 제출·파일은 변경하지 않는다.
@@ -97,7 +97,7 @@ def run(base: str, source: Path, submit: bool, codes: set[str]) -> None:
         original = http.call(base, endpoint + "/file", token=token)
         assert original.status == 200 and hashlib.sha256(original.body).hexdigest() == digest
         detail = check(http.call(base, endpoint, token=token), 200)
-        assert detail["parsing"]["parserVersion"] == "stdlib-bridge/1.3"
+        assert detail["parsing"]["parserVersion"] in {"stdlib-bridge/1.3", "stdlib-bridge/1.4"}
         if detail["status"] == "DRAFT":
             response = http.call(base, endpoint + "/validation", method="POST", token=token,
                 key="verify-validate-" + uuid.uuid4().hex, content_type="application/json",

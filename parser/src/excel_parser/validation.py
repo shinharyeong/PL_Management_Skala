@@ -142,7 +142,7 @@ def _scan_sheet(archive: ZipFile, part: str, strings: list[str]) -> dict[str, An
         part: 검사할 시트 XML 부분 경로.
         strings: 공유 문자열 목록.
     Returns:
-        전체 XML 주소 집합, 값 셀, 행열 속성, 병합 범위와 메모 목록.
+        전체 XML 주소 집합, 값 셀, 행열 속성, 병합 범위와 일반·스레드 메모 목록.
     Raises:
         KeyError: 지정된 ZIP 부분이 없는 경우.
         ET.ParseError: 원본 XML이 손상된 경우.
@@ -203,7 +203,9 @@ def _scan_sheet(archive: ZipFile, part: str, strings: list[str]) -> dict[str, An
     if relationships in archive.namelist():
         rel_root = ET.fromstring(archive.read(relationships))
         for relation in rel_root:
-            if not relation.attrib.get("Type", "").endswith("/comments"):
+            relation_type = relation.attrib.get("Type", "").lower()
+            if (not relation_type.endswith(("/comments", "/threadedcomment"))
+                    or relation.attrib.get("TargetMode") == "External"):
                 continue
             target = relation.attrib["Target"]
             comment_part = (
@@ -212,8 +214,15 @@ def _scan_sheet(archive: ZipFile, part: str, strings: list[str]) -> dict[str, An
                 else posixpath.normpath(posixpath.join(folder, target))
             )
             comment_root = ET.fromstring(archive.read(comment_part))
-            for comment in comment_root.findall(f"{_NS}commentList/{_NS}comment"):
-                text = "".join(t.text or "" for t in comment.iter(f"{_NS}t"))
+            for comment in comment_root.iter():
+                if comment.tag.rsplit("}", 1)[-1] not in {"comment", "threadedComment"}:
+                    continue
+                text_node = comment.find("{*}text")
+                text = "" if text_node is None else (
+                    "".join(t.text or "" for t in text_node.iter()
+                            if t.tag.rsplit("}", 1)[-1] == "t")
+                    if len(text_node) else text_node.text or ""
+                )
                 result["comments"].setdefault(comment.attrib["ref"], []).append(text)
     return result
 

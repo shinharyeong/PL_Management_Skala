@@ -12,7 +12,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Service;
 
-/** 고정 비교본의 원천 다중집합과 OP를 비교하며 검증 중에만 검토 항목을 구성한다. */
+/** 고정 비교본의 보고 항목과 원천 다중집합을 비교하며 검증 중에만 검토 항목을 구성한다. */
 @Service
 public class ReviewComparisonService {
     private final JdbcClient jdbc;
@@ -32,7 +32,7 @@ public class ReviewComparisonService {
         if (monthly && previous.isEmpty() && number(row.get("month")) > 1) previous = rows("""
                 SELECT s.id FROM submission s JOIN submission_request r ON r.id=s.request_id
                 WHERE s.organization_id=? AND r.annual_plan_id=? AND r.type='MONTHLY_ACTUAL' AND r.month=?
-                  AND s.status<>'DRAFT' ORDER BY s.seq DESC LIMIT 1
+                  AND s.status='APPROVED' ORDER BY s.seq DESC LIMIT 1
                 """, row.get("organization_id"), row.get("annual_plan_id"), number(row.get("month")) - 1);
         var plan = monthly ? rows("""
                 SELECT t.confirmed_plan_submission_id AS id FROM request_target t JOIN submission_request r ON r.id=t.request_id
@@ -43,7 +43,7 @@ public class ReviewComparisonService {
                 "planSubmissionId", plan.isEmpty() ? null : plan.getFirst().get("id").toString(),
                 "actualThresholdId", monthly ? latestThresholdId("ACTUAL") : null,
                 "estimateThresholdId", monthly && number(row.get("month")) < 12 ? latestThresholdId("ESTIMATE") : null,
-                "reviewPolicyVersion", monthly ? "monthly-actual/1.0" : "annual-plan/1.0");
+                "reviewPolicyVersion", monthly ? "monthly-actual/2.0" : "annual-plan/2.0");
     }
 
     /** 초안의 저장된 비교 기준이 현재 직전본·확정계획·기준과 같은지 확인한다.
@@ -72,7 +72,7 @@ public class ReviewComparisonService {
         boolean monthly = "MONTHLY_ACTUAL".equals(row.get("type"));
         if (previousId != null && !completeCache.computeIfAbsent(previousId,this::complete)) diagnostics.add(diagnostic("BASELINE_MISSING", "직전 제출본의 완전한 검증 근거가 없습니다."));
         if (monthly && (planId == null || !completeCache.computeIfAbsent(planId,this::complete))) diagnostics.add(diagnostic("BASELINE_MISSING", "조직별 확정 계획본이 필요합니다."));
-        if (monthly && number(row.get("month")) > 1 && previousId == null) diagnostics.add(diagnostic("BASELINE_MISSING", "직전 월의 최종 제출본이 필요합니다."));
+        if (monthly && number(row.get("month")) > 1 && previousId == null) diagnostics.add(diagnostic("BASELINE_MISSING", "직전 월의 승인된 제출본이 필요합니다."));
         if (monthly && (context.get("actualThresholdId") == null || (number(row.get("month")) < 12 && context.get("estimateThresholdId") == null))) diagnostics.add(diagnostic("GAP_THRESHOLD_MISSING", "실적·추정의 유효 Gap 기준을 설정해 주세요."));
         var all = new LinkedHashMap<String,Cell>(previous); all.putAll(current);
         for (var entry : all.entrySet()) {
@@ -86,7 +86,7 @@ public class ReviewComparisonService {
             boolean hasScenarioBaseline = previous.values().stream().anyMatch(value -> value.year() == candidate.year() && value.month() == candidate.month() && value.scenario().equals(candidate.scenario()));
             boolean change = !"DERIVED".equals(candidate.kind()) && hasScenarioBaseline && (before == null || now == null || !now.fingerprint().equals(before.fingerprint()));
             var comparisons = new ArrayList<Map<String,Object>>();
-            if (monthly && now != null && "OP".equals(now.code()) && diagnostics.isEmpty()) comparisons.addAll(comparisons(row, now, context, null, diagnostics, cellCache, completeCache));
+            if (monthly && now != null && diagnostics.isEmpty()) comparisons.addAll(comparisons(row, now, context, null, diagnostics, cellCache, completeCache));
             boolean gap = comparisons.stream().anyMatch(value -> Boolean.TRUE.equals(value.get("exceeded")));
             Map<String,Object> inherited = now == null || previousId == null ? null : inherited(previousId, now);
             if (!change && !gap && inherited == null) continue;
@@ -95,8 +95,8 @@ public class ReviewComparisonService {
         return diagnostics;
     }
 
-    /** 고정 문맥의 월별 OP 비교를 재구성한다. 1월 첫 추정만 PLAN을 직전 기준으로 대체한다.
-     * Args: row 제출 문맥, current OP 칸, context 고정 비교본, override 미리보기 기준 또는 null, diagnostics 누락 진단 수집.
+    /** 정책별 고정 비교를 재구성한다. 새 정책은 실적/계획·추정/추정·추정/계획을 구분하고 과거 정책은 유지한다.
+     * Args: row 제출 문맥, current 보고 항목 칸, context 고정 비교본, override 미리보기 기준 또는 null, diagnostics 누락 진단 수집.
      * Returns: 확인된 PLAN/PREVIOUS 비교. Raises: DB 오류. Side Effects: DB 읽기와 메모리 진단 추가만 수행한다.
      */
     public List<Map<String,Object>> comparisons(Map<String,Object> row, Cell current, Map<String,Object> context,
@@ -105,7 +105,7 @@ public class ReviewComparisonService {
     }
 
     /** 한 검증에서 같은 기준본을 반복 평가하지 않도록 읽기 캐시를 전달한다.
-     * Args: row 제출, current OP, context 문맥, override 후보, diagnostics 진단, cellCache 원천 캐시, completeCache 완전성 캐시.
+     * Args: row 제출, current 보고 항목, context 문맥, override 후보, diagnostics 진단, cellCache 원천 캐시, completeCache 완전성 캐시.
      * Returns: 비교 목록. Raises: DB 오류. Side Effects: 요청 범위 메모리 캐시와 진단만 변경한다.
      */
     public List<Map<String,Object>> comparisons(Map<String,Object> row, Cell current, Map<String,Object> context,
@@ -113,40 +113,62 @@ public class ReviewComparisonService {
         var result = new ArrayList<Map<String,Object>>();
         Long previousId = nullableId(context.get("previousSubmissionId")), planId = nullableId(context.get("planSubmissionId"));
         int closing = (int) number(row.get("month"));
-        if ("ACTUAL".equals(current.scenario()) && current.month() == closing) addComparison(result, "PLAN", planId, "PLAN", current, context, override, diagnostics, cellCache, completeCache);
-        if ("ESTIMATE".equals(current.scenario())) addComparison(result, "PREVIOUS", previousId == null && closing == 1 ? planId : previousId,
-                previousId == null && closing == 1 ? "PLAN" : "ESTIMATE", current, context, override, diagnostics, cellCache, completeCache);
-        else if (current.month() < closing || (previousId != null && submission(previousId).get("request_id").equals(row.get("request_id"))))
-            addComparison(result, "PREVIOUS", previousId, "ACTUAL", current, context, override, diagnostics, cellCache, completeCache);
+        boolean currentPolicy = "monthly-actual/2.0".equals(context.get("reviewPolicyVersion"));
+        if (currentPolicy) {
+            addComparison(result, "PLAN", planId, "PLAN", current, context, override, diagnostics, cellCache, completeCache);
+            if ("ESTIMATE".equals(current.scenario()) && previousId != null)
+                addComparison(result, "PREVIOUS", previousId, "ESTIMATE", current, context, override, diagnostics, cellCache, completeCache);
+        } else {
+            if ("ACTUAL".equals(current.scenario()) && current.month() == closing) addComparison(result, "PLAN", planId, "PLAN", current, context, override, diagnostics, cellCache, completeCache);
+            if ("ESTIMATE".equals(current.scenario())) addComparison(result, "PREVIOUS", previousId == null && closing == 1 ? planId : previousId,
+                    previousId == null && closing == 1 ? "PLAN" : "ESTIMATE", current, context, override, diagnostics, cellCache, completeCache);
+            else if (current.month() < closing || (previousId != null && submission(previousId).get("request_id").equals(row.get("request_id"))))
+                addComparison(result, "PREVIOUS", previousId, "ACTUAL", current, context, override, diagnostics, cellCache, completeCache);
+        }
         return result;
     }
 
-    /** OP 비교 기준과 임계값을 읽고 반올림하지 않은 교차곱으로 초과 여부를 계산한다.
-     * Args: result 비교 목록, basis 비교종류, baselineId 기준본, scenario 기준시나리오, current 현재OP, context 고정문맥, override 후보기준, diagnostics 진단.
+    /** 보고 항목 비교 기준과 임계값을 읽고 반올림하지 않은 교차곱으로 초과 여부를 계산한다.
+     * Args: result 비교 목록, basis 비교종류, baselineId 기준본, scenario 기준시나리오, current 현재 항목, context 고정문맥, override 후보기준, diagnostics 진단.
      * Returns: 없음. Raises: DB 오류. Side Effects: 읽기 및 메모리 목록 추가.
      */
     private void addComparison(List<Map<String,Object>> result, String basis, Long baselineId, String scenario, Cell current,
             Map<String,Object> context, Map<String,Object> override, List<Map<String,Object>> diagnostics, Map<Long,Map<String,Cell>> cellCache, Map<Long,Boolean> completeCache) {
         Cell baseline = baselineId == null ? null : cellCache.computeIfAbsent(baselineId,this::cells).get(key(current.reportId(), current.year(), current.month(), scenario));
-        if (baseline == null || !completeCache.computeIfAbsent(baselineId,this::complete)) { diagnostics.add(diagnostic("BASELINE_MISSING", "필수 OP 비교값을 확인할 수 없습니다.")); return; }
+        if (baseline == null || !completeCache.computeIfAbsent(baselineId,this::complete)) { diagnostics.add(diagnostic("BASELINE_MISSING", "필수 보고 항목 비교값을 확인할 수 없습니다.")); return; }
         String thresholdKey = "ACTUAL".equals(current.scenario()) ? "actualThresholdId" : "estimateThresholdId";
         var threshold = override != null ? override : context.get(thresholdKey) == null ? null : one("SELECT * FROM gap_threshold WHERE id=?", nullableId(context.get(thresholdKey)));
         if (threshold == null) { diagnostics.add(diagnostic("GAP_THRESHOLD_MISSING", "해당 시나리오의 Gap 기준이 없습니다.")); return; }
         BigDecimal delta = current.amount().subtract(baseline.amount());
-        boolean exceeded = exceeds(baseline.amount(), current.amount(), decimal(threshold.get("percent")), decimal(threshold.get("amount")));
+        boolean enabledPolicy = "monthly-actual/2.0".equals(context.get("reviewPolicyVersion")) || override != null;
+        boolean exceeded = enabledPolicy
+                ? exceeds(baseline.amount(), current.amount(), decimal(threshold.get("percent")), decimal(threshold.get("amount")), !Boolean.FALSE.equals(threshold.get("percent_enabled")), !Boolean.FALSE.equals(threshold.get("amount_enabled")))
+                : exceeds(baseline.amount(), current.amount(), decimal(threshold.get("percent")), decimal(threshold.get("amount")));
         result.add(object("basis", basis, "baselineSubmissionId", baselineId.toString(), "baselineScenario", scenario,
                 "baselineAmount", baseline.amount().toPlainString(), "currentAmount", current.amount().toPlainString(),
                 "gapAmount", delta.toPlainString(), "gapRate", baseline.amount().signum() == 0 ? null : delta.multiply(new BigDecimal("100")).divide(baseline.amount().abs(), 8, RoundingMode.HALF_UP).toPlainString(),
                 "thresholdId", threshold.get("id") == null ? null : threshold.get("id").toString(), "exceeded", exceeded));
     }
 
-    /** 비율·금액을 모두 엄격 초과하는지 판정하며 기준 0 특례를 적용한다.
+    /** 과거 정책의 비율·금액 엄격 초과와 기준 0 특례를 보존한다.
      * Args: baseline 기준, current 현재, percent 비율기준, amount 금액기준. Returns: 초과 여부.
      * Raises: 없음. Side Effects: 정확한 십진 계산만 수행한다.
      */
     public boolean exceeds(BigDecimal baseline, BigDecimal current, BigDecimal percent, BigDecimal amount) {
         BigDecimal delta = current.subtract(baseline).abs();
         return baseline.signum() == 0 ? current.signum() != 0 : delta.compareTo(amount) > 0 && delta.multiply(new BigDecimal("100")).compareTo(baseline.abs().multiply(percent)) > 0;
+    }
+
+    /** 새 PRD에서 활성화한 조건만 평가하고 둘 다 켰으면 정확한 AND로 판정한다.
+     * Args: baseline 기준, current 현재, percent 비율, amount 최소금액, percentEnabled/amountEnabled 적용 여부.
+     * Returns: 변동이 있고 켜진 모든 조건을 초과하는지. Raises: IllegalArgumentException 두 조건 모두 꺼짐.
+     * Side Effects: 메모리 계산만 수행한다. 기준 0의 비율은 미산정이지만 변동 여부를 확인하고 켜진 금액 조건도 반드시 적용한다.
+     */
+    public boolean exceeds(BigDecimal baseline,BigDecimal current,BigDecimal percent,BigDecimal amount,boolean percentEnabled,boolean amountEnabled) {
+        if(!percentEnabled&&!amountEnabled) throw new IllegalArgumentException("Gap 조건이 하나 이상 필요합니다.");
+        BigDecimal delta=current.subtract(baseline).abs();
+        boolean percentPassed=!percentEnabled||(baseline.signum()==0?delta.signum()>0:delta.multiply(new BigDecimal("100")).compareTo(baseline.abs().multiply(percent))>0);
+        return delta.signum()>0&&percentPassed&&(!amountEnabled||delta.compareTo(amount)>0);
     }
 
     /** 원천행을 의미 다중집합으로 묶고 OP의 매출·비용 근거를 함께 보존한다.
@@ -226,6 +248,8 @@ public class ReviewComparisonService {
             jdbc.sql("UPDATE review_item SET amount_present=?,current_amount=?,change_detected=?,gap_exceeded=?,source_fingerprint=?,context_fingerprint=?,current_round=?,active=TRUE WHERE id=?")
                     .params(present,present ? cell.amount() : null,change,gap,cell.fingerprint(),fingerprint,round,reviewId).update();
         }
+        jdbc.sql("UPDATE review_item SET review_policy_version=? WHERE id=?").params(context.get("reviewPolicyVersion"),reviewId).update();
+        if (createRound) jdbc.sql("UPDATE review_item SET workflow_state='NEEDS_REVIEW',workflow_note=NULL WHERE id=?").param(reviewId).update();
         jdbc.sql("DELETE FROM gap_comparison WHERE review_item_id=?").param(reviewId).update();
         for (var comparison : comparisons) jdbc.sql("""
                 INSERT INTO gap_comparison(review_item_id,basis,baseline_submission_id,baseline_scenario,baseline_amount,current_amount,gap_amount,gap_rate,threshold_id,exceeded)

@@ -1,37 +1,64 @@
 <script setup>
 import { RouterView, useRoute, useRouter } from 'vue-router'
+import { computed, provide, ref, watch } from 'vue'
 import { useSession } from './stores/session'
 import HomeView from './views/HomeView.vue'
+import { routeAllowed } from './lib/role-route'
 
 const session = useSession()
 const route = useRoute()
 const router = useRouter()
+const logoutDialog = ref(null)
+const logoutError = ref('')
+const loggingOut = ref(false)
+const organizationSubmissionContext = ref(null)
+provide('organizationSubmissionContext', organizationSubmissionContext)
 const plannerNavigation = [
-  { path: '/planning', label: '홈 · 전사 손익', name: 'planning' },
+  { path: '/planning/notifications', label: '알림 모아보기', name: 'planning-notifications' },
+  { path: '/planning', label: '전사 손익 현황', name: 'planning' },
   { path: '/planning/gap', label: '월간 시트 관리', name: 'planning-gap' },
-  { path: '/planning/requests', label: '요청 · 검토', name: 'planning-requests' },
-  { path: '/planning/annual-plan', label: '연간 계획', name: 'planning-annual' },
+  { path: '/planning/annual-plan', label: '연간 계획 관리', name: 'planning-annual' },
   { path: '/planning/organizations', label: '조직별 현황', name: 'planning-organizations' },
-  { path: '/planning/reports', label: '보고서', name: 'planning-reports' },
 ]
 
 /** 역할 변경 시 요청을 중단하고 입장 화면으로 돌아간다.
  * Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 인증 초기화, 라우트 이동.
  */
-function changeRole() {
-  session.clear()
-  router.replace('/')
+async function changeRole() {
+  loggingOut.value = true; logoutError.value = ''
+  try { await session.logout(); await router.replace('/') }
+  catch (cause) { logoutError.value = cause.message }
+  finally { loggingOut.value = false }
 }
+
+/** 로그아웃 확인창을 연다. Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 모달 표시. */
+function openLogout() { logoutError.value = ''; logoutDialog.value?.showModal() }
+/** 배경 클릭을 취소로 처리한다. Args: event 포인터 이벤트. Returns: 없음. Raises: 없음. Side Effects: 모달 닫기. */
+function cancelBackdrop(event) { if (event.target === logoutDialog.value && !loggingOut.value) logoutDialog.value.close() }
+/** 화면 이동 후 공통 알림 배지를 갱신한다. Args: 없음. Returns: Promise<void>. Raises: 없음. Side Effects: GET. */
+async function refreshNavigation() { await session.refreshUnread() }
+watch(() => [session.actor?.id, route.fullPath], refreshNavigation, { immediate: true })
+
+/** 초안·소명 보완의 실제 서버 상태로 조직 요청함 메뉴를 활성화한다.
+ * Args: 없음. Returns: 요청함 활성 여부. Raises: 없음. Side Effects: 없음; 상태 조회 전에는 명시적 업로드 진입 문맥만 사용한다.
+ */
+const organizationInboxActive = computed(function isOrganizationInboxActive() {
+  if (['requests', 'upload'].includes(route.name)) return true
+  if (route.name !== 'submission') return false
+  const context = organizationSubmissionContext.value
+  if (context?.id === String(route.params.id) && context?.actorId === session.actor?.id) return context.status === 'DRAFT' || (context.status === 'PENDING' && context.unansweredCount > 0)
+  return route.query.validate === '1' || route.query.from === 'requests'
+})
 
 /** 공용 이력·상세에서도 들어온 기획 메뉴를 활성 상태로 유지한다.
  * Args: name 기획 메뉴의 라우트 이름. Returns: 활성 여부. Raises: 없음. Side Effects: 없음.
  */
 function plannerMenuActive(name) {
   if (route.name === name) return true
-  if (route.name === 'planning-annual-master' || route.query.from === 'annual-master') return name === 'planning-requests'
+  if (['planning-annual-master', 'planning-requests'].includes(route.name) || ['annual-master','requests'].includes(route.query.from)) return name === 'planning-annual'
   if (['planning-monthly-master'].includes(route.name) || ['gap', 'monthly-master'].includes(route.query.from)) return name === 'planning-gap'
   if (!['history', 'submission'].includes(route.name)) return false
-  return name === (route.query.from === 'requests' ? 'planning-requests' : 'planning-organizations')
+  return name === (route.query.from === 'requests' ? 'planning-annual' : 'planning-organizations')
 }
 </script>
 
@@ -45,34 +72,31 @@ function plannerMenuActive(name) {
         <p class="nav-label">{{ session.actor.role === 'PLANNER' ? '경영기획팀' : '조직 담당자' }}</p>
         <nav v-if="session.actor.role === 'PLANNER'" aria-label="경영기획팀 주 메뉴">
           <RouterLink v-for="item in plannerNavigation" :key="item.name" :to="item.path" :class="['nav-item', { active: plannerMenuActive(item.name) }]">
-            <span class="nav-icon" aria-hidden="true"></span>{{ item.label }}
+            <span class="nav-icon" aria-hidden="true"></span><span>{{ item.label }}</span><span v-if="item.name === 'planning-notifications' && session.unreadCount" class="nav-count">{{ session.unreadCount }}</span>
           </RouterLink>
         </nav>
         <nav v-else aria-label="주 메뉴">
-          <RouterLink :to="session.actor.role === 'PLANNER' ? '/planning' : '/requests'" :class="['nav-item', { active: ['requests', 'upload', 'planning'].includes(route.name) }]">
-            <span class="nav-icon"><img :src="['requests', 'upload', 'planning'].includes(route.name) ? '/assets/inbox-active.svg' : '/assets/inbox.svg'" alt="" /></span>
+          <RouterLink to="/requests" :class="['nav-item', { active: organizationInboxActive }]">
+            <span class="nav-icon"><img :src="organizationInboxActive ? '/assets/inbox-active.svg' : '/assets/inbox.svg'" alt="" /></span>
             {{ session.actor.role === 'PLANNER' ? '요청 관리' : '요청함' }}
           </RouterLink>
-          <RouterLink to="/history" :class="['nav-item', { active: ['history', 'submission'].includes(route.name) }]">
-            <span class="nav-icon"><img :src="['history', 'submission'].includes(route.name) ? '/assets/history-active.svg' : '/assets/history.svg'" alt="" /></span>제출 이력 관리
+          <RouterLink to="/history" :class="['nav-item', { active: !organizationInboxActive && ['history', 'submission'].includes(route.name) }]">
+            <span class="nav-icon"><img :src="!organizationInboxActive && ['history', 'submission'].includes(route.name) ? '/assets/history-active.svg' : '/assets/history.svg'" alt="" /></span>제출 이력 관리
           </RouterLink>
         </nav>
       </div>
       <div>
-      <div v-if="session.actor.role === 'PLANNER'" class="planner-settings">
-        <p class="nav-label">설정</p>
-        <RouterLink to="/planning/gap" class="nav-item"><span class="nav-icon" aria-hidden="true"></span>Gap 기준 · 검토</RouterLink>
-        <button class="nav-item" disabled title="조직·권한 편집은 준비 중입니다"><span class="nav-icon" aria-hidden="true"></span>조직 · 권한 관리</button>
-      </div>
-      <div class="profile"><span class="avatar">{{ session.actor.role === 'PLANNER' ? '기획' : '재무' }}</span><div><strong>{{ session.actor.name }}</strong><small>{{ session.actor.organization?.name || '경영기획팀' }}</small></div></div>
+      <div class="profile"><span class="avatar" aria-hidden="true"></span><div><strong>{{ session.actor.name.replace(' (데모)', '') }}</strong><small>{{ session.actor.organization?.name || '경영기획팀' }}</small></div><button class="logout-button" @click="openLogout">로그아웃</button></div>
       </div>
     </aside>
     <div class="workspace">
-      <div class="demo-bar"><span><i></i>로컬 체험 · 예시 데이터</span><button class="text-button" @click="changeRole">역할 전환</button></div>
       <main id="main-content" class="main-content">
         <p v-if="!route.meta.plannerCanvas" class="breadcrumb">{{ session.actor.role === 'PLANNER' ? '경영기획팀' : '손익관리' }} <span>/</span> {{ route.meta.title || '요청함' }}</p>
-        <RouterView :key="`${session.actor.id}:${session.actor.organization?.id || 'planner'}:${route.fullPath}`" />
+        <RouterView v-if="routeAllowed(route, session.actor.role)" :key="`${session.actor.id}:${session.actor.organization?.id || 'planner'}:${route.fullPath}`" />
       </main>
     </div>
+    <dialog ref="logoutDialog" class="request-dialog logout-dialog" aria-labelledby="logout-title" @click="cancelBackdrop">
+      <h2 id="logout-title">로그아웃하시겠습니까?</h2><p>다시 이용하려면 로그인이 필요합니다.</p><p v-if="logoutError" class="alert error" role="alert">{{ logoutError }}</p><div class="button-row"><button class="button" :disabled="loggingOut" @click="logoutDialog.close()">취소</button><button class="button dark" :disabled="loggingOut" @click="changeRole">{{ loggingOut ? '로그아웃 중…' : '로그아웃' }}</button></div>
+    </dialog>
   </div>
 </template>

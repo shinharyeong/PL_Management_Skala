@@ -26,6 +26,7 @@ final class LocalBearerAuthenticationFilter extends OncePerRequestFilter {
     private final ActorResolver actors;
     private final SecurityProblemHandler problems;
     private final DemoAccounts demoAccounts;
+    private final EmailCodeSessions emailSessions;
     private final String plannerEmail;
     private final String organizationEmail;
     private final byte[] plannerDigest;
@@ -53,9 +54,19 @@ final class LocalBearerAuthenticationFilter extends OncePerRequestFilter {
      */
     LocalBearerAuthenticationFilter(Environment environment, ActorResolver actors,
             SecurityProblemHandler problems, DemoAccounts demoAccounts) {
+        this(environment, actors, problems, demoAccounts, null);
+    }
+
+    /** 기존 개발 토큰과 만료 가능한 이메일 세션을 연결한다.
+     * Args: environment 설정, actors 사용자 조회, problems 오류, demoAccounts 개발계정, emailSessions 로컬 코드 세션.
+     * Returns: 없음. Raises: 잘못된 개발토큰 설정. Side Effects: 설정·의존성 보관.
+     */
+    LocalBearerAuthenticationFilter(Environment environment, ActorResolver actors,
+            SecurityProblemHandler problems, DemoAccounts demoAccounts, EmailCodeSessions emailSessions) {
         this.actors = actors;
         this.problems = problems;
         this.demoAccounts = demoAccounts;
+        this.emailSessions = emailSessions;
         plannerEmail = environment.getProperty("app.local-auth.planner-email");
         organizationEmail = environment.getProperty("app.local-auth.organization-email");
         byte[] plannerToken = configuredDigest(environment.getProperty("app.local-auth.planner-token"));
@@ -94,7 +105,7 @@ final class LocalBearerAuthenticationFilter extends OncePerRequestFilter {
                 throw new BadCredentialsException("인증 정보를 확인할 수 없습니다.");
             }
             byte[] digest = digest(candidate);
-            String email = null;
+            String email = emailSessions == null ? null : emailSessions.emailFor(candidate);
             if (plannerDigest != null && MessageDigest.isEqual(plannerDigest, digest)) {
                 email = plannerEmail;
             }

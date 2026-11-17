@@ -28,8 +28,8 @@ public class PythonParserClient {
             @Value("${app.parser.python:python3}") String python,
             @Value("${app.parser.source-directory:../parser/src}") String sourceDirectory,
             @Value("${app.parser.timeout-seconds:90}") int timeoutSeconds,
-            @Value("${app.parser.max-output-bytes:67108864}") int maxOutputBytes) {
-        if (timeoutSeconds < 1 || timeoutSeconds > 600 || maxOutputBytes < 1024 || maxOutputBytes > 67108864) {
+            @Value("${app.parser.max-output-bytes:100663296}") int maxOutputBytes) {
+        if (timeoutSeconds < 1 || timeoutSeconds > 600 || maxOutputBytes < 1024 || maxOutputBytes > 100663296) {
             throw new IllegalArgumentException("파서 실행 한도 설정을 확인하세요.");
         }
         this.mapper = mapper;

@@ -198,19 +198,11 @@ public class SubmissionWorkflowService {
                 throw conflict("PLAN_SOURCE_MISSING", "해당 조직의 고정된 연간 계획본이 없습니다.");
             }
         }
-        if (count("SELECT COUNT(*) FROM submission WHERE organization_id=? AND status='PENDING'",
-                submission.get("organization_id")) > 0) {
-            throw conflict("PENDING_ALREADY_EXISTS", "이 조직에 검토 중인 제출본이 있습니다.");
+        if (count("SELECT COUNT(*) FROM submission WHERE organization_id=? AND request_id=? AND status='PENDING'",
+                submission.get("organization_id"), requestId) > 0) {
+            throw conflict("PENDING_ALREADY_EXISTS", "이 요청에 검토 중인 조직 제출본이 있습니다.");
         }
-        if (count("""
-                SELECT COUNT(*) FROM submission rejected
-                WHERE rejected.organization_id=? AND rejected.request_id<>? AND rejected.status='REJECTED'
-                  AND rejected.seq=(SELECT MAX(latest.seq) FROM submission latest
-                    WHERE latest.organization_id=rejected.organization_id
-                      AND latest.request_id=rejected.request_id AND latest.status<>'DRAFT')
-                """, submission.get("organization_id"), requestId) > 0) {
-            throw conflict("RESUBMISSION_SCOPE_CONFLICT", "재제출 요청을 받은 기간부터 제출해 주세요.");
-        }
+
     }
 
     /** 같은 연도의 보고·계정 항목 최초 생성과 연간 상태 검사를 직렬화한다.

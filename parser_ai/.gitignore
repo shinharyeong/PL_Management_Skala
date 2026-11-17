@@ -1,9 +1,0 @@
-.env
-.env.*
-!.env.example
-output/
-cache/
-Data/
-__pycache__/
-*.egg-info/
-.venv/

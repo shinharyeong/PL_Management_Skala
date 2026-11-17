@@ -19,6 +19,8 @@ public class ReviewController {
     public ReviewController(ReviewService service,ActorResolver actors){this.service=service;this.actors=actors;}
     /** 검토 목록을 읽는다. Args: query 필터. Returns: 페이지. Raises: 권한·입력 오류. Side Effects: DB 읽기. */
     @GetMapping public Map<String,Object> list(@RequestParam Map<String,String> query){return service.list(actors.current(),query);}
+    /** 선택 항목의 선정·제외·소명 요청을 일괄 저장한다. Args: key 멱등키, input 대상·토큰·행위, query 빈조건. Returns: 갱신 항목. Raises: 권한·상태 오류. Side Effects: DB 명령. */
+    @PostMapping("/actions") public ResponseEntity<String> actions(@RequestHeader(value="Idempotency-Key",required=false) String key,@Valid @RequestBody ReviewService.BulkActionInput input,@RequestParam Map<String,String> query){service.checkQuery(query,Set.of());return response(service.actions(actors.current(),key,input));}
     /** 검토 상세를 읽는다. Args: reviewId 항목, query 빈조건. Returns: 상세. Raises: 권한·입력 오류. Side Effects: DB 읽기. */
     @GetMapping("/{reviewId}") public Map<String,Object> get(@PathVariable String reviewId,@RequestParam Map<String,String> query){service.checkQuery(query,Set.of());return service.get(actors.current(),reviewId);}
     /** 원천 변경 근거를 읽는다. Args: reviewId 항목, query 비교선택. Returns: 근거페이지. Raises: 권한·입력 오류. Side Effects: DB 읽기. */

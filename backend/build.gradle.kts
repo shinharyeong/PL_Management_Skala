@@ -44,6 +44,10 @@ dependencies {
 
 tasks.withType<Test> {
 	useJUnitPlatform()
+	// 현재 808행 조직 원본의 Java·Python 경계 검사에만 실제 런타임 범위의 힙을 허용한다.
+	System.getenv("EXCEL_PARSER_LARGE_TEST_FILE")?.takeIf { it.isNotBlank() }?.let {
+		maxHeapSize = "896m"
+	}
 	// 실제 17개 파싱 결과를 전용 H2 메모리에 보존하는 선택 검사에만 힙을 늘린다.
 	System.getProperty("business.workbook.path")?.takeIf { it.isNotBlank() }?.let {
 		systemProperty("business.workbook.path", it)

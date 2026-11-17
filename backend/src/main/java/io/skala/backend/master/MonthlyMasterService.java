@@ -119,8 +119,32 @@ public class MonthlyMasterService {
         var sources = sources(master, request, plan, metadata(), new HashMap<>());
         if (org != null && sources.stream().noneMatch(source -> source.organizationId() == org)) throw invalid("마스터에 포함된 조직만 조회할 수 있습니다.");
         var values = aggregate(sources, integer(request.get("month")), org).stream().filter(value -> report == null || report.toString().equals(value.get("reportItemId"))).toList();
+        var baseline = new HashMap<String, BigDecimal>();
+        for (var value : plan.reports()) if (integer(value.get("month")) == integer(request.get("month"))
+                && (org == null || Long.toString(org).equals(value.get("organizationId").toString())))
+            baseline.merge(value.get("reportItemId").toString(), new BigDecimal(value.get("amount").toString()), BigDecimal::add);
+        for (var value : values) {
+            BigDecimal planned = baseline.get(value.get("reportItemId").toString());
+            BigDecimal delta = planned == null ? null : new BigDecimal(value.get("amount").toString()).subtract(planned);
+            value.put("planAmount", planned == null ? null : planned.toPlainString());
+            value.put("planGapAmount", delta == null ? null : delta.toPlainString());
+            value.put("planGapRate", planned == null || planned.signum() == 0 ? null : percent(delta, planned.abs()));
+        }
         String scope = "master-values:" + actor.id() + ':' + masterId + ':' + org + ':' + report; int start = offset(query.get("cursor"), scope), end = Math.min(values.size(), start + limit(query));
         return object("items", values.subList(Math.min(start, values.size()), end), "nextCursor", end < values.size() ? cursor(end, scope) : null);
+    }
+
+    /** 보고서의 전사·조직별 월별 값을 고정 출처를 재사용하여 함께 읽는다.
+     * Args: actor 기획자, masterId 고정 월 마스터. Returns: master 상세·totalRows·조직별 rows.
+     * Raises: 권한·404·고정 근거 오류. Side Effects: REPEATABLE_READ 조회만 수행한다.
+     */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public Map<String, Object> reportData(Actor actor, String masterId) {
+        actor.requireRole("PLANNER"); var master = one("SELECT * FROM master_version WHERE id=?", id(masterId)); var request = request(master.get("request_id"));
+        var plan = plans.confirmed(integer(request.get("year"))); var metadata = metadata(); var sources = sources(master, request, plan, metadata, new HashMap<>());
+        int month = integer(request.get("month")); var organizations = new ArrayList<Map<String, Object>>();
+        for (var source : sources) organizations.add(object("organizationId", Long.toString(source.organizationId()), "rows", aggregate(sources, month, source.organizationId())));
+        return object("master", detail(master, request, plan, metadata), "totalRows", aggregate(sources, month, null), "organizations", organizations);
     }
 
     /** 한 영향 월의 최초 전원 승인 또는 기존 조합의 단일 조직 교체를 반영한다.
@@ -177,7 +201,27 @@ public class MonthlyMasterService {
      * Raises: 근거·시도·원본·계획·이전본·월·금액·건수 불일치. Side Effects: DB 읽기만 수행하며 0으로 누락을 보완하지 않는다.
      */
     private Source source(long submissionId, AnnualPlanService.ConfirmedPlan plan, Map<String, Map<String, Object>> metadata) {
+        return source(submissionId, plan, metadata, false);
+    }
+
+    /** 전망 조회를 위해 승인본의 실제·추정 전체 근거를 같은 검증기로 확인한다.
+     * Args: submissionId 승인본, plan 확정 계획, metadata 보고 항목.
+     * Returns: 검증된 조직 메타·12개월 보고값·월별 지문. Raises: 근거·적재값 불일치.
+     * Side Effects: DB 읽기만 수행하며 마스터 출처·버전을 변경하지 않는다.
+     */
+    ForecastSource forecastSource(long submissionId, AnnualPlanService.ConfirmedPlan plan, Map<String, Map<String, Object>> metadata) {
+        var source = source(submissionId, plan, metadata, true);
+        return new ForecastSource(source.view(), source.reports(), source.fingerprints());
+    }
+
+    /** 조회 목적에 맞는 월 범위의 상세·보고값을 검증하되 기존 실제 마스터 정책은 유지한다.
+     * Args: submissionId 승인본, plan 확정 계획, metadata 보고 항목, includeEstimates 추정 포함 여부.
+     * Returns: 선택 범위를 검증한 출처. Raises: 고정 근거·그리드·금액 불일치.
+     * Side Effects: DB 읽기와 메모리 계산만 수행한다.
+     */
+    private Source source(long submissionId, AnnualPlanService.ConfirmedPlan plan, Map<String, Map<String, Object>> metadata, boolean includeEstimates) {
         var row = submission(submissionId); int requestMonth = integer(row.get("month")); long org = number(row.get("organization_id"));
+        int expectedMonths = includeEstimates ? 12 : requestMonth;
         var saved = rows("SELECT v.*,o.payload FROM submission_validation v JOIN stored_object o ON o.object_key=v.validation_result_object_key WHERE v.submission_id=?", submissionId);
         if (saved.isEmpty()) throw invalidSource(); var validation = saved.getFirst(); JsonNode snapshot;
         try { snapshot = mapper.readTree((byte[]) validation.get("payload")); } catch (Exception exception) { throw invalidSource(); }
@@ -203,19 +247,21 @@ public class MonthlyMasterService {
             int month = integer(fact.get("month")); String scenario = fact.get("scenario").toString();
             if (!fact.get("year").equals(row.get("year")) || !("REVENUE".equals(fact.get("kind")) || "COST".equals(fact.get("kind")))
                     || !("ACTUAL".equals(scenario) && month <= requestMonth || "ESTIMATE".equals(scenario) && month > requestMonth)) throw invalidSource();
-            if (!"ACTUAL".equals(scenario)) continue;
+            if (!includeEstimates && !"ACTUAL".equals(scenario)) continue;
             if (!lineMonths.computeIfAbsent(number(fact.get("id")), key -> new HashSet<>()).add(month)) throw invalidSource();
             BigDecimal amount = (BigDecimal) fact.get("amount"); String reportId = fact.get("report_item_id").toString(); factReports.add(reportId);
             sums.merge(reportId + ':' + month, amount, BigDecimal::add); sums.merge(fact.get("kind") + ":" + month, amount, BigDecimal::add);
             signatures.computeIfAbsent(month, key -> new ArrayList<>()).add(factFingerprint(fact));
         }
-        if (lineMonths.size() != lineCount || lineMonths.values().stream().anyMatch(months -> months.size() != requestMonth)) throw invalidSource();
+        if (lineMonths.size() != lineCount || lineMonths.values().stream().anyMatch(months -> months.size() != expectedMonths)) throw invalidSource();
         var reports = new ArrayList<Map<String, Object>>(); var keys = new HashSet<String>(); var reportIds = new HashSet<String>(); var totals = new HashSet<String>();
         for (JsonNode value : snapshot.path("reportValues")) {
-            if (!"ACTUAL".equals(value.path("scenario").asText())) continue;
+            String scenario = value.path("scenario").asText();
+            if (!includeEstimates && !"ACTUAL".equals(scenario)) continue;
             String reportId = value.path("reportItemId").asText(); int month = value.path("month").asInt(); var report = metadata.get(reportId);
             if (report == null || !report.get("kind").equals(value.path("kind").asText()) || value.path("year").asInt() != integer(row.get("year"))
-                    || month < 1 || month > requestMonth || !"AVAILABLE".equals(value.path("valueStatus").asText()) || !Long.toString(org).equals(value.path("organizationId").asText()) || !keys.add(reportId + ':' + month)) throw invalidSource();
+                    || month < 1 || month > expectedMonths || !scenario.equals(month <= requestMonth ? "ACTUAL" : "ESTIMATE")
+                    || !"AVAILABLE".equals(value.path("valueStatus").asText()) || !Long.toString(org).equals(value.path("organizationId").asText()) || !keys.add(reportId + ':' + month)) throw invalidSource();
             String code = report.get("code").toString(); BigDecimal expected = sums.getOrDefault(reportId + ':' + month, BigDecimal.ZERO);
             if ("DERIVED".equals(report.get("kind"))) {
                 BigDecimal revenue = sums.getOrDefault("REVENUE:" + month, BigDecimal.ZERO), cost = sums.getOrDefault("COST:" + month, BigDecimal.ZERO);
@@ -223,9 +269,9 @@ public class MonthlyMasterService {
             }
             try { if (new BigDecimal(value.path("amount").asText()).compareTo(expected) != 0) throw invalidSource(); } catch (NumberFormatException exception) { throw invalidSource(); }
             reportIds.add(reportId); reports.add(object("organizationId", Long.toString(org), "reportItemId", reportId, "reportItemCode", code, "reportItemName", value.path("reportItemName").asText(),
-                    "kind", report.get("kind"), "year", row.get("year"), "month", month, "scenario", "ACTUAL", "valueStatus", "AVAILABLE", "amount", expected.toPlainString()));
+                    "kind", report.get("kind"), "year", row.get("year"), "month", month, "scenario", scenario, "valueStatus", "AVAILABLE", "amount", expected.toPlainString()));
         }
-        if (keys.size() != reportIds.size() * requestMonth || !reportIds.containsAll(factReports) || !totals.equals(Set.of("REVENUE_TOTAL", "COST_TOTAL", "OP"))) throw invalidSource();
+        if (keys.size() != reportIds.size() * expectedMonths || !reportIds.containsAll(factReports) || !totals.equals(Set.of("REVENUE_TOTAL", "COST_TOTAL", "OP"))) throw invalidSource();
         var fingerprints = new TreeMap<Integer, String>();
         for (var entry : signatures.entrySet()) { Collections.sort(entry.getValue()); fingerprints.put(entry.getKey(), hash(json(entry.getValue()).getBytes(StandardCharsets.UTF_8))); }
         return new Source(org, submissionId, fingerprints, reports, object("organizationId", Long.toString(org), "organizationCode", row.get("organization_code"), "organizationName", row.get("organization_name"),
@@ -370,4 +416,6 @@ public class MonthlyMasterService {
     private ApiException invalidSource() { return conflict("MASTER_SOURCE_INVALID", "월 마스터의 고정 검증 근거와 실제 적재값이 일치하지 않습니다."); }
     /** 검증된 월간 출처다. 자동 접근자는 메모리 값만 반환한다. */
     private record Source(long organizationId, long submissionId, Map<Integer, String> fingerprints, List<Map<String, Object>> reports, Map<String, Object> view) {}
+    /** 전망에 사용할 검증된 승인본이다. 자동 접근자는 메모리 값만 반환한다. */
+    record ForecastSource(Map<String, Object> view, List<Map<String, Object>> reports, Map<Integer, String> fingerprints) {}
 }

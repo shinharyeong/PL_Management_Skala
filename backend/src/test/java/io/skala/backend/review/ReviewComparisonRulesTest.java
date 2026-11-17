@@ -1,6 +1,7 @@
 package io.skala.backend.review;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,21 @@ class ReviewComparisonRulesTest {
         assertThat(exceeds("0","0","5","10000000")).isFalse();
         assertThat(exceeds("0","0.000001","99","999999999999999999999999")).isTrue();
         assertThat(exceeds("99999999999999999999999","100000000000000000000000","0","0.999999")).isTrue();
+    }
+    /** 새 정책의 단독 토글·AND·최소금액 경계와 기준 0에서도 금액 조건을 지키는지 확인한다.
+     * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 메모리 계산만 수행한다.
+     */
+    @Test
+    void prdThresholdTogglesApplyOnlyEnabledConditionsAndRequireOne() {
+        var baseline=new BigDecimal("100");var current=new BigDecimal("106");var percent=new BigDecimal("5");var amount=new BigDecimal("10");
+        assertThat(service.exceeds(baseline,current,percent,amount,true,true)).isFalse();
+        assertThat(service.exceeds(baseline,current,percent,amount,true,false)).isTrue();
+        assertThat(service.exceeds(baseline,current,percent,amount,false,true)).isFalse();
+        assertThat(service.exceeds(baseline,new BigDecimal("111"),percent,amount,false,true)).isTrue();
+        assertThat(service.exceeds(BigDecimal.ZERO,BigDecimal.ONE,percent,amount,true,true)).isFalse();
+        assertThat(service.exceeds(BigDecimal.ZERO,new BigDecimal("11"),percent,amount,true,true)).isTrue();
+        assertThat(service.exceeds(baseline,baseline,percent,amount,true,false)).isFalse();
+        assertThatThrownBy(()->service.exceeds(baseline,current,percent,amount,false,false)).isInstanceOf(IllegalArgumentException.class);
     }
     /** 생성형 마감 안내·ID 메타만 제외하고 거래 설명 속 마감 문구는 보존한다.
      * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 메모리 문자열만 처리한다.

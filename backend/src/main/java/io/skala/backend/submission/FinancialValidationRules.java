@@ -86,12 +86,12 @@ public class FinancialValidationRules {
             Map<String, Object> report = reports.get(reportKey);
             int before = diagnostics.size();
             if (sheet == null || sheet.length() > 255 || row < 1 || !sourceRows.add(sheet + ":" + row)) issue(diagnostics, "SOURCE_ROW_INVALID", "원본 행 위치가 없거나 중복됩니다.", sheet, null, reportKey, null);
-            if (report == null || !kind.equals(report.get("kind")) || !resolved(line.path("reportMappingStatus").asText())) issue(diagnostics, "LINE_REPORT_MAPPING_UNRESOLVED", "계정이 아닌 관리분류·실적집계기준의 보고 항목 연결이 필요합니다.", sheet, firstSource(line), reportKey, null);
-            if (!resolved(line.path("organization").path("status").asText()) || !organizationCode.equals(text(line.path("organization"), "code"))) issue(diagnostics, "LINE_ORGANIZATION_MISMATCH", "상세 행의 조직이 제출 조직과 일치하지 않습니다.", sheet, firstSource(line), reportKey, null);
+            if (report == null || !kind.equals(report.get("kind")) || !resolved(line.path("reportMappingStatus").asText())) lineIssue(diagnostics, "LINE_REPORT_MAPPING_UNRESOLVED", "관리분류·실적집계기준의 보고 항목 연결을 확인한 뒤 원본 전체 파일을 다시 업로드해 주세요.", line, fieldEvidence(line, "REVENUE".equals(kind) ? "managementCategory" : "actualBasis"), reportKey);
+            if (!resolved(line.path("organization").path("status").asText()) || !organizationCode.equals(text(line.path("organization"), "code"))) lineIssue(diagnostics, "LINE_ORGANIZATION_MISMATCH", "상세 행의 조직이 제출 조직과 일치하지 않습니다. 원본의 조직명·팀코드 연결을 확인한 뒤 전체 파일을 다시 업로드해 주세요.", line, fieldEvidence(line, "organization", "teamCode"), reportKey);
             String business = upper(line.path("businessValidation"), "status");
-            if (!"VALID".equals(business)) issue(diagnostics, "LINE_BUSINESS_KEY_INVALID", "상세 행의 계정·업무 식별 근거가 확정되지 않았습니다.", sheet, firstSource(line), reportKey, null);
+            if (!"VALID".equals(business)) businessIssues(diagnostics, line, reportKey);
             String detailId = text(line, "detailId");
-            if (detailId != null && !detailIds.add(kind + ":" + detailId)) issue(diagnostics, "DUPLICATE_DETAIL_ID", "같은 상세 식별자가 반복됩니다. 전체 파일의 중복·수정본을 확인해 주세요.", sheet, firstSource(line), reportKey, null);
+            if (detailId != null && !detailIds.add(kind + ":" + detailId)) lineIssue(diagnostics, "DUPLICATE_DETAIL_ID", "같은 상세 식별자가 반복됩니다. 원본의 중복·수정본을 확인한 뒤 전체 파일을 다시 업로드해 주세요.", line, fieldEvidence(line, "detailId"), reportKey);
             if (!bounded(line)) issue(diagnostics, "FINANCIAL_FIELD_TOO_LONG", "조직·계정·분류·식별자 길이가 적재 규격을 초과합니다.", sheet, firstSource(line), reportKey, null);
             var byMonth = new TreeMap<Integer, JsonNode>();
             for (JsonNode value : line.path("values")) {
@@ -105,7 +105,7 @@ public class FinancialValidationRules {
                 String cell = value == null ? null : text(value, "sourceCell");
                 BigDecimal amount = value == null ? null : amount(value);
                 if (amount == null || cell == null || !cell.matches("[A-Z]{1,3}[1-9][0-9]{0,6}") || text(value, "sourceRecordId") == null || text(value, "sourceRecordId").length() > 500) {
-                    issue(diagnostics, "PLAN_AMOUNT_UNRESOLVED", "요청 시나리오의 월별 금액·원본 셀을 확인해 주세요. 빈 금액을 0으로 보완하지 않습니다.", sheet, cell, reportKey, month);
+                    issue(diagnostics, "PLAN_AMOUNT_UNRESOLVED", "요청 시나리오의 월별 금액·단위·수식 결과 또는 원본 셀 근거를 확인할 수 없습니다. 원본을 확인·수정한 뒤 전체 파일을 다시 업로드해 주세요.", sheet, cell != null && cell.matches("[A-Z]{1,3}[1-9][0-9]{0,6}") ? cell : null, reportKey, month);
                     continue;
                 }
                 values.add(object("year", year, "month", month, "scenario", scenario(requestType, closingMonth, month), "amount", amount,
@@ -219,6 +219,94 @@ public class FinancialValidationRules {
         return json(object("report", report, "month", month, "amount", amount.stripTrailingZeros().toPlainString(),
                 "detailId", text(line, "detailId"), "account", line.path("account"), "team", text(line, "teamCode"), "task", text(line, "taskCode"), "description", description,
                 "managementCategory", text(line, "managementCategory"), "actualBasis", text(line, "actualBasis"), "costType", text(line, "costType")));
+    }
+
+    /** 원본 업무키 이슈별 사유와 관측 필드 위치를 차단 진단으로 보존한다.
+     * Args: items 진단 목록, line 원본 행, reportKey 보고키.
+     * Returns: 없음. Raises: 없음.
+     * Side Effects: 메모리 진단만 추가하며 코드·식별자·금액을 수정하거나 행을 선택하지 않는다.
+     */
+    private void businessIssues(List<Map<String, Object>> items, JsonNode line, String reportKey) {
+        int before = items.size();
+        for (JsonNode problem : line.path("businessValidation").path("issues")) {
+            String field = Optional.ofNullable(text(problem, "field")).orElse("");
+            String sourceField = switch (field) {
+                case "detail_id" -> "detailId";
+                case "account_code" -> "account";
+                case "management_category" -> "managementCategory";
+                default -> "";
+            };
+            String label = switch (field) {
+                case "detail_id" -> "상세 식별자";
+                case "account_code" -> "예산코드";
+                case "management_category" -> "관리분류";
+                default -> "업무 식별 정보";
+            };
+            JsonNode source = businessEvidence(line, sourceField, problem.path("provenance"));
+            String reason = upper(problem, "code").endsWith("_MISSING")
+                    ? "가 누락되었거나 확인되지 않습니다. "
+                    : "가 원본의 식별자·코드표·집계 기준을 만족하지 않습니다. ";
+            lineIssue(items, "LINE_BUSINESS_KEY_INVALID", label + reason + "원본을 확인·수정한 뒤 전체 파일을 다시 업로드해 주세요.", line, source, reportKey);
+        }
+        if (items.size() == before) lineIssue(items, "LINE_BUSINESS_KEY_INVALID", "상세 행의 계정·업무 식별 근거가 확정되지 않았습니다. 원본을 확인한 뒤 전체 파일을 다시 업로드해 주세요.", line, null, reportKey);
+    }
+
+    /** 업무 필드 근거 안에서만 이슈 출처를 선택하여 같은 행의 무관한 셀을 제외한다.
+     * Args: line 원본 행, field 알려진 fieldSources 키, references 업무 이슈의 provenance.
+     * Returns: 관련 필드와 일치하는 관측 셀, 또는 이슈 출처가 없을 때 유일한 필드 셀. 모호하면 null.
+     * Raises: 없음. Side Effects: 메모리 조회만 수행하며 원본·진단 코드·금액을 변경하지 않는다.
+     */
+    private JsonNode businessEvidence(JsonNode line, String field, JsonNode references) {
+        JsonNode first = fieldEvidence(line, field);
+        if (first == null) return null;
+        String sheet = text(line.path("source"), "sheet");
+        int row = line.path("source").path("row").asInt();
+        var cells = new HashSet<String>();
+        for (JsonNode reference : line.path("fieldSources").path(field)) {
+            String cell = text(reference, "cell");
+            if (sheet.equals(text(reference, "sheet")) && cell != null && cell.matches("[A-Z]{1,3}" + row)) cells.add(cell);
+        }
+        for (JsonNode reference : references) {
+            if (sheet.equals(text(reference, "sheet")) && cells.contains(text(reference, "cell"))) return reference;
+        }
+        return cells.size() == 1 ? first : null;
+    }
+
+    /** 코드표 참조를 제외하고 해당 원본 행에서 관측한 셀 근거만 찾는다.
+     * Args: line 원본 시트·행, references provenance 또는 fieldSources의 근거 배열.
+     * Returns: 같은 시트·행의 유효한 첫 셀 참조 또는 null. 알려지지 않은 좌표는 만들지 않는다.
+     * Raises: 없음. Side Effects: 없음.
+     */
+    private JsonNode lineEvidence(JsonNode line, JsonNode references) {
+        String sheet = text(line.path("source"), "sheet");
+        int row = line.path("source").path("row").asInt();
+        if (sheet == null || row < 1) return null;
+        for (JsonNode reference : references) {
+            String cell = text(reference, "cell");
+            if (sheet.equals(text(reference, "sheet")) && cell != null && cell.matches("[A-Z]{1,3}" + row)) return reference;
+        }
+        return null;
+    }
+
+    /** 관련 업무 필드의 확인된 원본 행 셀을 우선순위대로 찾는다.
+     * Args: line 원본 행, fields 조회할 fieldSources 키 목록.
+     * Returns: 같은 원본 행의 첫 근거 또는 null. 금액 셀로 대체하지 않는다.
+     * Raises: 없음. Side Effects: 없음.
+     */
+    private JsonNode fieldEvidence(JsonNode line, String... fields) {
+        for (String field : fields) {
+            JsonNode source = lineEvidence(line, line.path("fieldSources").path(field));
+            if (source != null) return source;
+        }
+        return null;
+    }
+
+    /** 관측 필드 위치가 없으면 셀을 비운 채 원본 시트의 차단 사유를 남긴다.
+     * Args: items 진단 목록, code/message 차단 사유, line 원본 행, source 확인된 같은 행 참조/null, reportKey 보고키.
+     * Returns: 없음. Raises: 없음. Side Effects: 메모리 진단 목록만 갱신한다.
+     */
+    private void lineIssue(List<Map<String, Object>> items, String code, String message, JsonNode line, JsonNode source, String reportKey) {
+        issue(items, code, message, text(line.path("source"), "sheet"), source == null ? null : text(source, "cell"), reportKey, null);
     }
 
     /** 첫 원본 금액 셀을 찾는다. Args: line 행. Returns: 셀/null. Raises: 없음. Side Effects: 없음. */

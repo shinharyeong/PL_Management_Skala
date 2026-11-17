@@ -64,7 +64,7 @@ PYTHONPATH=src python3 -B -m excel_parser parse /path/to/inputs --recursive --wr
 ### 데이터 없는 기본 테스트
 
 ```bash
-PYTHONPATH=src:../parser_ai/src python3 -B -m unittest discover -s tests -v
+PYTHONPATH=src python3 -B -m unittest discover -s tests -v
 ```
 
 기본 테스트는 메모리 자료와 합성 기대값을 사용합니다. 별도 데이터가 필요한 통합 테스트는 데이터 경로를 지정하지 않으면 명시적으로 건너뜁니다. 테스트용 Excel 파일을 디스크에 만들지 않습니다.
@@ -72,10 +72,21 @@ PYTHONPATH=src:../parser_ai/src python3 -B -m unittest discover -s tests -v
 ### 별도 데이터로 통합 검증
 
 ```bash
-EXCEL_PARSER_TEST_DATA=/path/to/inputs PYTHONPATH=src:../parser_ai/src python3 -B -m unittest discover -s tests -v
+EXCEL_PARSER_TEST_DATA=/path/to/inputs PYTHONPATH=src python3 -B -m unittest discover -s tests -v
 ```
 
 통합 검증 자료는 저장소에 추가하지 않습니다. 입력 집합에 지원하는 마스터가 없으면 마스터 비교는 적용 불가로 구분하며, 그 사실을 집계 일치로 해석하지 않습니다. 형식 검사에는 선택적으로 `ruff check --no-cache src tests`를 사용할 수 있습니다.
+
+### 현재 월별 자료의 원본 대조
+
+저장소 루트에서 다음 명령으로 `월별검증_2026`의 조직 원본을 실제 서비스 파서에 전달하고, 별도로 읽은 원본 XML과 대조합니다. 결과는 콘솔에만 출력하며 원본·캐시·보고서 파일을 생성하지 않습니다.
+
+```bash
+PYTHONPATH=parser/src python3 -B -m excel_parser.benchmark.source_audit \
+  --dataset /path/to/월별검증_2026 --types 1-9 --months 1-9 --workers 2
+```
+
+`--types 5,6`, `--months 1`, `--limit 1`로 재현 범위를 줄일 수 있습니다. 이 검사는 2025~2027년의 금액·기간·시나리오, 실제 0과 빈칸, 행·조직·상세 ID, 원문·수식·출처, 읽기 전후 SHA-256을 확인합니다. 평가용 manifest는 대상과 정답 범위를 정하는 데만 쓰며 생산 파서에는 전달하지 않습니다. 오류·중복 행도 원본 보존 검사에서 제외하지 않습니다. 정제 후 마스터 일치와 제출 승인 여부는 별도 검사입니다.
 
 ## 결과와 검증 한계
 
@@ -87,15 +98,14 @@ Contingency 제외 영업이익은 원본에 명시되어 있으면 우선 연�
 
 ## 파싱 명세
 
-두 파서의 독립 비교는 `python3 -B parser/compare.py`로 실행합니다(저장소 루트 기준).
-기본은 메모리·콘솔만 사용하며 정답을 엔진 입력과 분리합니다.
-[비교 환경의 명령·평가 계약·실험 조건](docs/development/parser-comparison.md)을 참고하세요.
+규칙 파서의 독립 원본·정답 대조는 `python3 -B parser/compare.py`로 실행합니다(저장소 루트 기준).
+기본은 메모리·콘솔만 사용하며 정답을 파서 입력과 분리합니다.
+[원본 대조의 명령·평가 계약·실험 조건](docs/development/parser-comparison.md)을 참고하세요.
 
-월별 검증은 같은 진입점의 `monthly export`로 실제 AI 요청 컨텍스트를 내보낸 뒤,
-Codex 세션에서 정답을 보지 않고 작성한 `plans.json`을 `monthly run`으로 재생합니다.
-두 파서에는 조직 원본만 전달하고, 마스터 상세는 독립 평가기에서 업무키로 대조합니다.
-외부 API를 차단하며 최초 계획과 결과를 덮어쓰지 않습니다. 결과 저장은
-사용자가 요청한 경우에만 `--write-output`과 새 실행 폴더를 지정해 수행합니다.
+월별 검증은 같은 진입점의 `monthly <자료 경로> --types <유형 목록>`으로 실행합니다.
+조직 원본만 규칙 파서에 전달하고 마스터 상세는 독립 평가기에서 업무키로 대조합니다.
+결과 저장은 사용자가 요청한 경우에만 `--write-output`과 새 `--output-dir`을 지정해 수행합니다.
+생성된 `inventory.json`을 이후 기술 마스터 재구성에 사용할 수 있습니다.
 
 조직 원본으로 월별 마스터를 재구성할 때는 `master generate --inventory <최초 inventory.json>
 --output-dir <새 실행 폴더> --write-output`을 사용합니다. 이 단계는 기존 마스터를

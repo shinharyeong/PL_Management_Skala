@@ -1,5 +1,6 @@
 package io.skala.backend.submission;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import io.skala.backend.common.ApiException;
 import io.skala.backend.foundation.CommandExecutor;
 import io.skala.backend.security.Actor;
@@ -19,7 +20,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.multipart.MultipartHttpServletRequest;
 
-/** API 계약 중 인증 조회·요청 생성·원본 업로드·파싱 조회만 노출한다. */
+/** 인증·공통 분류·요청 관리·원본 업로드와 파싱 조회 API를 노출한다. */
 @RestController
 @RequestMapping("/api/v1")
 public class SubmissionController {
@@ -51,6 +52,15 @@ public class SubmissionController {
         return service.organizations(actors.current(), query);
     }
 
+    /** 공통 보고 항목의 실제 분류와 계층을 조회한다.
+     * Args: query active/kind/페이지 필터. Returns: 보고 항목 페이지.
+     * Raises: 인증·필터 오류. Side Effects: DB 읽기만 수행한다.
+     */
+    @GetMapping("/report-items")
+    public Map<String, Object> reportItems(@RequestParam Map<String, String> query) {
+        return service.reportItems(actors.current(), query);
+    }
+
     /** 전 조직 대상 요청을 등록한다.
      * Args: key 멱등키, input 요청 DTO, query 빈 쿼리. Returns: 201/재전달 응답.
      * Raises: 권한/검증/상태 오류. Side Effects: DB 생성.
@@ -77,6 +87,19 @@ public class SubmissionController {
     public Map<String, Object> request(@PathVariable String requestId, @RequestParam Map<String, String> query) {
         service.checkQuery(query, Set.of());
         return service.request(actors.current(), requestId);
+    }
+
+    /** 요청 안내·기한·개폐 상태를 생략과 null을 구분해 변경한다.
+     * Args: requestId 요청, key 멱등 키, input 변경 JSON, query 빈 쿼리.
+     * Returns: 갱신된 요청 상세 200/재전달 응답. Raises: 권한·입력·토큰·상태 충돌.
+     * Side Effects: 요청 헤더와 멱등 성공 응답을 DB에 저장한다.
+     */
+    @PatchMapping("/submission-requests/{requestId}")
+    public ResponseEntity<String> updateRequest(@PathVariable String requestId,
+            @RequestHeader(value="Idempotency-Key", required=false) String key,
+            @RequestBody JsonNode input, @RequestParam Map<String, String> query) {
+        service.checkQuery(query, Set.of());
+        return command(service.updateRequest(actors.current(), requestId, key, input));
     }
 
     /** 한 개의 전체 XLSX 파일을 접수한다.

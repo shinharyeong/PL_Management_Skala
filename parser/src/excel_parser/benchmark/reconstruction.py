@@ -313,7 +313,7 @@ def parse_submission(job: tuple[str, str, str]) -> dict:
         declared_owner = _source_declared_owner(result["workbook"])
         if declared_owner["status"] == "resolved":
             owner, owner_source = declared_owner["code"], "source_declared_owner"
-    trial = {k: v for k, v in result.items() if k not in {"workbook", "mapped", "semantic"}}
+    trial = {k: v for k, v in result.items() if k not in {"workbook", "mapped"}}
     trial["submission_owner"] = {"organization_code": owner, "identity_source": owner_source,
                                  "row_organization_codes": sorted(organizations),
                                  "source_declared_owner": declared_owner}
