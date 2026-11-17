@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import unittest
+from copy import deepcopy
 from dataclasses import replace
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -12,11 +13,15 @@ from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 from helpers import extract_memory
-from test_mapping_monthly import inactive_expense_workbook
+from test_business_validation import contract_workbook
+from test_mapping_monthly import find_record, inactive_expense_workbook
 
 from excel_parser.extraction import extract_workbook_bytes
 from excel_parser.mapping import map_workbook
-from excel_parser.service_bridge import BridgeLimits, main, parse_bytes
+from excel_parser.service_bridge import (
+    BridgeError, BridgeLimits, _encode_response, _review_diagnostics, _validate_package,
+    _validate_text_budget, main, parse_bytes,
+)
 
 _NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -340,6 +345,180 @@ class ServiceBridgeTests(unittest.TestCase):
         self.assertEqual(record["item"]["detail_id"], "None")
         self.assertEqual(record["value"]["normalized_value"], "123.4500")
         self.assertEqual(record["business_validation"]["status"], "invalid")
+        diagnostics = [item for item in result["diagnostics"]
+                       if item["code"] == "BUSINESS_DETAIL_ID_INVALID"]
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(diagnostics[0]["source"], {"sheet": "매출", "cell": "E5"})
+        self.assertIn("전체 파일을 다시 업로드", diagnostics[0]["message"])
+        self.assertNotIn("None", diagnostics[0]["message"])
+        self.assertFalse(any(item["code"] == "FINANCIAL_DETAIL_UNRESOLVED"
+                             for item in result["diagnostics"]))
+
+    def test_business_diagnostics_locate_fields_and_preserve_candidates(self) -> None:
+        """월별 반복 오류를 실제 계정·ID·분류 셀로 묶고 금액과 후보를 보존한다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 코드표를 정정 위치로 안내하거나 후보·값·원본이 바뀐 경우.
+        Side Effects:
+            독립 합성 원본과 실제 매핑을 메모리에서만 사용한다.
+        """
+        workbook = contract_workbook()
+        workbook["diagnostics"] = []
+        replacements = {("검증", "B5"): "공개하지않을분류",
+                        ("검증", "E5"): "근거 [ID:None; 수정:3]",
+                        ("비용", "E5"): "99999"}
+        for sheet in workbook["sheets"]:
+            for cell in sheet["cells"]:
+                if (sheet["name"], cell["address"]) in replacements:
+                    cell["value"] = replacements[(sheet["name"], cell["address"])]
+        before = deepcopy(workbook)
+        standard = map_workbook(workbook)
+        with patch("excel_parser.service_bridge.extract_workbook_bytes", return_value=workbook):
+            result = parse_bytes(_package(), "sample.xlsx")
+        self.assertEqual(result["status"], "NEEDS_REVIEW")
+        diagnostics = [item for item in result["diagnostics"] if item["code"].startswith("BUSINESS_")]
+        self.assertEqual(len(diagnostics), 3)
+        self.assertEqual({(item["code"], item["source"]["sheet"], item["source"]["cell"])
+                          for item in diagnostics}, {
+            ("BUSINESS_MANAGEMENT_CATEGORY_INVALID", "검증", "B5"),
+            ("BUSINESS_DETAIL_ID_INVALID", "검증", "E5"),
+            ("BUSINESS_ACCOUNT_CODE_INVALID", "비용", "E5"),
+        })
+        self.assertTrue(all(set(item) == {"code", "severity", "stage", "message", "source"}
+                            for item in diagnostics))
+        source_cells = {(cell["sheet"], cell["cell"]): cell
+                        for cell in result["submissionData"]["sourceCells"]}
+        for item in diagnostics:
+            self.assertNotIn("공개하지않을분류", item["message"])
+            self.assertNotIn("99999", item["message"])
+            self.assertIn("전체 파일을 다시 업로드", item["message"])
+            source = (item["source"]["sheet"], item["source"]["cell"])
+            self.assertEqual(source_cells[source]["rawValue"], replacements[source])
+        self.assertEqual(len(result["records"]), len(standard["records"]))
+        for original, projected in zip(standard["records"], result["records"], strict=True):
+            for field in ("value", "mapping", "raw_value", "formula", "data_type"):
+                self.assertEqual(projected[field], original[field])
+        self.assertEqual(workbook, before)
+
+    def test_missing_business_field_keeps_its_observed_source(self) -> None:
+        """빈값과 오류값 모두 확인된 계정 셀로 안내하고 값을 추정하지 않는다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 누락된 계정 대신 코드표 위치를 선택하거나 값을 고친 경우.
+        Side Effects:
+            메모리 원본만 변경·파싱하며 파일을 만들지 않는다.
+        """
+        for value, data_type in ((None, "blank"), ("#N/A", "error")):
+            with self.subTest(data_type=data_type):
+                workbook = contract_workbook()
+                workbook["diagnostics"] = []
+                cell = next(c for s in workbook["sheets"] if s["name"] == "비용"
+                            for c in s["cells"] if c["address"] == "E5")
+                cell.update(value=value, data_type=data_type, has_content=value is not None)
+                with patch("excel_parser.service_bridge.extract_workbook_bytes", return_value=workbook):
+                    result = parse_bytes(_package(), "sample.xlsx")
+                diagnostics = [item for item in result["diagnostics"]
+                               if item["code"] == "BUSINESS_ACCOUNT_CODE_MISSING"]
+                self.assertEqual(len(diagnostics), 1)
+                self.assertEqual(diagnostics[0]["source"], {"sheet": "비용", "cell": "E5"})
+                self.assertIn("확인할 수 없습니다", diagnostics[0]["message"])
+                self.assertEqual((cell["value"], cell["data_type"]), (value, data_type))
+                self.assertEqual(result["status"], "NEEDS_REVIEW")
+
+    def test_business_location_requires_matching_field_and_row_evidence(self) -> None:
+        """근거 부족·코드표·다른 행의 셀을 정정 위치로 추정하지 않는다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 확인되지 않은 입력 셀을 만들거나 일반 안내가 사라진 경우.
+        Side Effects:
+            실제 매핑 결과의 복사본만 메모리에서 변경한다.
+        """
+        workbook = contract_workbook()
+        cell = next(c for s in workbook["sheets"] if s["name"] == "비용"
+                    for c in s["cells"] if c["address"] == "E5")
+        cell["value"] = "99999"
+        original = find_record(map_workbook(workbook), "비용", "H5")
+        for source, provenance in (
+            ({"sheet": "비용", "cell": "E5"}, [{"sheet": "등록표", "cell": "A2"}]),
+            (None, [{"sheet": "비용", "cell": "E5"}]),
+            ({"sheet": "비용", "cell": "E6"}, [{"sheet": "비용", "cell": "E6"}]),
+        ):
+            with self.subTest(source=source, provenance=provenance):
+                record = deepcopy(original)
+                record["dimensions"]["예산Code"]["source"] = source
+                record["business_validation"]["issues"][0]["provenance"] = provenance
+                diagnostics = _review_diagnostics([record])
+                self.assertEqual([item["code"] for item in diagnostics], ["FINANCIAL_DETAIL_UNRESOLVED"])
+                self.assertEqual(diagnostics[0]["source"], {"sheet": "비용", "cell": "H5"})
+
+    def test_business_diagnostics_keep_other_rows_and_unknown_reasons(self) -> None:
+        """서로 다른 오류 행을 합치지 않고 알 수 없는 추가 사유는 일반 안내로 남긴다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 다른 행의 오류나 해석하지 않은 문제가 진단에서 사라진 경우.
+        Side Effects:
+            합성 원본의 실제 매핑 결과 복사본만 메모리에서 사용한다.
+        """
+        content = _package({"xl/worksheets/sheet1.xml": _SHEET.replace("ID:memory-row", "ID:None")})
+        original = next(record for record in map_workbook(extract_workbook_bytes(content, "sample.xlsx"))["records"]
+                        if record["source"]["sheet"] == "매출" and record["source"]["cell"] == "F5")
+        another_row = deepcopy(original)
+        another_row["source"]["cell"] = "F6"
+        another_row["dimensions"]["거래내역 및 산출근거"]["source"]["cell"] = "E6"
+        another_row["business_validation"]["issues"][0]["provenance"] = [{"sheet": "매출", "cell": "E6"}]
+        diagnostics = _review_diagnostics([original, original, another_row])
+        self.assertEqual([item["source"] for item in diagnostics], [
+            {"sheet": "매출", "cell": "E5"}, {"sheet": "매출", "cell": "E6"},
+        ])
+        unknown = deepcopy(original)
+        unknown["business_validation"]["issues"].append({"code": "NEW_RULE_UNRESOLVED", "field": "unknown"})
+        diagnostics = _review_diagnostics([unknown])
+        self.assertEqual([item["code"] for item in diagnostics], [
+            "BUSINESS_DETAIL_ID_INVALID", "FINANCIAL_DETAIL_UNRESOLVED",
+        ])
+        self.assertEqual(diagnostics[-1]["source"], {"sheet": "매출", "cell": "F5"})
+
+    def test_business_diagnostic_does_not_hide_missing_amount_cache(self) -> None:
+        """업무키 안내를 묶어도 별도 금액 불확실성은 해당 금액 셀에 남긴다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 캐시 누락을 업무키 오류에 합치거나 금액을 보충한 경우.
+        Side Effects:
+            메모리 OOXML만 사용하며 수식을 실행하지 않는다.
+        """
+        sheet = _SHEET.replace("ID:memory-row", "ID:None").replace(
+            "<v>123.4500</v>", "<f>SUM(A1:A2)</f>"
+        )
+        result = parse_bytes(_package({"xl/worksheets/sheet1.xml": sheet}), "sample.xlsx")
+        targeted = [item for item in result["diagnostics"] if item["code"] == "BUSINESS_DETAIL_ID_INVALID"]
+        fallback = [item for item in result["diagnostics"] if item["code"] == "FINANCIAL_DETAIL_UNRESOLVED"]
+        self.assertEqual([item["source"] for item in targeted], [{"sheet": "매출", "cell": "E5"}])
+        self.assertEqual([item["source"] for item in fallback], [{"sheet": "매출", "cell": "F5"}])
+        records = {record["source"]["cell"]: record for record in result["records"]
+                   if record["source"]["sheet"] == "매출"}
+        self.assertIsNone(records["F5"]["value"]["normalized_value"])
+        self.assertEqual(records["G5"]["raw_value"], "0")
+        self.assertEqual(result["summary"]["unresolvedCount"], 2)
 
     def test_file_api_and_byte_api_share_extraction(self) -> None:
         """기존 경로 API와 메모리 API의 시트 결과가 같음을 확인한다.
@@ -480,6 +659,93 @@ class ServiceBridgeTests(unittest.TestCase):
             )
             self.assertEqual(limited["errorCode"], "WORKBOOK_LIMIT_EXCEEDED")
             mapper.assert_not_called()
+
+    def test_large_financial_cell_boundary_remains_bounded(self) -> None:
+        """기존 5만 셀보다 큰 원본을 허용하면서 내용 셀 상한을 지킨다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 새 상한의 정상 원본을 거부하거나 상한 초과를 허용한 경우.
+        Side Effects:
+            합성 OOXML을 메모리에서만 구성·검사하며 파일을 생성하지 않는다.
+        """
+        limits = BridgeLimits()
+        base_cells = _SHEET.count('<c ') + _ORGANIZATIONS.count('<c ')
+        row_count = limits.max_cells - base_cells
+        self.assertGreater(row_count, 50_000)
+        added = ''.join(
+            f'<row r="{row}"><c r="A{row}"><v>0</v></c></row>'
+            for row in range(10, 10 + row_count)
+        )
+        sheet = _SHEET.replace('</sheetData>', added + '</sheetData>')
+        content = _package({'xl/worksheets/sheet1.xml': sheet})
+        _validate_package(content, limits)
+        with self.assertRaisesRegex(BridgeError, '^WORKBOOK_LIMIT_EXCEEDED$'):
+            _validate_package(content, replace(limits, max_cells=limits.max_cells - 1))
+
+    def test_large_response_and_text_budget_keep_exact_boundaries(self) -> None:
+        """큰 응답·문맥 예산도 UTF-8 바이트의 유한 경계로 검사한다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 경계값을 거부하거나 한 바이트 초과를 허용한 경우.
+        Side Effects:
+            작은 합성 응답과 길이 카운터만 메모리에 만들며 파일을 생성하지 않는다.
+        """
+        limits = BridgeLimits()
+        totals = {'shared_lengths': [], 'row_text': [
+            {'direct': limits.max_logical_text_bytes, 'cells': 1,
+             'formula_bytes': 0, 'references': {}},
+        ]}
+        _validate_text_budget(totals, limits)
+        totals['row_text'][0]['direct'] += 1
+        with self.assertRaisesRegex(BridgeError, '^WORKBOOK_LIMIT_EXCEEDED$'):
+            _validate_text_budget(totals, limits)
+        response = {'value': '한글'}
+        encoded = _encode_response(response, limits.max_output_bytes)
+        size = len(encoded.encode('utf-8'))
+        self.assertEqual(_encode_response(response, size), encoded)
+        with self.assertRaisesRegex(BridgeError, '^PARSER_OUTPUT_LIMIT_EXCEEDED$'):
+            _encode_response(response, size - 1)
+
+    def test_cli_streams_only_after_complete_response_validation(self) -> None:
+        """CLI가 전체 응답 문자열 없이 출력하고 초과 시 부분 JSON을 남기지 않는다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 전체 문자열 생성 경로를 사용하거나 실패 전에 일부 JSON을 출력한 경우.
+        Side Effects:
+            메모리 입력·출력과 합성 응답만 사용하며 파일을 생성하지 않는다.
+        """
+        content = _package()
+        expected = parse_bytes(content, 'sample.xlsx')
+        output, errors = StringIO(), StringIO()
+        with (
+            patch('excel_parser.service_bridge._encode_response', side_effect=AssertionError),
+            patch.object(output, 'write', wraps=output.write) as writes,
+        ):
+            code = main(['--filename', 'sample.xlsx'], input_stream=BytesIO(content),
+                        output_stream=output, error_stream=errors)
+            self.assertGreater(writes.call_count, 1)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output.getvalue()), json.loads(_encode_response(expected, BridgeLimits().max_output_bytes)))
+        output, errors = StringIO(), StringIO()
+        with patch.object(output, 'write', wraps=output.write) as writes:
+            code = main(['--filename', 'sample.xlsx'], input_stream=BytesIO(content),
+                        output_stream=output, error_stream=errors,
+                        limits=replace(BridgeLimits(), max_output_bytes=1))
+            self.assertEqual(writes.call_count, 1)
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(output.getvalue())['errorCode'], 'PARSER_OUTPUT_LIMIT_EXCEEDED')
 
     def test_formula_text_is_charged_once_without_disabling_text_limit(self) -> None:
         """행 문맥에 쓰이지 않는 수식을 한 번 계산하면서 총량 상한을 확인한다.

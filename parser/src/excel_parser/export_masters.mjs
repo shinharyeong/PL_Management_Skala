@@ -1,6 +1,6 @@
 /**
  * 완료된 generation.json을 기준으로 생성 JSON의 Excel 내보내기를 일괄 실행한다.
- * 원본 Excel·기준 마스터·평가기·LLM은 호출하지 않으며 기존 생성 JSON은 보존한다.
+ * 원본 Excel·기준 마스터·평가기 호출 없이 기존 생성 JSON을 보존한다.
  */
 
 import fs from "node:fs/promises";

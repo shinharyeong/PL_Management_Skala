@@ -10,8 +10,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.skala.backend.parser.ParsingWorker;
 import io.skala.backend.parser.PythonParserClient;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -390,6 +397,122 @@ class DemoIntegrationTests {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.approvedCount").value(1));
     }
 
+    /** 오류 원본을 보존하고 담당자가 전체 수정본을 재업로드해야 최종 제출되는지 확인한다.
+     * Args: invalidCode true면 잘못된 계정 코드, false면 누락 금액을 합성 양식에 구성한다.
+     * Returns: 없음. Raises: HTTP/ZIP/파서/검증 오류.
+     * Side Effects: 메모리 ZIP·H2·-B Python 프로세스만 사용하며 테스트 후 롤백한다.
+     */
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void originalIssuesRequireCorrectedFullUploadWithoutAutomaticChanges(boolean invalidCode) throws Exception {
+        String requestId = requestId();
+        byte[] corrected = template(requestId);
+        byte[] original = invalidCode
+                ? replaceExpenseXml(corrected, ">77001<", ">99999<")
+                : replaceExpenseXml(corrected, "<c r=\"K5\"><v>300000.25</v></c>", "<c r=\"K5\"/>");
+        String originalId = upload(requestId, original);
+        new ParsingWorker(jdbc, transactions, parser, mapper, 90).runNext();
+        JsonNode draft = mapper.readTree(mvc.perform(get("/api/v1/submissions/" + originalId)
+                .header("Authorization", MANAGER)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.readiness.canSubmit").value(false))
+                .andExpect(jsonPath("$.parsing.status").value(invalidCode ? "NEEDS_REVIEW" : "SUCCEEDED"))
+                .andReturn().getResponse().getContentAsByteArray());
+        if (invalidCode) {
+            assertThat(draft.path("readiness").path("blockers").findValuesAsText("code"))
+                    .contains("PARSING_REQUIRES_ATTENTION").doesNotContain("VALIDATION_REQUIRED");
+        } else {
+            draft = mapper.readTree(mvc.perform(post("/api/v1/submissions/" + originalId + "/validation")
+                    .header("Authorization", MANAGER).header("Idempotency-Key", "missing-amount-validation")
+                    .contentType("application/json").content(mapper.writeValueAsBytes(java.util.Map.of(
+                            "expectedStateToken", draft.path("stateToken").asText()))))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.submission.readiness.canSubmit").value(false))
+                    .andReturn().getResponse().getContentAsByteArray()).path("submission");
+        }
+        JsonNode diagnostics = mapper.readTree(mvc.perform(get("/api/v1/submissions/" + originalId + "/diagnostics?limit=100")
+                .header("Authorization", MANAGER)).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray());
+        String expectedCode = invalidCode ? "BUSINESS_ACCOUNT_CODE_INVALID" : "PLAN_AMOUNT_UNRESOLVED";
+        String expectedCell = invalidCode ? "E5" : "K5";
+        boolean foundIssue = false;
+        for (JsonNode issue : diagnostics.path("items")) {
+            if (!expectedCode.equals(issue.path("code").asText())) continue;
+            assertThat(issue.path("source").path("sheet").asText()).isEqualTo("비용");
+            assertThat(issue.path("source").path("cell").asText()).isEqualTo(expectedCell);
+            if (!invalidCode) assertThat(issue.path("month").asInt()).isEqualTo(3);
+            foundIssue = true;
+        }
+        assertThat(foundIssue).as("실제 확인할 셀의 진단").isTrue();
+        JsonNode source = mapper.readTree(mvc.perform(get("/api/v1/submissions/" + originalId + "/source-cells")
+                .param("sheet", "비용").param("cell", expectedCell).header("Authorization", MANAGER))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray());
+        if (invalidCode) assertThat(source.path("rawValue").asText()).isEqualTo("99999");
+        else {
+            assertThat(source.path("presence").asText()).isEqualTo("EMPTY");
+            assertThat(source.path("rawValue").isNull()).isTrue();
+            assertThat(source.path("normalizedAmount").isNull()).isTrue();
+        }
+        mvc.perform(post("/api/v1/submissions/" + originalId + "/submit")
+                .header("Authorization", MANAGER).header("Idempotency-Key", "original-blocked-submit")
+                .contentType("application/json").content(mapper.writeValueAsBytes(java.util.Map.of(
+                        "expectedStateToken", draft.path("stateToken").asText()))))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code")
+                        .value(invalidCode ? "PARSING_NOT_READY" : "SUBMISSION_NOT_READY"));
+
+        String correctedId = upload(requestId, corrected, "corrected-full-upload");
+        assertThat(correctedId).isNotEqualTo(originalId);
+        new ParsingWorker(jdbc, transactions, parser, mapper, 90).runNext();
+        JsonNode correctedDraft = mapper.readTree(mvc.perform(get("/api/v1/submissions/" + correctedId)
+                .header("Authorization", MANAGER)).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray());
+        JsonNode validated = mapper.readTree(mvc.perform(post("/api/v1/submissions/" + correctedId + "/validation")
+                .header("Authorization", MANAGER).header("Idempotency-Key", "corrected-validation")
+                .contentType("application/json").content(mapper.writeValueAsBytes(java.util.Map.of(
+                        "expectedStateToken", correctedDraft.path("stateToken").asText()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.submission.readiness.canSubmit").value(true))
+                .andReturn().getResponse().getContentAsByteArray()).path("submission");
+        mvc.perform(post("/api/v1/submissions/" + correctedId + "/submit")
+                .header("Authorization", MANAGER).header("Idempotency-Key", "corrected-submit")
+                .contentType("application/json").content(mapper.writeValueAsBytes(java.util.Map.of(
+                        "expectedStateToken", validated.path("stateToken").asText()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.seq").value(1));
+        assertThat(mvc.perform(get("/api/v1/submissions/" + originalId + "/file").header("Authorization", MANAGER))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray()).containsExactly(original);
+        assertThat(mvc.perform(get("/api/v1/submissions/" + correctedId + "/file").header("Authorization", MANAGER))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray()).containsExactly(corrected);
+        mvc.perform(get("/api/v1/submissions/" + originalId).header("Authorization", MANAGER))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("DRAFT"))
+                .andExpect(jsonPath("$.seq").isEmpty());
+    }
+
+    /** 합성 양식의 비용 XML만 메모리에서 바꿔 입력 오류를 구성한다.
+     * Args: workbook 합성 XLSX, before 치환할 XML, after 대체 XML.
+     * Returns: 별도 XLSX 바이트. Raises: ZIP I/O 오류·치환 대상 부재의 단언 실패.
+     * Side Effects: 없음; 원본 배열·실제 Data 파일을 수정하거나 임시 파일을 생성하지 않는다.
+     */
+    private byte[] replaceExpenseXml(byte[] workbook, String before, String after) throws Exception {
+        var output = new ByteArrayOutputStream();
+        boolean replaced = false;
+        try (var input = new ZipInputStream(new ByteArrayInputStream(workbook));
+             var zip = new ZipOutputStream(output)) {
+            ZipEntry entry;
+            while ((entry = input.getNextEntry()) != null) {
+                byte[] content = input.readAllBytes();
+                if ("xl/worksheets/sheet2.xml".equals(entry.getName())) {
+                    String xml = new String(content, StandardCharsets.UTF_8);
+                    assertThat(xml).contains(before);
+                    content = xml.replace(before, after).getBytes(StandardCharsets.UTF_8);
+                    replaced = true;
+                }
+                zip.putNextEntry(new ZipEntry(entry.getName()));
+                zip.write(content);
+                zip.closeEntry();
+            }
+        }
+        assertThat(replaced).isTrue();
+        return output.toByteArray();
+    }
+
     /** 미사용 행 수를 전달하고 구버전 저장 결과와 결과 없는 실패는 0으로 조회한다.
      * Args: 없음. Returns: 없음. Raises: HTTP/JSON/DB/검증 오류.
      * Side Effects: 메모리 DB의 합성 결과만 저장·변경하며 테스트 후 롤백; 파일 생성 없음.
@@ -485,9 +608,17 @@ class DemoIntegrationTests {
      * Raises: HTTP/검증 오류. Side Effects: 메모리 DB에 원본·작업 등록.
      */
     private String upload(String requestId, byte[] bytes) throws Exception {
+        return upload(requestId, bytes, "demo-test-upload-001");
+    }
+
+    /** 서로 다른 전체 업로드를 별도 멱등 키로 접수한다.
+     * Args: requestId 요청, bytes 메모리 양식, key 업로드 멱등 키. Returns: DRAFT ID.
+     * Raises: HTTP/검증 오류. Side Effects: 메모리 DB에 원본·작업 등록.
+     */
+    private String upload(String requestId, byte[] bytes, String key) throws Exception {
         byte[] response = mvc.perform(multipart("/api/v1/submission-requests/" + requestId + "/submissions")
                 .file(new MockMultipartFile("file", "F10_2027-PLAN.xlsx", "application/octet-stream", bytes))
-                .header("Authorization", MANAGER).header("Idempotency-Key", "demo-test-upload-001"))
+                .header("Authorization", MANAGER).header("Idempotency-Key", key))
                 .andExpect(status().isAccepted()).andReturn().getResponse().getContentAsByteArray();
         return mapper.readTree(response).path("id").asText();
     }

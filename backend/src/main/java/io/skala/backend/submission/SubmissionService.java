@@ -11,6 +11,7 @@ import io.skala.backend.security.Actor;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -23,7 +24,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Service;
 
-/** 제출 요청·원본 접수와 조회를 담당한다. 승인·금융 집계·마스터 변경은 구현 범위 밖이다. */
+/** 제출 요청 관리·공통 항목 조회·원본 접수와 업무 상태 조회를 담당한다. */
 @Service
 public class SubmissionService {
     private static final Set<String> RETRYABLE = Set.of("PARSER_TIMEOUT", "PARSER_INTERRUPTED", "PARSER_UNAVAILABLE", "PARSER_PROTOCOL_INVALID");
@@ -77,10 +78,96 @@ public class SubmissionService {
             params.add(Boolean.parseBoolean(query.get("active")));
         }
         return page(actor, query, "organizations", "SELECT * FROM organization" + where + " ORDER BY id", params,
-                row -> object("id", row.get("id").toString(), "code", row.get("code"), "name", row.get("name"), "active", row.get("active")));
+                row -> object("id", row.get("id").toString(), "code", row.get("code"), "name", row.get("name"), "active", row.get("active"), "recipients",recipients(((Number)row.get("id")).longValue())));
     }
 
-    /** 전 조직을 고정한 제출 요청을 생성한다.
+    /** 보고 항목의 실제 분류·계층을 필터와 페이지 범위에서 조회한다.
+     * Args: actor 인증 행위자, query active/kind/limit/cursor 필터.
+     * Returns: ReportItem 페이지. Raises: ApiException 미정의 필터·잘못된 enum/커서.
+     * Side Effects: 공통 분류 DB 읽기만 수행하며 항목을 생성하거나 금액을 노출하지 않는다.
+     */
+    public Map<String, Object> reportItems(Actor actor, Map<String, String> query) {
+        checkQuery(query, Set.of("active", "kind", "limit", "cursor"));
+        var params = new ArrayList<Object>();
+        String where = " WHERE 1=1";
+        if (query.containsKey("active")) {
+            if (!Set.of("true", "false").contains(query.get("active"))) throw invalid("active는 true/false입니다.");
+            where += " AND active=?";
+            params.add(Boolean.parseBoolean(query.get("active")));
+        }
+        if (query.containsKey("kind")) {
+            if (!Set.of("REVENUE", "COST", "DERIVED").contains(query.get("kind"))) throw invalid("보고 항목 구분을 확인하세요.");
+            where += " AND kind=?";
+            params.add(query.get("kind"));
+        }
+        return page(actor, query, "report-items", "SELECT * FROM report_item" + where + " ORDER BY display_order,id", params,
+                row -> object("id", row.get("id").toString(), "code", row.get("code"), "name", row.get("name"),
+                        "kind", row.get("kind"), "parentId", row.get("parent_id") == null ? null : row.get("parent_id").toString(),
+                        "isLeaf", row.get("is_leaf"), "calculationCode", row.get("calculation_code"),
+                        "displayOrder", row.get("display_order"), "active", row.get("active")));
+    }
+
+    /** 제출 요청의 안내·표시 기한·개폐 상태만 현재 토큰과 멱등 키로 변경한다.
+     * Args: actor 기획자, requestId 요청 ID, key 멱등 키, input 생략과 null을 구분하는 변경 JSON.
+     * Returns: 갱신된 요청 상세의 200 또는 같은 명령의 저장 응답.
+     * Raises: ApiException 권한·입력·토큰 충돌·확정 계획 재개방 오류.
+     * Side Effects: 계획→요청 순서로 잠그고 요청 헤더와 멱등 응답만 갱신한다. 제출·소명·대상은 보존한다.
+     */
+    public CommandExecutor.Result updateRequest(Actor actor, String requestId, String key, JsonNode input) {
+        actor.requireRole("PLANNER");
+        long request = id(requestId);
+        if (input == null || !input.isObject() || input.size() < 2 || !input.path("expectedStateToken").isTextual()
+                || input.path("expectedStateToken").asText().isBlank()) throw invalid("현재 상태 토큰과 변경할 필드가 필요합니다.");
+        input.fieldNames().forEachRemaining(field -> {
+            if (!Set.of("expectedStateToken", "message", "dueAt", "status", "organizationIds").contains(field)) throw invalid("정의되지 않은 변경 필드입니다.");
+        });
+        if (input.has("message") && !input.get("message").isNull()
+                && (!input.get("message").isTextual() || input.get("message").textValue().length() > 5000)) throw invalid("안내는 5000자 이하 문자열 또는 null입니다.");
+        if (input.has("status") && (!input.get("status").isTextual()
+                || !Set.of("OPEN", "CLOSED").contains(input.get("status").textValue()))) throw invalid("요청 상태는 OPEN/CLOSED입니다.");
+        OffsetDateTime dueAt = requestDueAt(input);
+        List<String> selectedIds = null;
+        if (input.has("organizationIds")) {
+            if (!input.get("organizationIds").isArray() || input.get("organizationIds").isEmpty()) throw invalid("요청할 조직을 선택하세요.");
+            selectedIds = new ArrayList<>();
+            for (var value : input.get("organizationIds")) { if (!value.isTextual()) throw invalid("조직 ID는 문자열입니다."); selectedIds.add(value.asText()); }
+        }
+        final List<String> organizationsToSelect = selectedIds;
+        String route = "/api/v1/submission-requests/" + request;
+        return commands.execute(actor, "PATCH " + route, key,
+                hash(json(mapper.convertValue(input, TreeMap.class)).getBytes(StandardCharsets.UTF_8)), () -> {
+            var row = lockRequest(actor, request);
+            if (!input.path("expectedStateToken").asText().equals(requestView(actor, row, false).get("stateToken"))) {
+                throw conflict("RESOURCE_CHANGED", "요청이 변경되었습니다. 최신 상태를 다시 확인하세요.");
+            }
+            Object status = input.has("status") ? input.get("status").textValue() : row.get("status");
+            if ("OPEN".equals(status) && "ANNUAL_PLAN".equals(row.get("type")) && !"COLLECTING".equals(row.get("plan_status"))) {
+                throw conflict("ANNUAL_PLAN_LOCKED", "확정된 연간 계획 요청은 다시 열 수 없습니다.");
+            }
+            if (organizationsToSelect != null) {
+                if (!"OPEN".equals(status) || ("ANNUAL_PLAN".equals(row.get("type")) && !"COLLECTING".equals(row.get("plan_status"))))
+                    throw conflict("REQUEST_CLOSED", "열린 요청에서만 추가 조직에 요청할 수 있습니다.");
+                selectTargets(request, organizationsToSelect, false);
+            }
+            jdbc.sql("UPDATE submission_request SET message=?,due_at=?,status=? WHERE id=?")
+                    .params(input.has("message") ? input.get("message").isNull() ? null : input.get("message").textValue() : row.get("message"),
+                            input.has("dueAt") ? dueAt : row.get("due_at"), status, request).update();
+            return new CommandExecutor.Result(200, json(request(actor, Long.toString(request))), route);
+        });
+    }
+
+    /** 요청 PATCH의 nullable 기한을 오프셋이 있는 시각으로 검증한다.
+     * Args: input 변경 JSON. Returns: 제공된 기한 또는 생략/null의 null.
+     * Raises: ApiException 날짜 형식·자료형 오류. Side Effects: 없음; 생략 여부는 호출자가 별도로 유지한다.
+     */
+    private OffsetDateTime requestDueAt(JsonNode input) {
+        if (!input.has("dueAt") || input.get("dueAt").isNull()) return null;
+        if (!input.get("dueAt").isTextual()) throw invalid("dueAt은 오프셋이 있는 시각 문자열 또는 null입니다.");
+        try { return OffsetDateTime.parse(input.get("dueAt").textValue()); }
+        catch (DateTimeParseException exception) { throw invalid("dueAt의 날짜와 시간대 형식을 확인하세요."); }
+    }
+
+    /** 전사 필수 조직을 고정하고 선택한 조직에 제출 요청을 생성한다.
      * Args: actor 기획 담당자, key 멱등키, input 검증된 입력.
      * Returns: 최초 생성 또는 동일 명령의 저장 응답. Raises: ApiException 계획/중복/대상 오류.
      * Side Effects: 계획·요청·대상·멱등 응답을 한 DB 트랜잭션에서 생성.
@@ -114,8 +201,32 @@ public class SubmissionService {
                     INSERT INTO request_target(request_id,organization_id) SELECT ?,id FROM organization WHERE active=TRUE
                     """).param(requestId).update();
             if (targetCount == 0) throw conflict("REQUEST_TARGETS_EMPTY", "제출 대상 조직이 없습니다.");
+            if (input.organizationIds() != null) selectTargets(requestId, input.organizationIds(), true);
             return new CommandExecutor.Result(201, json(request(actor, Long.toString(requestId))), route + "/" + requestId);
         });
+    }
+
+    /** 고정된 전사 대상 안에서 실제 요청 조직을 선정하며 이미 발송된 대상은 제거하지 않는다.
+     * Args: requestId 요청, organizationIds 선택 조직, initial 최초 생성 여부.
+     * Returns: 없음. Raises: ApiException 빈값·중복·대상 밖 조직. Side Effects: 현재 트랜잭션의 selected만 갱신하며 마스터 필수 조직 집합은 보존한다.
+     */
+    private void selectTargets(long requestId,List<String> organizationIds,boolean initial) {
+        if(organizationIds.isEmpty()||organizationIds.size()>1000) throw invalid("1개 이상의 요청 대상 조직을 선택하세요.");
+        var selected=new java.util.TreeSet<Long>();
+        for(String organizationId:organizationIds) if(!selected.add(id(organizationId))) throw invalid("중복된 조직을 선택할 수 없습니다.");
+        var available=new java.util.HashSet<Long>();
+        for(var target:rows("SELECT organization_id FROM request_target WHERE request_id=? AND excluded=FALSE",requestId)) available.add(((Number)target.get("organization_id")).longValue());
+        if(!available.containsAll(selected)) throw invalid("요청 생성 시 고정된 사업조직 중에서 선택하세요.");
+        if(initial) jdbc.sql("UPDATE request_target SET selected=FALSE WHERE request_id=?").param(requestId).update();
+        for(Long organizationId:selected) jdbc.sql("UPDATE request_target SET selected=TRUE WHERE request_id=? AND organization_id=?").params(requestId,organizationId).update();
+    }
+
+    /** 등록된 조직 담당자만 수신 대상 정보로 읽는다.
+     * Args: organizationId 조직. Returns: 실제 활성 담당자의 ID·이름·이메일 목록. Raises: DB 오류. Side Effects: DB 읽기만 수행하며 이메일을 추정하거나 발송하지 않는다.
+     */
+    private List<Map<String,Object>> recipients(long organizationId) {
+        return rows("SELECT id,name,email FROM app_user WHERE organization_id=? AND role='ORG_MANAGER' AND active=TRUE ORDER BY id",organizationId)
+                .stream().map(row->object("id",row.get("id").toString(),"name",row.get("name"),"email",row.get("email"))).toList();
     }
 
     /** 요청함을 권한과 필터에 따라 조회한다.
@@ -127,7 +238,7 @@ public class SubmissionService {
         var params = new ArrayList<Object>();
         String where = " WHERE 1=1";
         if (!actor.role().equals("PLANNER")) {
-            where += " AND EXISTS (SELECT 1 FROM request_target t WHERE t.request_id=r.id AND t.organization_id=? AND t.excluded=FALSE)";
+            where += " AND EXISTS (SELECT 1 FROM request_target t WHERE t.request_id=r.id AND t.organization_id=? AND t.excluded=FALSE AND t.selected=TRUE)";
             params.add(id(actor.organization().id()));
         }
         where += filters(query, params, false);
@@ -166,7 +277,7 @@ public class SubmissionService {
         String fingerprint = hash(json(List.of(requestId, filename, sourceHash)).getBytes(StandardCharsets.UTF_8));
         return commands.execute(actor, "POST " + route, key, fingerprint, () -> {
             jdbc.sql("SELECT id FROM organization WHERE id=? FOR UPDATE").param(id(actor.organization().id())).query(Long.class).single();
-            var row = requestRow(actor, request);
+            var row = lockRequest(actor, request);
             if (!row.get("status").equals("OPEN")) throw conflict("REQUEST_CLOSED", "닫힌 요청입니다.");
             if (row.get("type").equals("ANNUAL_PLAN") && !row.get("plan_status").equals("COLLECTING")) {
                 throw conflict("ANNUAL_PLAN_LOCKED", "연간 계획이 이미 확정되었습니다.");
@@ -181,18 +292,10 @@ public class SubmissionService {
                     throw conflict("PLAN_SOURCE_MISSING", "해당 조직의 확정 계획본이 없습니다.");
                 }
             }
-            if (count("SELECT COUNT(*) FROM submission WHERE organization_id=? AND status='PENDING'", id(actor.organization().id())) > 0) {
+            if (count("SELECT COUNT(*) FROM submission WHERE organization_id=? AND request_id=? AND status='PENDING'", id(actor.organization().id()), request) > 0) {
                 throw conflict("PENDING_ALREADY_EXISTS", "검토 중인 제출본이 있습니다.");
             }
-            if (count("""
-                    SELECT COUNT(*) FROM submission rejected
-                    WHERE rejected.organization_id=? AND rejected.request_id<>? AND rejected.status='REJECTED'
-                      AND rejected.seq=(SELECT MAX(latest.seq) FROM submission latest
-                          WHERE latest.organization_id=rejected.organization_id
-                            AND latest.request_id=rejected.request_id AND latest.status<>'DRAFT')
-                    """, id(actor.organization().id()), request) > 0) {
-                throw conflict("RESUBMISSION_SCOPE_CONFLICT", "재제출 요청을 받은 기간의 파일을 먼저 제출하세요.");
-            }
+
             if (count("""
                     SELECT COUNT(*) FROM submission s JOIN parsing_job j ON j.submission_id=s.id
                     WHERE s.organization_id=? AND j.status IN ('QUEUED','RUNNING')
@@ -216,9 +319,16 @@ public class SubmissionService {
      * Returns: 제출 요약 페이지. Raises: ApiException 잘못된 필터/다른 조직 필터. Side Effects: DB 읽기.
      */
     public Map<String, Object> submissions(Actor actor, Map<String, String> query) {
-        checkQuery(query, Set.of("requestId", "organizationId", "year", "month", "type", "status", "limit", "cursor"));
+        checkQuery(query, Set.of("requestId", "organizationId", "year", "month", "type", "status", "submittedOnly", "limit", "cursor"));
         var params = new ArrayList<Object>();
         String where = " WHERE 1=1";
+        if (query.containsKey("submittedOnly")) {
+            if (!Set.of("true", "false").contains(query.get("submittedOnly"))) throw invalid("submittedOnly는 true/false입니다.");
+            if ("true".equals(query.get("submittedOnly"))) {
+                if ("DRAFT".equals(query.get("status"))) throw invalid("제출 완료 필터와 초안 상태를 함께 선택할 수 없습니다.");
+                where += " AND s.status<>'DRAFT'";
+            }
+        }
         if (query.containsKey("organizationId")) {
             String organizationId = query.get("organizationId");
             if (!actor.canAccessOrganization(organizationId)) throw new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "다른 조직을 조회할 수 없습니다.");
@@ -259,7 +369,7 @@ public class SubmissionService {
         var items = new ArrayList<JsonNode>();
         var combined = new ArrayList<JsonNode>();
         result.path("diagnostics").forEach(combined::add);
-        combined.addAll(validation.diagnostics(submissionId));
+        combined.addAll(validation.diagnostics(submissionId, result));
         for (JsonNode diagnostic : combined) {
             if (query.containsKey("severity") && !query.get("severity").equals(diagnostic.path("severity").asText())) continue;
             if (query.containsKey("stage") && !query.get("stage").equals(diagnostic.path("stage").asText())) continue;
@@ -315,10 +425,22 @@ public class SubmissionService {
     private Map<String, Object> requestRow(Actor actor, long requestId) {
         var found = rows(REQUEST_SQL + " WHERE r.id=?", requestId);
         if (found.isEmpty() || (!actor.role().equals("PLANNER")
-                && count("SELECT COUNT(*) FROM request_target WHERE request_id=? AND organization_id=? AND excluded=FALSE", requestId, id(actor.organization().id())) == 0)) {
+                && count("SELECT COUNT(*) FROM request_target WHERE request_id=? AND organization_id=? AND excluded=FALSE AND selected=TRUE", requestId, id(actor.organization().id())) == 0)) {
             throw notFound();
         }
         return found.getFirst();
+    }
+
+    /** 개폐·업로드가 확정·최종 제출과 같은 계획→요청 순서로 상태를 읽도록 잠근다.
+     * Args: actor 인증 행위자, requestId 요청 ID. Returns: 잠금 이후 새로 읽은 요청 행.
+     * Raises: ApiException 없는 요청·권한 오류, DB 잠금 충돌.
+     * Side Effects: 호출 트랜잭션 종료까지 계획·요청 행 잠금; 데이터 변경 없음.
+     */
+    private Map<String, Object> lockRequest(Actor actor, long requestId) {
+        var row = requestRow(actor, requestId);
+        jdbc.sql("SELECT id FROM annual_plan WHERE id=? FOR UPDATE").param(row.get("annual_plan_id")).query(Long.class).single();
+        jdbc.sql("SELECT id FROM submission_request WHERE id=? FOR UPDATE").param(requestId).query(Long.class).single();
+        return requestRow(actor, requestId);
     }
 
     /** 단일 제출 접근 범위를 확인한다.
@@ -340,17 +462,30 @@ public class SubmissionService {
         params.add(row.get("id"));
         String where = "";
         if (!actor.role().equals("PLANNER")) {
-            where = " AND t.organization_id=?";
+            where = " AND t.organization_id=? AND t.selected=TRUE";
             params.add(id(actor.organization().id()));
         }
+        boolean includeDraft = detail || actor.role().equals("ORG_MANAGER");
+        String draftFields = includeDraft ? "draft.id AS draft_id,draft_job.status AS draft_parsing_status"
+                : "NULL AS draft_id,NULL AS draft_parsing_status";
+        String draftJoins = includeDraft ? """
+                LEFT JOIN submission draft ON draft.id=(
+                    SELECT d.id FROM submission d WHERE d.request_id=t.request_id AND d.organization_id=t.organization_id
+                    AND d.status='DRAFT' AND (latest.id IS NULL OR d.uploaded_at>COALESCE(latest.submitted_at,latest.uploaded_at))
+                    ORDER BY d.uploaded_at DESC,d.id DESC LIMIT 1)
+                LEFT JOIN parsing_job draft_job ON draft_job.submission_id=draft.id
+                """ : "";
         var targets = jdbc.sql("""
-                SELECT o.id,o.code,o.name,
+                SELECT o.id,o.code,o.name,t.selected,
                     (SELECT COUNT(*) FROM submission d WHERE d.request_id=t.request_id AND d.organization_id=t.organization_id AND d.status='DRAFT') AS draft_count,
-                    latest.id AS latest_id,latest.status AS latest_status
+                    latest.id AS latest_id,latest.status AS latest_status,
+                """ + draftFields + """
+
                 FROM request_target t JOIN organization o ON o.id=t.organization_id
                 LEFT JOIN submission latest ON latest.id=(
                     SELECT s.id FROM submission s WHERE s.request_id=t.request_id AND s.organization_id=t.organization_id
                     AND s.status<>'DRAFT' ORDER BY s.seq DESC LIMIT 1)
+                """ + draftJoins + """
                 WHERE t.request_id=? AND t.excluded=FALSE
                 """ + where + " ORDER BY o.id").params(params).query().listOfRows();
         var targetViews = new ArrayList<Map<String, Object>>();
@@ -360,21 +495,69 @@ public class SubmissionService {
             Object latestId = target.get("latest_id");
             String latestStatus = latestId == null ? "NOT_SUBMITTED"
                     : target.get("latest_status").toString();
-            if (latestId != null) submitted++;
-            if (latestStatus.equals("APPROVED")) approved++;
+            if (Boolean.TRUE.equals(target.get("selected")) && latestId != null) submitted++;
+            if (Boolean.TRUE.equals(target.get("selected")) && latestStatus.equals("APPROVED")) approved++;
             targetViews.add(object("organization", object("id", target.get("id").toString(), "code", target.get("code"), "name", target.get("name")),
+                    "selected",target.get("selected"),"recipients",recipients(((Number)target.get("id")).longValue()),
                     "latestSubmittedSubmissionId", latestId == null ? null : latestId.toString(),
-                    "latestStatus", latestStatus, "draftCount", target.get("draft_count")));
+                    "latestStatus", latestStatus, "draftCount", target.get("draft_count"),
+                    "latestDraftSubmissionId", target.get("draft_id") == null ? null : target.get("draft_id").toString(),
+                    "latestDraftParsingStatus", target.get("draft_parsing_status")));
         }
         var dto = object("id", row.get("id").toString(), "annualPlanId", row.get("annual_plan_id").toString(),
                 "type", row.get("type"), "year", row.get("year"), "month", row.get("month"),
                 "status", row.get("status"), "message", row.get("message"), "dueAt", instant(row.get("due_at")),
                 "requestedBy", object("id", row.get("requested_by").toString(), "name", row.get("requester_name")),
                 "requestedAt", instant(row.get("requested_at")), "targetCount", targets.size(),
+                "requiredOrganizationCount",targets.size(),"selectedTargetCount",targets.stream().filter(target->Boolean.TRUE.equals(target.get("selected"))).count(),
                 "submittedCount", submitted, "approvedCount", approved);
         dto.put("stateToken", hash(json(List.of(dto, targets.stream().map(t -> t.get("id")).toList())).getBytes(StandardCharsets.UTF_8)));
         if (detail) dto.put("targets", targetViews);
+        if (actor.role().equals("ORG_MANAGER") && !targetViews.isEmpty()) dto.put("myWorkflow", workflowView(actor, row, targetViews.getFirst()));
         return dto;
+    }
+
+    /** 조직 요청함에 실제 제출·초안·소명 상태와 새 업로드를 막는 기존 업무 조건을 연결한다.
+     * Args: actor 본인 조직 담당자, request 요청 행, target 본인 조직 대상 DTO.
+     * Returns: 최신 제출/초안 ID·소명 수·canUpload·차단 코드/관련 제출 ID.
+     * Raises: DB 또는 저장 검증 근거 오류. Side Effects: 본인 조직 자료만 조회하며 상태를 변경하지 않는다.
+     */
+    private Map<String, Object> workflowView(Actor actor, Map<String, Object> request, Map<String, Object> target) {
+        var workflow = object("latestSubmittedSubmissionId", target.get("latestSubmittedSubmissionId"),
+                "latestStatus", target.get("latestStatus"), "latestDraftSubmissionId", target.get("latestDraftSubmissionId"),
+                "latestDraftParsingStatus", target.get("latestDraftParsingStatus"),
+                "requiredCount", null, "unansweredCount", null, "pendingReviewCount", null,
+                "canUpload", true, "blockingCode", null, "blockingSubmissionId", null);
+        Object selected = "PENDING".equals(target.get("latestStatus")) ? target.get("latestSubmittedSubmissionId")
+                : target.get("latestDraftSubmissionId") != null ? target.get("latestDraftSubmissionId") : target.get("latestSubmittedSubmissionId");
+        if (selected != null) {
+            var readiness = validation.readiness(object("id", selected));
+            for (String field : List.of("requiredCount", "unansweredCount", "pendingReviewCount")) workflow.put(field, readiness.get(field));
+        }
+        long organizationId = id(actor.organization().id());
+        var pending = rows("SELECT id FROM submission WHERE organization_id=? AND request_id=? AND status='PENDING' ORDER BY id DESC LIMIT 1", organizationId, request.get("id"));
+
+        String blocked = null;
+        Object blockingSubmission = null;
+        if (!pending.isEmpty()) { blocked = "PENDING_ALREADY_EXISTS"; blockingSubmission = pending.getFirst().get("id").toString(); }
+        else if (!"OPEN".equals(request.get("status"))) blocked = "REQUEST_CLOSED";
+        else if ("ANNUAL_PLAN".equals(request.get("type")) && !"COLLECTING".equals(request.get("plan_status"))) blocked = "ANNUAL_PLAN_LOCKED";
+        else if ("MONTHLY_ACTUAL".equals(request.get("type"))) {
+            if (!"CONFIRMED".equals(request.get("plan_status"))) blocked = "ANNUAL_PLAN_NOT_CONFIRMED";
+            else if (count("""
+                    SELECT COUNT(*) FROM request_target t JOIN submission_request r ON r.id=t.request_id
+                    WHERE r.annual_plan_id=? AND r.type='ANNUAL_PLAN' AND t.organization_id=?
+                      AND t.excluded=FALSE AND t.confirmed_plan_submission_id IS NOT NULL
+                    """, request.get("annual_plan_id"), organizationId) == 0) blocked = "PLAN_SOURCE_MISSING";
+        }
+        if (blocked == null && count("""
+                SELECT COUNT(*) FROM submission s JOIN parsing_job j ON j.submission_id=s.id
+                WHERE s.organization_id=? AND j.status IN ('QUEUED','RUNNING')
+                """, organizationId) >= 10) blocked = "PARSER_BUSY";
+        workflow.put("canUpload", blocked == null);
+        workflow.put("blockingCode", blocked);
+        workflow.put("blockingSubmissionId", blockingSubmission);
+        return workflow;
     }
 
     /** 저장된 제출 헤더를 공개 요약으로 변환한다.
@@ -585,7 +768,11 @@ public class SubmissionService {
             @jakarta.validation.constraints.NotNull @jakarta.validation.constraints.Min(2000) @jakarta.validation.constraints.Max(9999) Integer year,
             @jakarta.validation.constraints.Min(1) @jakarta.validation.constraints.Max(12) Integer month,
             @jakarta.validation.constraints.Size(max=5000) String message,
-            OffsetDateTime dueAt) {}
+            OffsetDateTime dueAt,
+            @jakarta.validation.constraints.Size(min=1,max=1000) List<@jakarta.validation.constraints.NotBlank String> organizationIds) {
+        /** 기존 전 조직 요청 호출을 유지한다. Args: type 유형, year 연도, month 월, message 안내, dueAt 기한. Returns: 없음. Raises: 없음. Side Effects: 없음. */
+        public RequestInput(String type,Integer year,Integer month,String message,OffsetDateTime dueAt) { this(type,year,month,message,dueAt,null); }
+    }
 
     /** 기존 원본의 재파싱 기대 상태. */
     public record RetryInput(@jakarta.validation.constraints.NotBlank String expectedStateToken,

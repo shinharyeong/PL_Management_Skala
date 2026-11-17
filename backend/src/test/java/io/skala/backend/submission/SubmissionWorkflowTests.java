@@ -57,7 +57,8 @@ class SubmissionWorkflowTests {
                 new ClassPathResource("db/migration/V2__validated_financial_submissions.sql"),
                 new ClassPathResource("db/migration/V3__annual_plan_masters.sql"),
                 new ClassPathResource("db/migration/V4__monthly_masters.sql"),
-                new ClassPathResource("db/migration/V5__submission_reviews_and_gap_thresholds.sql")).execute(database);
+                new ClassPathResource("db/migration/V5__submission_reviews_and_gap_thresholds.sql"),
+                new ClassPathResource("db/migration/V6__prd_review_workflow.sql")).execute(database);
         jdbc = JdbcClient.create(database);
         mapper = new ObjectMapper();
         jdbc.sql("INSERT INTO organization(id,code,name) VALUES (1,'D100','합성 조직'),(2,'D200','다른 조직')").update();

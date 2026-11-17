@@ -69,14 +69,16 @@ public class SecurityConfiguration {
     @Bean
     @Profile("local")
     SecurityFilterChain localSecurityFilterChain(HttpSecurity http, Environment environment,
-            ActorResolver actors, SecurityProblemHandler problems, ObjectProvider<DemoAccounts> demoAccounts) throws Exception {
+            ActorResolver actors, SecurityProblemHandler problems, ObjectProvider<DemoAccounts> demoAccounts,
+            ObjectProvider<EmailCodeSessions> emailSessions) throws Exception {
         configureStatelessBoundary(http, problems);
-        http.addFilterBefore(new LocalBearerAuthenticationFilter(environment, actors, problems, demoAccounts.getIfAvailable()),
+        http.addFilterBefore(new LocalBearerAuthenticationFilter(environment, actors, problems, demoAccounts.getIfAvailable(), emailSessions.getIfAvailable()),
                 AnonymousAuthenticationFilter.class);
         http.authorizeHttpRequests(authorize -> {
             authorize.requestMatchers("/actuator/health").permitAll();
             if (environment.acceptsProfiles(Profiles.of("demo"))) {
                 authorize.requestMatchers(HttpMethod.POST, "/api/dev/session").permitAll();
+                authorize.requestMatchers(HttpMethod.POST, "/api/v1/auth/codes", "/api/v1/auth/sessions").permitAll();
             }
             authorize.anyRequest().authenticated();
         });

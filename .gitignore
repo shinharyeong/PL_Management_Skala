@@ -20,6 +20,9 @@ Data/
 output/
 logs/
 
+# 제거한 AI 실험의 기존 로컬 비밀 설정·캐시·결과는 추적하지 않는다.
+/parser_ai/
+
 # 원본 스프레드시트·DB 덤프와 로컬 DB 파일
 *.xlsx
 *.xls

@@ -4,12 +4,12 @@
 
 | 항목 | 내용 |
 | --- | --- |
-| 문서 버전 | 0.9-draft · 연간 확정·수정/Gap 소명·월간 승인 마스터 연결 |
-| 상태 | ERD v0.2와 V3~V5 물리 확장 기반 전체 설계 39개 중 36개 구현. 연간 확정, 수정/Gap 소명, 연간·월간 승인 및 마스터 조회 연결. COM-03·REQ-04·REP-01은 후속 구현 |
+| 문서 버전 | 0.11-draft · PRD 화면·보고 항목 Gap·선택 요청·검토 업무 연결 |
+| 상태 | V1~V8 기반 서비스 56개 메서드·경로 구현. PRD 검토·소명 첨부·비교·양식·인앱 알림·로컬 이메일 코드 연결 |
 | 기준 | [논리 ERD](https://github.com/shinharyeong/skala_final_project/blob/8c84d2783c9beb2f876810387baa7f9e3f503a50/docs/development/erd.md), [ERD PR #16](https://github.com/shinharyeong/skala_final_project/pull/16), [PR 기준 스키마](https://github.com/shinharyeong/skala_final_project/blob/8c84d2783c9beb2f876810387baa7f9e3f503a50/docs/development/erd.md) |
 | 확인한 백엔드 | Spring Boot 3.4.1 · Java 21 · JDBC/Flyway · PostgreSQL, 테스트만 H2 |
-| 범위 | 요청, 연간 계획, 전체 파일 제출, 파싱·검증, 금액 수정·OP Gap 소명, 승인·반려, 공식 마스터, 보고 데이터 |
-| 범위 밖 | 로그인 제공자·회원 관리, 조직/보고 항목 관리 화면, 알림 발송 구현체, 보고 파일 포맷, 미지원 Excel 양식 |
+| 범위 | 요청, 연간 계획, 전체 파일 제출, 파싱·검증, 보고 항목 Gap 소명과 변경 근거, 승인·반려, 공식 마스터, 보고 데이터 |
+| 범위 밖 | 운영 이메일 발송·SSO 제공자·회원 관리, 조직/보고 항목 관리 화면, 외부 알림 발송, PPT·PNG 출력, 미지원 Excel 양식 |
 | 관련 문서 | [현재 DB 매핑](db-mapping.md), [로컬 파서 출력 계약](../../parser/docs/development/output-contract.md), [연결·실행 범위](backend-integration.md) |
 
 기존 `POST /api/v1/excel/parse`와 `proposal-0.1` 예시는 이 서비스 명세로 대체한다. 파서 함수를 외부에 직접 노출하는 API는 두지 않는다. 기존 파서 출력 계약은 변경하지 않는다. 이 문서의 예시 ID·금액·이름은 모두 가상이다.
@@ -17,20 +17,22 @@
 PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설계 커밋을 기준으로 하며, 합의한 업무 규칙·전체 API 설계와 현재 실행 가능한 구현 범위를 구분한다. 실제 구현과 검증 기록은 백엔드 연결 문서와 로컬 실행 환경 문서를 따른다.
 
 
-현재 구현은 총 39개 설계 경로 중 36개다: COM-01/02, REQ-01/02/03, PLAN-01/02, SUB-01~13, AMAS-01~04, REV-01~05, GAP-01~03, MAS-01~04. 컨트롤러의 메서드·경로를 기준으로 센 수이며 개발 전용 `/api/dev/session`, `/api/dev/template`는 제외한다. 미구현은 COM-03 보고 항목 목록, REQ-04 요청 수정, REP-01 보고 데이터 구성 3개다. 이 세 계약은 아래 목록과 본문에서 후속 설계로 구분한다.
+현재 구현은 총 56개 서비스 메서드·경로다: 기존 41개에 AUTH 3개, NOTI 2개, TEMPLATE 3개, REV 일괄 명령 1개, ATTACH 3개, COMPARE 1개, EXPORT 2개를 추가했다. 컨트롤러의 메서드·경로 기준이며 개발 전용 `/api/dev/session`, `/api/dev/template`는 제외한다. 경로 구현 수는 운영 인증·브라우저 검증 완료를 뜻하지 않는다.
 
 파싱 성공 후에는 검증 전 `DRAFT + NOT_RUN + canSubmit=false`이며, 담당자가 validation·필수 소명 답변·submit을 실행해야 `PENDING`이 된다. 연간 PLAN 1~12월과 월간 요청의 1~요청월 ACTUAL·이후 ESTIMATE 전체 범위를 검증한다. 기획자는 소명을 수용 또는 재요청하고 모든 필수 소명이 수용된 제출본을 승인한다. 연간·월간 마스터는 승인 트랜잭션에서 발행하며, 연간 계획·Contingency 확정은 별도 PLAN-02 명령이다. 구현 경로 수가 실제 원본·동시성·브라우저 검증 완료 건수를 뜻하지는 않으며 실행 결과는 [로컬 환경](local-environment.md)에 별도로 기록한다.
 
 검증은 파서 내부 `submissionData.adapterVersion=financial-submission/1.0`의 조직·월·분류·원 금액·답안지 합계 근거를 확인한다. 구버전 파서 결과에 이 근거가 없으면 `SUBMISSION_ADAPTER_REQUIRED`를 반환한다. 유효 상세는 검증 초안에 적재할 수 있지만 오류가 하나라도 있으면 `complete=false`, `canSubmit=false`, 보고값은 `UNRESOLVED/null`이다. 승인·공식 집계와 구분한다. 인증은 기존 local Bearer와 local·demo 체험 세션 범위이며 운영 로그인 정책을 대신하지 않는다.
+
+검증 객체의 금융 무결성 `policyVersion`은 기존 annual-plan/1.0·monthly-actual/1.0이며, 업무 비교 `comparisonContext.reviewPolicyVersion`과 `review_item.review_policy_version`만 2.0이다. 두 버전의 목적을 혼동하지 않으며 확정 과거 스냅샷을 일괄 재작성하지 않는다.
 
 ## 1. 설계 원칙과 권한
 
 ### 합의한 업무 규칙
 
 - 최초 제출·재제출 모두 조직의 전체 스냅샷이다. 파일·금액을 일부 PATCH하는 API는 없다.
-- 금액이 수정된 모든 보고 항목에 소명이 필요하다. 기준 이하 수정과 같은 항목 안의 증감 상쇄도 포함한다.
+- 새 PRD의 `reviewPolicyVersion=annual-plan/2.0 또는 monthly-actual/2.0`에서는 Gap 기준을 초과했거나 담당자가 명시적으로 소명을 요청한 보고 항목이 필수다. 기준 이하 변경·증감 상쇄는 근거로 남지만 자동 필수가 아니다. 기존 1.0 검증의 모든 금액 변경 필수 정책은 보존한다.
 - 보고 집계 키는 조직·보고 항목·연월·시나리오다. 매출은 관리분류, 비용은 실적집계기준으로 연결하며 팀·과제·셀 좌표는 상세 근거다.
-- 손익 Gap은 확인된 영업이익(OP)에 적용한다. 매출·비용 계정을 임의로 짝짓지 않는다.
+- 신규 월간 Gap은 답안지에 매핑된 매출·비용 보고 항목과 OP를 각각 판정한다. 실적/계획·추정/추정·추정/계획을 구분하고 원본 셀은 근거로 연결한다. 매출·비용 계정을 임의로 짝짓지 않는다. 과거 OP 전용 비교는 덮어쓰지 않는다.
 - 소명 보완은 같은 제출본의 새 소명 회차다. 제출 회차·금융값·마스터를 바꾸지 않는다.
 - 최초 월 마스터는 고정된 전 조직 승인 후 발행한다. 이후에는 새로 승인된 조직만 기존 구성에서 교체한다.
 - 확정 연간 계획·Contingency, 제출 완료 이후 숫자·분류·비교 기준, 과거 마스터 구성은 불변이다.
@@ -58,7 +60,7 @@ PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설�
 
 조직 담당자의 `organizationId`는 인증 컨텍스트에서 결정한다. 다른 조직 ID를 필터로 지정하면 `403 FORBIDDEN`이며, 권한 밖 개별 리소스·원본 참조 조회는 `404 RESOURCE_NOT_FOUND`로 응답한다. 모든 하위 조회도 제출본의 소속을 확인한다. P 역할이 있다고 조직을 대신해 답변하거나 파일을 제출할 수는 없다.
 
-인증된 사용자 식별 방식은 로그인 정책 확정 후 정한다. JWT·쿠키·SSO를 이미 구현된 계약으로 가정하지 않는다. 쿠키 방식을 선택하면 변경 요청의 CSRF 방어도 함께 정한다.
+local+demo에서는 등록된 이메일의 3분 코드·1분 재요청 제한·8시간 세션·로그아웃을 구현한다. 코드는 실제 메일이 아닌 LOCAL_PREVIEW로 제공한다. 운영 메일·SSO·쿠키 로그인은 별도 제공자가 필요하며 이 시연 계약을 운영 인증으로 간주하지 않는다.
 
 ## 2. 공통 요청·응답 계약
 
@@ -82,7 +84,7 @@ PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설�
 
 ### 재시도와 동시성
 
-상태를 변경하는 POST와 소명 답변 PUT에는 `Idempotency-Key`가 필수다. 초기 허용 형식은 영문·숫자·`.`·`_`·`:`·`-` 8~128자다. `/gap-thresholds/preview`와 `/reports/preview`는 읽기 전용 계산이므로 제외한다. 같은 사용자·HTTP 메서드·정규 경로·키와 같은 요청 내용이면 최초 성공 결과를 반환한다. 업로드 내용 비교에는 파일 바이트 해시와 요청 ID·원본 파일명을 포함한다.
+업무 상태를 변경하는 POST·PATCH와 소명 답변 PUT에는 `Idempotency-Key`가 필수다. 인증·로그아웃은 일회용 세션 규칙, 알림 읽음은 사용자/이벤트 유일키의 반복 안전 저장을 사용하므로 멱등키를 받지 않는다. 초기 허용 형식은 영문·숫자·`.`·`_`·`:`·`-` 8~128자다. `/gap-thresholds/preview`와 `/reports/preview`, `/reports/excel`은 읽기 전용 계산이므로 제외한다. 같은 사용자·HTTP 메서드·정규 경로·키와 같은 요청 내용이면 최초 성공 결과를 반환한다. 업로드 내용 비교에는 파일 바이트 해시와 요청 ID·원본 파일명을 포함한다.
 
 - 키가 같고 내용이 다르면 `409 IDEMPOTENCY_KEY_REUSED`.
 - 같은 명령이 실행 중이면 `409 REQUEST_IN_PROGRESS`와 `Retry-After`.
@@ -103,11 +105,11 @@ PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설�
 | --- | --- | --- | --- | --- |
 | COM-01 | GET /me | B | 200 | 로그인 사용자·역할·조직 |
 | COM-02 | GET /organizations | B | 200 | P 전체, O 본인 조직 |
-| COM-03 | GET /report-items | B | 200 | 후속 설계 · 보고 계층·종류·OP 계산 코드 |
-| REQ-01 | POST /submission-requests | P | 201 | 전 조직 대상 요청 생성 |
+| COM-03 | GET /report-items | B | 200 | 보고 계층·종류·OP 계산 코드 |
+| REQ-01 | POST /submission-requests | P | 201 | 전사 필수 집합 고정·선택 조직 요청 생성 |
 | REQ-02 | GET /submission-requests | B | 200 | 요청함·요청 관리 목록 |
 | REQ-03 | GET /submission-requests/{requestId} | B | 200 | 요청·대상별 진행 현황 |
-| REQ-04 | PATCH /submission-requests/{requestId} | P | 200 | 후속 설계 · T · 안내·마감 표시·개폐 |
+| REQ-04 | PATCH /submission-requests/{requestId} | P | 200 | T · 안내·마감 표시·개폐 |
 | PLAN-01 | GET /annual-plans/{year} | P | 200 | 수집/확정 상태·선택 계획본 |
 | PLAN-02 | POST /annual-plans/{year}/confirm | P | 200 | T · 계획본과 Contingency 확정 |
 | SUB-01 | POST /submission-requests/{requestId}/submissions | O | 202 | 전체 파일 업로드·새 DRAFT |
@@ -139,15 +141,32 @@ PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설�
 | MAS-02 | GET /masters | P | 200 | 지정 월의 버전 목록 |
 | MAS-03 | GET /masters/{masterId} | P | 200 | 버전·고정 조직별 승인본 |
 | MAS-04 | GET /masters/{masterId}/report-values | P | 200 | 해당 버전의 ACTUAL 보고값 |
-| REP-01 | POST /reports/preview | P | 200 | 후속 설계 · 고정 master ID의 보고 데이터 |
+| FCT-01 | GET /submission-requests/{requestId}/forecast | P | 200 | 같은 월 요청의 최신 승인본 기준 연간 전망 |
+| REP-01 | POST /reports/preview | P | 200 | 선택한 고정 월 master ID의 실제 보고 데이터 |
+| REP-02 | POST /reports/excel | P | 200 | 같은 보고 계약의 메모리 XLSX 다운로드 |
+| AUTH-01 | POST /auth/codes | 익명·local+demo | 200 | 등록 이메일의 로컬 인증코드 발급 |
+| AUTH-02 | POST /auth/sessions | 익명·local+demo | 200 | 일회용 코드 확인·8시간 Bearer 발급 |
+| AUTH-03 | DELETE /auth/session | B·local+demo | 200 | 현재 이메일 세션 폐기 |
+| NOTI-01 | GET /notifications | P | 200 | 실제 업무 알림·필터·요약 |
+| NOTI-02 | POST /notifications/read | P | 200 | 명시한 이벤트의 사용자별 읽음 |
+| TEMPLATE-01 | GET /submission-requests/{requestId}/template | B | 200 | 실제 등록 양식 메타정보 |
+| TEMPLATE-02 | POST /submission-requests/{requestId}/template | P | 201 | 실제 XLSX 불변 이력 등록 |
+| TEMPLATE-03 | GET /submission-requests/{requestId}/template/file | B | 200 | 등록 양식 원문 다운로드 |
+| REV-06 | POST /review-items/actions | P | 200 | T · 선택·제외·기한 포함 일괄 소명 요청 |
+| ATTACH-01 | GET /review-items/{reviewId}/attachments | B | 200 | 소명 회차별 첨부 목록 |
+| ATTACH-02 | POST /review-items/{reviewId}/attachments | O | 201 | T · 현재 답변 가능한 회차에 원문 추가 |
+| ATTACH-03 | GET /review-items/{reviewId}/attachments/{attachmentId}/file | B | 200 | 권한 내 소명 첨부 원문 |
+| COMPARE-01 | GET /submissions/{submissionId}/comparison | B | 200 | 같은 조직·연도 검증본의 임의 버전 비교 |
+| EXPORT-01 | GET /masters/{masterId}/file | P | 200 | 고정 월 마스터 메모리 XLSX |
+| EXPORT-02 | GET /submissions/{submissionId}/comparison/file | B | 200 | 명시한 버전 비교의 메모리 XLSX |
 
-마스터 생성·금융값 수정·Gap 제외·임의 소명 수용 상태 PATCH·알림 발송 API는 노출하지 않는다.
+마스터 임의 생성·금융값 수정·임의 소명 수용 상태 PATCH·외부 메시지 발송 API는 노출하지 않는다. Gap 제외·선정·일괄 소명 요청은 REV-06의 잠금·이력 명령만 사용한다. 기존 REP 경로는 호환을 위해 유지하고 이번 PRD 프런트 범위에서는 보고서 메뉴를 제외한다.
 
 ### 화면별 호출 순서
 
-현재 구현된 최초 연간 제출 흐름은 `REQ-02 → SUB-01 → SUB-03 폴링 → SUB-05 → SUB-06/07/13 확인 → 최신 SUB-03 → SUB-10`이다. 원본 확인은 `SUB-08/09`를 사용한다. 기획자는 `REQ-03.targets.latestSubmittedSubmissionId → SUB-03 → SUB-06/07/08/13`으로 제출 상태·적재행·집계·진단·원본 셀을 읽는다. 초안만 있는 조직은 SUB-02의 requestId/organizationId 필터로 확인한다.
+현재 구현된 최초 연간 제출 흐름은 `REQ-02 → SUB-01 → SUB-03 폴링 → SUB-05 → SUB-06/07/13 확인 → 최신 SUB-03 → SUB-10`이다. 원본 확인은 `SUB-08/09`를 사용한다. 기획자는 `REQ-03.targets.latestSubmittedSubmissionId → SUB-03 → SUB-06/07/08/13`으로 제출 상태·적재행·집계·진단·원본 셀을 읽는다. 새 초안은 `targets.latestDraftSubmissionId`로 별도 추적하며 전체 초안 이력은 SUB-02의 requestId/organizationId 필터로 조회한다.
 
-아래는 현재 구현된 연간·월간 흐름이다. 별도 보고 데이터 생성 REP-01은 후속 계약이며 마스터 조회로 대체 구현한 것으로 간주하지 않는다.
+아래는 현재 구현된 연간·월간 흐름이다. 전망은 같은 요청의 승인본, 보고서는 선택한 월 마스터 버전의 고정 출처를 사용한다.
 
 | 화면 흐름 | 호출 순서 |
 | --- | --- |
@@ -156,7 +175,8 @@ PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설�
 | 소명 보완 | REV-05(REQUEST_CHANGES) → 조직의 REV-02 → REV-04 → 경영기획의 REV-02 → REV-05(ACCEPT) |
 | 연간 승인·확정 | SUB-11 → AMAS-01/03 → PLAN-01 → PLAN-02 |
 | 월간 요청·실적 홈 | PLAN-01(CONFIRMED) → REQ-01(MONTHLY_ACTUAL) → 제출·검토·승인 → MAS-01 → MAS-03/04 |
-| 보고 데이터 생성(후속 설계) | MAS-02에서 버전 선택 → REP-01 |
+| 승인본 기준 연간 전망 | 월 요청 선택 → FCT-01, 전 조직 승인 전에는 전사 전망 null |
+| 보고 데이터·Excel | MAS-01/02에서 실제 월·버전 선택 → REP-01, 다운로드 REP-02 |
 
 파일 자체 오류는 개별 소명 수용을 기다리지 않고 SUB-11(REJECT)로 처리한다. 최초 계획·무변경 제출처럼 필수 소명이 없으면 REV-04를 생략하지만 SUB-05는 생략하지 않는다.
 
@@ -165,8 +185,8 @@ PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설�
 ### COM-01~03
 
 - `GET /me` → `{id, email, name, role, organization: {id, code, name} | null}`. P의 organization은 null.
-- `GET /organizations?active=true` → `Page<Organization>`. active 생략 시 접근 가능한 전체 조직, 과거 제출의 비활성 조직도 식별 가능.
-- 후속 설계: `GET /report-items?active=true&kind=COST` → `Page<ReportItem>`. kind 선택 사항. 각 항목은 `id, code, name, kind, parentId, isLeaf, calculationCode, displayOrder, active`. code는 내부 보고 코드이며 원본 계정 코드가 아니다.
+- `GET /organizations?active=true` → `Page<Organization>`. 조직에 실제 활성 담당자 `recipients:[{id,name,email}]`를 포함하며 미등록 이메일을 만들지 않는다. active 생략 시 접근 가능한 전체 조직, 과거 제출의 비활성 조직도 식별 가능.
+- `GET /report-items?active=true&kind=COST` → `Page<ReportItem>`. 필터는 `active, kind, cursor, limit`이며 모두 선택이다. active는 true/false, kind는 REVENUE/COST/DERIVED다. 생략한 필터는 제한하지 않으며 `displayOrder, id` 오름차순으로 반환한다. 각 항목은 `id, code, name, kind, parentId, isLeaf, calculationCode, displayOrder, active`. parentId·calculationCode는 nullable이다. code는 내부 보고 코드이며 원본 계정 코드가 아니다. 목록은 공통 페이지·권한 범위 커서 규칙을 따른다.
 
 ### REQ-01 · 요청 생성
 
@@ -186,7 +206,7 @@ PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설�
 
 - ANNUAL_PLAN 요청 생성 시 해당 연도의 COLLECTING annual_plan을 같은 트랜잭션에서 만든다. 별도 계획 생성 API는 두지 않는다.
 - MONTHLY_ACTUAL 요청은 해당 연간 계획이 CONFIRMED여야 한다. 먼저 요청만 여는 예외는 이번 초안에 없다.
-- 대상은 생성 시점의 제출 대상 조직 전부를 서버에서 고정한다. `organizationIds` 입력을 받지 않는다. 대상이 없으면 생성하지 않는다.
+- 생성 시점의 활성 사업조직을 마스터 필수 집합으로 고정한다. `organizationIds?: string[]`는 실제 요청할 조직이며 생략하면 전체, 제공하면 중복 없는 1~1000개 기존 대상 ID다. 나머지는 `selected=false`로 유지하며 조직 요청함·접수에는 노출하지 않는다. 필수 조직이 없으면 생성하지 않는다.
 - 연도별 연간 요청 한 건, 연도·월별 월간 요청 한 건. 닫힌 요청도 재생성하지 않고 기존 요청을 사용한다.
 - 오류: `REQUEST_ALREADY_EXISTS`, `ANNUAL_PLAN_NOT_CONFIRMED`, `ANNUAL_PLAN_LOCKED`, `REQUEST_TARGETS_EMPTY`.
 
@@ -200,17 +220,33 @@ PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설�
 | type, year, month | ANNUAL_PLAN / MONTHLY_ACTUAL, 연도, 연간은 month null |
 | status, message, dueAt | OPEN / CLOSED, 안내, nullable 표시용 마감 |
 | requestedBy, requestedAt | 서버가 기록한 ActorRef·시각 |
-| targetCount, submittedCount, approvedCount | 권한 범위 내 조직 수. 제출 건수를 조직 수로 세지 않음 |
+| targetCount, requiredOrganizationCount | 권한 범위 내 고정 필수 조직 수. 마스터 집합은 선택 여부와 별개 |
+| selectedTargetCount, submittedCount, approvedCount | 실제 요청한 조직 수와 그중 제출·승인한 조직 수 |
 | stateToken | 요청 상태·안내·대상 집합에 대한 변경 검증 토큰 |
-| targets | 상세 GET에만 포함. `organization, latestSubmittedSubmissionId, latestStatus, draftCount` |
+| targets | 상세 GET에만 포함. `organization, selected, recipients, latestSubmittedSubmissionId, latestStatus, draftCount, latestDraftSubmissionId, latestDraftParsingStatus` |
+| myWorkflow | O의 목록·상세에만 포함하는 본인 조직 업무 요약. 아래 필드 참조 |
 
 latestStatus는 `NOT_SUBMITTED / PENDING / REJECTED / APPROVED`인 조회용 상태다. DRAFT만 있으면 NOT_SUBMITTED이며 가짜 제출 행을 만들지 않는다. O에게는 targets·집계도 본인 조직 범위만 반환한다. 다른 조직의 금액·제출 이력을 요청 상세에 섞지 않는다.
 
-### REQ-04 · 요청 변경 (후속 설계)
+`latestDraftSubmissionId`는 최신 완료본의 제출 시각 이후 접수된 DRAFT 중 최신 ID다. 완료본이 없으면 전체 DRAFT 중 최신을 선택하며 해당 초안이 없으면 ID·파싱 상태 모두 null이다. `draftCount`는 오래된 초안까지 포함한 전체 수라서 최신 초안 링크의 유무와 다를 수 있다. 최신 완료본의 ID·상태를 새 초안으로 덮어쓰지 않는다. 기획자 목록은 초안 파싱 정보를 조회하지 않고 상세에서 반환한다.
 
-`{expectedStateToken, message?, dueAt?, status?}`. message·dueAt의 null은 지움을 의미하고 생략은 유지다. 수정 필드는 하나 이상 필요하다. status는 OPEN/CLOSED만 가능하다.
+`myWorkflow`는 다음 필드를 반환한다.
 
-연도·월·유형·대상 집합은 수정할 수 없다. CLOSED는 새 업로드·최종 제출을 막지만 기존 PENDING 검토·소명 보완은 허용한다. 확정 연간 요청은 재개방하지 못한다. dueAt 경과로 자동 닫기·제출 차단을 하지 않는다. 개폐 방식과 마감 표시의 이 분리는 이번 API 제안이며 자동 마감 정책은 별도 결정이다.
+| 필드 | 타입·의미 |
+| --- | --- |
+| latestSubmittedSubmissionId, latestStatus | 해당 요청·본인 조직의 최신 완료본 ID와 상태 |
+| latestDraftSubmissionId, latestDraftParsingStatus | 해당 요청의 새 초안 ID와 QUEUED/RUNNING/NEEDS_REVIEW/SUCCEEDED/FAILED 상태 |
+| requiredCount, unansweredCount, pendingReviewCount | 최신 PENDING을 우선하고, 없으면 새 초안, 없으면 최신 완료본의 현재 소명 수. 미검증·검증 무효화 상태는 null |
+| canUpload | 새 전체 파일 접수 조건을 현재 만족하는지 여부. 최종 제출 가능 여부는 SUB-03.readiness로 판단 |
+| blockingCode, blockingSubmissionId | 접수를 막는 조건과 관련 완료본 ID. 차단이 없으면 모두 null |
+
+blockingCode는 `PENDING_ALREADY_EXISTS`, `REQUEST_CLOSED`, `ANNUAL_PLAN_LOCKED`, `ANNUAL_PLAN_NOT_CONFIRMED`, `PLAN_SOURCE_MISSING`, `PARSER_BUSY` 중 하나다. `PARSER_BUSY`는 같은 조직의 QUEUED/RUNNING 작업이 10건 이상인 경우이며 한도 아래로 내려가면 다른 차단 사유가 없는 한 canUpload=true가 된다. 관련 제출 ID는 같은 요청·조직의 PENDING이 있을 때 반환한다. 다른 기간의 PENDING·REJECTED는 현재 요청의 업로드를 차단하지 않는다. 닫힌 요청이어도 기존 PENDING의 소명 보완은 계속할 수 있으므로 canUpload와 해당 제출의 작업 상태를 구분한다. 읽기는 검증·소명·적재를 자동 실행하지 않는다. 이 업무 요약과 초안 정보는 요청 변경용 stateToken에 넣지 않는다.
+
+### REQ-04 · 요청 변경
+
+`PATCH /submission-requests/{requestId}`는 P 전용이며 `Idempotency-Key`가 필수다. 본문은 `{expectedStateToken, message?, dueAt?, status?, organizationIds?}`다. organizationIds는 열린 요청의 아직 미선정인 조직에 추가 요청하며 기존 선정을 취소하지 않는다. message·dueAt의 null은 지움을 의미하고 생략은 유지다. 수정 필드는 하나 이상 필요하다. message는 최대 5000자, dueAt은 시간대 오프셋이 있는 ISO 시각 또는 null, status는 OPEN/CLOSED만 가능하며 null은 거부한다. 성공 시 갱신한 요청 상세를 200으로 반환한다. 같은 키·본문 재전달은 저장한 최초 성공 응답을 반환한다.
+
+연도·월·유형·마스터 필수 대상 집합과 미정의 필드는 수정할 수 없다. 선택은 기존 집합 안에서만 추가한다. CLOSED는 새 업로드·최종 제출을 막지만 기존 PENDING 검토·소명 보완은 허용한다. 확정 연간 요청은 재개방하지 못한다. dueAt 경과로 자동 닫기·제출 차단을 하지 않으며 과거 기한도 표시용으로 저장할 수 있다. 변경과 업로드는 계획→요청 잠금을 공유해 닫기와 접수의 경합을 처리한다. 토큰 불일치는 `409 RESOURCE_CHANGED`, 확정 연간 요청 재개방은 `409 ANNUAL_PLAN_LOCKED`, 잘못된 필드·자료형은 `400 INVALID_REQUEST`다.
 
 ## 5. 연간 계획 확정
 
@@ -236,7 +272,7 @@ candidateSubmissionId는 현재 최종 승인 후보이고 확정본이 아니�
 
 초기 지원은 .xlsx 한 개다. 파일명은 `{조직코드}_YYYY-MM.xlsx` 또는 `{조직코드}_YYYY-PLAN.xlsx`이며 요청과 인증 조직이 일치해야 한다. 접수 전 이름·운영 크기·ZIP 시그니처를 확인하고, OOXML 구조·암호화·압축 해제/셀 자원 한도는 비동기 파서가 검사한다. 구조 오류는 접수 후 FAILED와 진단으로 표시한다. 원본의 셀 조직도 파싱 후 다시 검사하며 파일명이 권한 근거를 대신하지 않는다.
 
-열린 요청·대상 소속·조직당 PENDING 최대 한 건·다른 요청의 재제출 제한을 검사한다. ANNUAL_PLAN은 해당 연간 계획이 미확정이어야 하고, MONTHLY_ACTUAL은 확정 계획과 해당 조직의 고정 계획본이 있어야 한다. 같은 파일의 재전송은 멱등키로 처리한다. 파일 다시 선택은 새 키로 새 DRAFT를 만든다. 이전 DRAFT의 파일을 교체하지 않는다.
+열린 요청·선정 대상 소속·같은 요청/조직의 PENDING 최대 한 건을 검사한다. 다른 요청의 대기·반려 상태는 현재 기간 작업을 차단하지 않는다. ANNUAL_PLAN은 해당 연간 계획이 미확정이어야 하고, MONTHLY_ACTUAL은 확정 계획과 해당 조직의 고정 계획본이 있어야 한다. 같은 파일의 재전송은 멱등키로 처리한다. 파일 다시 선택은 새 키로 새 DRAFT를 만든다. 이전 DRAFT의 파일을 교체하지 않는다.
 
 `202 Accepted`, `Location`은 새 제출 조회 경로다. 원본 보존 참조와 파싱 작업 등록이 성공해야 접수 성공으로 응답한다.
 
@@ -258,7 +294,7 @@ candidateSubmissionId는 현재 최종 승인 후보이고 확정본이 아니�
 
 ### SUB-02~03 · 제출 조회와 폴링
 
-목록 필터는 `requestId, organizationId, year, month, type, status, cursor, limit`. O는 본인 조직으로 강제 제한한다. 목록은 `Page<SubmissionSummary>`다. SubmissionSummary는 `id, requestId, organizationId, type, year, month, status, seq, versionLabel, originalFilename, uploadedBy, uploadedAt, submittedBy, submittedAt, reviewedBy, reviewedAt, parsingStatus, requiredCount, unansweredCount, pendingReviewCount`를 포함한다. 필드 의미·null 규칙은 아래 상세와 같고, 미검증 초안의 세 카운트는 null이다. 상세는 다음 `SubmissionView`다.
+목록 필터는 `requestId, organizationId, year, month, type, status, submittedOnly, cursor, limit`. submittedOnly=true는 DRAFT를 제외하며 status=DRAFT와 동시 사용하면 400이다. O는 본인 조직으로 강제 제한한다. 목록은 `Page<SubmissionSummary>`다. SubmissionSummary는 `id, requestId, organizationId, type, year, month, status, seq, versionLabel, originalFilename, uploadedBy, uploadedAt, submittedBy, submittedAt, reviewedBy, reviewedAt, parsingStatus, requiredCount, unansweredCount, pendingReviewCount`를 포함한다. 필드 의미·null 규칙은 아래 상세와 같고, 미검증 초안의 세 카운트는 null이다. 상세는 다음 `SubmissionView`다.
 
 | 필드 | 타입·의미 |
 | --- | --- |
@@ -293,13 +329,13 @@ validationState는 `NOT_RUN / CURRENT / STALE`이다. 파싱 SUCCEEDED 후 최�
 
 ### SUB-05 · 초안 검증·비교 갱신
 
-**현재 구현:** `DRAFT + SUCCEEDED`인 연간·월간 제출의 원본 조직·요청별 전체 기간·보고 분류·금액·답안지 대조를 확인하고, 선택 상세·비교·검토 칸·검증 객체를 같은 트랜잭션에서 갱신한다. 연간은 PLAN 1~12월, 월간은 ACTUAL 1~요청월과 ESTIMATE 다음 달~12월을 검사한다. 원본·과거 결과 객체는 보존한다. 원천 금액 구성 변경에는 CHANGE 소명, 기준을 초과한 OP에는 GAP 소명을 준비하며 미답변은 canSubmit=false로 표시한다. 확정 계획·직전 비교본·필요한 Gap 기준이 없으면 진단으로 차단하고 값을 만들지 않는다.
+**현재 구현:** `DRAFT + SUCCEEDED`인 연간·월간 제출의 원본 조직·요청별 전체 기간·보고 분류·금액·답안지 대조를 확인하고, 선택 상세·비교·검토 칸·검증 객체를 같은 트랜잭션에서 갱신한다. 연간은 PLAN 1~12월, 월간은 ACTUAL 1~요청월과 ESTIMATE 다음 달~12월을 검사한다. 원본·과거 결과 객체는 보존한다. 원천 금액 구성 변경은 CHANGE 근거로 보존하고 기준을 초과한 보고 항목은 필수 GAP 소명으로 준비한다. 필수 미답변은 canSubmit=false다. 확정 계획·직전 비교본·필요한 Gap 기준이 없으면 진단으로 차단하고 값을 만들지 않는다.
 
 입력은 `{expectedStateToken}`다. DRAFT이고 파싱이 SUCCEEDED일 때 요청별 완전성·보고 분류·현재 유효 기준으로 비교를 갱신한다. 파싱 엔진을 다시 실행하지 않는다.
 
-- 같은 달은 직전 제출 완료 회차, 새 달 첫 제출은 이전 달 마지막 제출 완료본을 선택한다. 반려본 포함, DRAFT 제외.
+- 같은 요청 재제출은 직전 완료 회차(반려본 포함), 새 달 첫 제출은 전월의 최신 APPROVED를 선택한다. DRAFT는 제외하며 전월 승인본이 없으면 BASELINE_MISSING으로 검증을 차단한다.
 - 확정 계획본, ACTUAL/ESTIMATE 기준 ID, 검토 정책을 초안에 고정한다.
-- 항목별 수정·OP 비교를 계산하고 필요한 review_item과 최초 소명 회차를 준비한다.
+- 항목별 변경 근거와 고정 정책의 Gap 비교를 계산하고 review_item과 최초 소명 회차를 준비한다. 신규 정책의 기준 미달 변경은 required=false다.
 - 검토 키·원천 구성·비교 문맥이 같은 초안 답변만 유지한다. 현재 `changedReviewItemIds`는 이번 검증 후 활성 검토 ID 전체를 반환하는 재확인 목록이며 이전 검증 대비 변경분만으로 제한하지 않는다.
 - 원천 구성이 달라져 더 이상 같은 검토 건이 아니면 이전 초안 답변을 새로운 근거의 소명으로 자동 채택하지 않는다. 재작성 대상은 `answerRequiredReviewItemIds`로 반환한다.
 - 수용 소명 이어받기는 ERD의 같은 조직·항목·기간·시나리오·원천 구성과 이전 ACCEPTED 조건을 충족할 때만 허용한다.
@@ -317,15 +353,22 @@ validationState는 `NOT_RUN / CURRENT / STALE`이다. 파싱 SUCCEEDED 후 최�
 
 Diagnostic은 `code, severity(ERROR/WARNING), stage, message, reportItemId?, year?, month?, scenario?, source?`다. 캐시 미세차 경고에는 `cachedAmount, calculatedAmount, difference` 십진 문자열도 포함한다. stage는 `FILE / PARSING / MAPPING / COMPLETENESS / COMPARISON`, source는 `{sheet, cell}` 또는 null. 상세 진단의 내부 경로·스택·객체 저장 키는 제거한다.
 
+업무키의 원인별 진단은 확인한 입력 필드의 원본 위치를 가리킨다. 코드표의 정답 셀이나 임의 주소로 대신 표시하지 않는다. 파싱 단계에서 필드 위치를 확정하지 못하면 후보 셀을 가리키는 기존 일반 미확정 안내를 유지하고, 업무 검증 단계에서 관련 필드 근거가 없으면 cell=null로 둔다. month도 확인된 값만 반환한다. 원본 값·수식은 source-cells에서 조회한다. 확인된 업무키 오류는 원인 코드·실제 셀별로 묶으므로 같은 오류가 12개월에 반복 표시되지 않는다. NEEDS_REVIEW에서도 보존된 원본 셀 조회는 가능하며, 아직 실행할 수 없는 업무 검증을 VALIDATION_REQUIRED로 안내하지 않는다.
+
+조직 담당자는 안내를 확인하고 원본 전체 파일을 SUB-01로 새로 업로드한다. 기존 원본·진단은 유지하며, 오류 금액이나 코드를 PATCH해 제출을 통과시키는 API는 제공하지 않는다. 운영 실패의 동일 원본 재파싱과 담당자의 수정본 업로드는 구분한다.
+
 답안지의 저장된 수식 캐시와 정확한 상세 합계의 절대 차이가 0보다 크고 0.00001원 이하이면 WARNING `CONTROL_CACHE_PRECISION`으로 남긴다. `cachedAmount`, `calculatedAmount`, `difference`는 십진 문자열로 보존한다. 0.00001원 초과·미확정·중복 대조값은 ERROR `CONTROL_TOTAL_MISMATCH`다. 캐시 대조는 최대 소수 16자리까지 읽지만 금융 상세 적재는 NUMERIC(30,6) 검증을 그대로 적용한다. 이 허용 범위는 대조 경고에만 적용하며 적재 금액·보고 합계·원본 캐시를 반올림하거나 보정하지 않는다. WARNING만 있으면 complete=true가 가능하다.
 
 ReportValue는 `organizationId, reportItemId, reportItemName, kind, year, month, scenario, valueStatus, amount`다. 현재 kind는 `REVENUE / COST / DERIVED`다. valueStatus는 `AVAILABLE / MISSING / UNRESOLVED`이며 뒤의 두 상태는 amount=null이다. amount는 상세에서 집계하고 OP는 매출−영업비용으로 계산한다. 일부 상세가 미확정이면 영향을 받는 보고 합계도 UNRESOLVED/null로 전파하며, 매출·비용이 불완전하면 OP도 동일하다. 확인된 일부 행만 합산해 AVAILABLE로 반환하지 않는다. 부모 합계·상세·OP를 함께 재합산하지 않는다. 현재 적재·보고 조회는 검증 전 `409 VALIDATION_REQUIRED`, 무효화된 검증은 `409 VALIDATION_STALE`다. 현재 구현은 검증 차단 사유가 하나라도 있으면 전체 보고값을 보수적으로 UNRESOLVED/null로 반환한다.
 
 SourceCell은 `sheet, cell, presence, dataType, rawValue, formula, cachedValue, cacheStatus, normalizationStatus, normalizedAmount, sourceUnit, multiplier, sharedFormulaBase`를 제공한다. presence는 PRESENT/EMPTY, dataType은 NUMBER/STRING/BOOLEAN/DATE/ERROR/BLANK다. rawValue·cachedValue는 string/boolean/null이며 숫자 원문·숫자 캐시는 십진 문자열이다. formula는 수식 문자열 또는 null, normalizationStatus는 CONFIRMED/UNRESOLVED/NOT_NUMERIC/MISSING이다. normalizedAmount·sourceUnit·multiplier는 nullable이며 cacheStatus는 NOT_FORMULA/STORED_UNVERIFIED/MISSING/ERROR다. sharedFormulaBase는 기준이 없으면 null이다. 공유 수식의 종속 셀에서 보존된 기준 근거가 있으면 `sharedFormulaBase:{sheet,cell,formula,range}`를 추가한다. formula는 기준 셀의 실제 원문이며 종속 셀의 수식으로 재작성하지 않는다. 종속 셀의 원래 formula=null을 유지하고, 기준도 확인되지 않았으면 수식 없음으로 단정하지 않는다. 원본 수식 실행·상대 참조 확장·캐시 보정은 하지 않는다. sourceUnit이 null인 정규화 후보는 원 단위로 확정해 표시하지 않는다.
 
-source-cells는 해당 제출 파일의 실제 위치만 조회하며 로컬 경로나 외부 파일 URL을 받지 않는다. 추출 범위에서 확인 가능한 빈칸은 EMPTY·rawValue=null로 반환한다. 잘못된 셀 주소 문법은 400, 없는 시트·수집 범위 밖 자료는 404, 아직 추출 중이면 409다. 빈칸과 조회 실패를 같은 상태로 표현하지 않는다. 현재 정확한 셀 조회는 파서가 보존한 submissionData.sourceCells에 한정하며, 수집 근거가 없는 위치·구버전 결과는 `404 SOURCE_CELL_NOT_FOUND`다. 셀 주소는 대문자 A1 형식의 단일 주소를 받는다.
+source-cells는 해당 제출 파일의 실제 위치만 조회하며 로컬 경로나 외부 파일 URL을 받지 않는다. 추출 범위에서 확인 가능한 빈칸은 EMPTY·rawValue=null로 반환한다. 잘못된 셀 주소 문법은 400, 없는 시트·수집 범위 밖 자료는 404, 아직 추출 중이면 409다. 빈칸과 조회 실패를 같은 상태로 표현하지 않는다. 현재 정확한 셀 조회는 파서가 보존한 submissionData.sourceCells를 우선하며, 없으면 같은 결과 records에서 실제 관측한 sheet/cell의 원문·수식·단위 근거를 읽는다. 비활성 템플릿 후보도 이 보존 근거가 있을 때 조회한다.  수집 근거가 없는 위치·구버전 결과는 `404 SOURCE_CELL_NOT_FOUND`다. 셀 주소는 대문자 A1 형식의 단일 주소를 받는다.
 
 과거 버전 다운로드도 권한을 확인하고 원본 바이트를 전달한다. 이 API로 재계산·재저장한 파일을 만들지 않는다. 미등록 객체 저장 키를 클라이언트가 지정할 수 없다.
+
+
+아직 업무 검증을 저장하지 않은 DRAFT의 SUCCEEDED/NEEDS_REVIEW 결과도 보존된 submissionData로 금액 누락·합계 등 확인 가능한 완전성 진단을 읽기 전용 계산하여 함께 표시한다. financial_line/value·소명·submission_validation은 만들지 않고 readiness는 NOT_RUN을 유지한다. NEEDS_REVIEW는 원본 수정·전체 재업로드 대상이며 이 조회가 validation/submit 조건을 완화하지 않는다. 저장된 검증이 있으면 기존 CURRENT/STALE 판정을 우선한다.
 
 ### SUB-12 · 파싱 후보 미리보기
 
@@ -349,10 +392,10 @@ CURRENT이나 차단 사유가 있으면 유효한 부분 적재행은 200으로
 
 입력은 `{expectedStateToken}`다. 서버는 조직 단위 잠금 아래 아래 조건을 재검사한다.
 
-1. DRAFT, 열린 요청, 대상 조직, 다른 PENDING 없음, 재제출 요청 범위 일치. ANNUAL_PLAN이면 연간 미확정, MONTHLY_ACTUAL이면 연간 확정 및 해당 조직의 고정 계획본 존재.
+1. DRAFT, 열린 요청, 선정 대상 조직, 같은 요청·조직의 다른 PENDING 없음. ANNUAL_PLAN이면 연간 미확정, MONTHLY_ACTUAL이면 연간 확정 및 해당 조직의 고정 계획본 존재.
 2. 현재 활성 파싱 시도와 그 시도의 validation 완료, 필수 항목·월·조직 전체 스냅샷 충족, 금액·보고 분류 확정. 비교·소명 대상이 없는 최초 PLAN도 validation을 생략할 수 없음.
 3. 초안의 비교본·확정 계획·임계값 ID가 현재 유효한 선택과 일치.
-4. 금액 수정·OP Gap의 모든 필수 항목에 현재 회차 답변 존재. 이어받은 ACCEPTED는 작성 완료로 본다.
+4. 고정된 정책에서 필수인 모든 항목에 현재 회차 답변 존재. 이어받은 ACCEPTED는 작성 완료로 본다.
 
 3번이 달라졌으면 `409 REVIEW_CONTEXT_CHANGED`, 회차·PENDING 전환 없음이다. GET으로 상태를 확인한 뒤 validation → 소명 확인/수정 → 최신 stateToken으로 submit한다. GET이나 실패한 submit이 몰래 소명 대상을 변경하지 않는다.
 
@@ -360,7 +403,7 @@ CURRENT이나 차단 사유가 있으면 유효한 부분 적재행은 200으로
 
 ### SUB-11 · 제출 승인·반려
 
-**현재 구현:** PLANNER가 최신 PENDING 제출본을 판단한다. 승인은 제출 당시 연간 `annual-plan/1.0` 또는 월간 `monthly-actual/1.0` 검증 객체·원본/파싱 참조·완전성·적재 건수와 모든 필수 소명 수용을 확인하며, 요청 종료 후에도 검토할 수 있다. REJECT는 미완료 소명과 무관하게 가능하다. 원본·금액·제출 회차는 바꾸지 않고 검토자/시각과 반려 사유를 기록한다. APPROVE는 연간 `kind=ANNUAL_PLAN, month=null` 효과 한 건 또는 월간 `kind=MONTHLY_ACTUAL`의 영향 ACTUAL 월별 효과를 반환한다. REJECT는 `masterEffects=[]`다. 반려 후 같은 요청에 새 전체 파일을 업로드하고 수정된 모든 금액 항목의 소명을 작성한다.
+**현재 구현:** PLANNER가 최신 PENDING 제출본을 판단한다. 승인은 제출 당시 연간 `annual-plan/1.0` 또는 월간 `monthly-actual/1.0` 검증 객체·원본/파싱 참조·완전성·적재 건수와 모든 필수 소명 수용을 확인하며, 요청 종료 후에도 검토할 수 있다. REJECT는 미완료 소명과 무관하게 가능하다. 원본·금액·제출 회차는 바꾸지 않고 검토자/시각과 반려 사유를 기록한다. APPROVE는 연간 `kind=ANNUAL_PLAN, month=null` 효과 한 건 또는 월간 `kind=MONTHLY_ACTUAL`의 영향 ACTUAL 월별 효과를 반환한다. REJECT는 `masterEffects=[]`다. 반려 후 같은 요청에 새 전체 파일을 업로드하고 새 검증 정책에 따른 Gap 필수 소명을 작성한다.
 
 입력은 `{expectedStateToken, action, note?}`다. action은 APPROVE 또는 REJECT. note는 REJECT에만 허용하며 공백이 아닌 1~2000자 문자열이 필수다. 저장 시 양끝 공백을 제거한다. APPROVE에는 승인 메모 필드가 없으므로 note를 보내면 400 INVALID_REQUEST다.
 
@@ -404,7 +447,7 @@ MasterEffect.action은 `CREATED / UPDATED / UNCHANGED / WAITING_INITIAL`이다. 
 
 ### REV-01~02 · 검토 목록과 상세
 
-목록 필터는 `requestId, submissionId, organizationId, reportItemId, year, month, scenario, reason, explanationState, cursor, limit`. reason은 `CHANGE / GAP / INHERITED`이며 생략하면 전체다. 권한 필터를 모든 조건보다 먼저 적용한다.
+목록 필터는 `requestId, submissionId, organizationId, reportItemId, year, month, scenario, reason, explanationState, workflowState, cursor, limit`. reason은 `CHANGE / GAP / INHERITED`이며 생략하면 전체다. 권한 필터를 모든 조건보다 먼저 적용한다.
 
 `ReviewItemView`:
 
@@ -413,18 +456,20 @@ MasterEffect.action은 `CREATED / UPDATED / UNCHANGED / WAITING_INITIAL`이다. 
 | id, submissionId, organizationId, reportItem | 검토 건·소속·보고 항목 |
 | year, month, scenario | 검토 칸 |
 | amountPresent, currentAmount | 존재하면 금액 필수. 허용된 선택 항목 제거만 false/null |
-| changeDetected, gapExceeded | 원천 변경과 OP 손익 Gap을 분리 |
-| required | 두 플래그 중 하나가 참인 경우. 이어받기 전용은 false |
+| changeDetected, gapExceeded | 원천 변경과 고정 정책의 보고 항목 Gap을 분리 |
+| required | 신규 2.0은 gapExceeded 또는 담당자가 명시적으로 소명을 요청했고 제외되지 않은 항목. 과거 정책은 CHANGE 또는 GAP. 이어받기 전용은 false |
+| reviewPolicyVersion, workflowState, workflowNote, requestDueAt | 필수 판정 정책·검토 진행 상태·선정 메모·현재 회신 기한 |
+| workflowHistory | 상세만 반환하는 선정·제외·요청 이벤트 이력 |
 | explanationState | UNANSWERED / ANSWERED / IN_REVIEW / ACCEPTED. ANSWERED는 DRAFT에 저장한 답변, IN_REVIEW는 제출 후 검토 대기 |
 | currentRound, stateToken | 현재 소명 회차와 검토 건 변경 토큰 |
-| comparisons | 상세에 포함하는 `GapComparisonView[]`. 수정만 있으면 빈 배열 |
+| comparisons | 목록·상세에 포함하는 `GapComparisonView[]`. 비교 없는 변경 근거만 있으면 빈 배열 |
 | explanations | 상세에 포함하는 소명 회차 배열, round ASC. 목록은 마지막 회차 요약만 반환 |
 
-GapComparisonView는 `basis(PLAN/PREVIOUS), baselineSubmissionId, baselineScenario, baselineAmount, currentAmount, gapAmount, gapRate, threshold:{id,scenario,percent,amount}, exceeded`다. 실제 기준 0이면 baselineAmount="0", gapRate=null이며 현재 값이 0이 아니면 exceeded=true다. 0이 아닌 기준은 절대 비율과 절대 금액 모두 엄격하게 초과해야 한다.
+GapComparisonView는 `basis(PLAN/PREVIOUS), baselineSubmissionId, baselineScenario, baselineAmount, currentAmount, gapAmount, gapRate, threshold:{id,scenario,percent,amount,percentEnabled,amountEnabled}, exceeded`다. 실제 기준 0이면 baselineAmount="0", gapRate=null이다. 새 2.0은 켠 조건만 평가하고 둘 다 켜면 AND이며, 기준 0에서도 켠 최소금액을 초과해야 한다. 과거 1.0의 기준 0 특례는 해당 고정 비교에 보존한다.
 
 필수 기준이 누락되면 진단에서 `BASELINE_MISSING`을 제공하고 제출을 차단한다. 비교하지 않는 대상(NOT_APPLICABLE), 실제 기준 0, 누락(MISSING)을 같은 상태로 표시하지 않는다. review_item 상세의 정상 비교 배열에는 확인된 비교만 반환하며 초과하지 않은 해당 비교도 생략하지 않는다.
 
-Explanation은 `id, round, requestNote, requestedBy, requestedAt, answer, answeredBy, answeredAt, verdict, reviewedBy, reviewedAt, reviewNote, inheritedFromId, inheritedFrom`이다. 최초 회차의 요청 메타데이터와 아직 발생하지 않은 행위는 null이다. verdict는 PENDING/ACCEPTED/REJECTED. REJECTED 이후 새 회차가 준비되면 explanationState는 새 회차 기준 UNANSWERED다.
+Explanation은 `id, round, requestNote, requestedBy, requestedAt, dueAt, answer, answeredBy, answeredAt, verdict, reviewedBy, reviewedAt, reviewNote, inheritedFromId, inheritedFrom`이다. 최초 회차의 요청 메타데이터와 아직 발생하지 않은 행위는 null이다. verdict는 PENDING/ACCEPTED/REJECTED. REJECTED 이후 새 회차가 준비되면 explanationState는 새 회차 기준 UNANSWERED다.
 
 inheritedFrom은 `{explanationId,reviewItemId,submissionId,versionLabel}` 또는 null이며 직접 이어받은 소명의 제출 버전을 표시하는 조회용 참조다. 별도 저장 컬럼 없이 기존 FK에서 조회하며, 사용자에게 허용된 조직 범위에서만 반환한다. 행위자는 공통 ActorRef로 표시한다.
 
@@ -434,7 +479,7 @@ inheritedFrom은 `{explanationId,reviewItemId,submissionId,versionLabel}` 또는
 
 comparisonMode는 `IDENTITY / MULTISET / UNRESOLVED / NOT_APPLICABLE`. items는 `{side: BEFORE|AFTER, groupKey, lineId, valueId, amount, semanticAttributes, source:{submissionId,sheet,cell}}`이며 같은 groupKey의 중복 개수도 보존한다. semanticAttributes는 확인된 원본 계정·관리분류·실적집계기준·팀·과제·거래 의미다. groupKey는 해당 비교의 표시용이며 영구 업무키가 아니다.
 
-안정적인 상세 ID가 없으면 임의의 before→after 한 쌍을 만들지 않고 양쪽 다중집합으로 보여준다. 합계 차액이 "0"이어도 원천 구성이 달라지면 수정 소명 대상이다. OP의 근거는 해당 월 매출·비용 보고 항목과 원천을 연결한다. PLAN 비교와 1월의 PREVIOUS 대체 비교는 baselineScenario=PLAN일 수 있다. source-cells는 각 source.submissionId를 사용해 실제 기준본 또는 현재 제출본을 연다.
+안정적인 상세 ID가 없으면 임의의 before→after 한 쌍을 만들지 않고 양쪽 다중집합으로 보여준다. 합계 차액이 "0"이어도 원천 변경 근거는 보존하지만 새 2.0에서는 자동 필수 소명으로 만들지 않는다. OP의 근거는 해당 월 매출·비용 보고 항목과 원천을 연결한다. 신규 2.0의 1월 최초 추정은 PLAN 비교만 만들고 존재하지 않는 전월 추정을 만들지 않는다. 과거 PREVIOUS 대체 비교는 그대로 조회된다. gapExceeded=false여도 해당 basis의 저장 비교가 있으면 GAP 근거를 조회할 수 있다. source-cells는 각 source.submissionId를 사용해 실제 기준본 또는 현재 제출본을 연다.
 
 ### REV-04 · 현재 회차 답변 저장
 
@@ -460,21 +505,21 @@ ACCEPT는 현재 회차에 수용자/시각·선택 reviewNote를 기록한다. 
 
 ### GAP-01 · 현재 기준
 
-응답은 `{actual: Threshold|null, estimate: Threshold|null, stateToken}`. Threshold는 `id, scenario, percent, amount, appliedBy, appliedAt`다. 아직 설정하지 않은 시나리오는 null이다. 이미 제출된 항목의 기준은 이 현재 기준이 아니라 ReviewItemView의 고정된 threshold다.
+응답은 `{actual: Threshold|null, estimate: Threshold|null, stateToken}`. Threshold는 `id, scenario, percent, amount, percentEnabled, amountEnabled, appliedBy, appliedAt`다. 아직 설정하지 않은 시나리오는 null이다. 이미 제출된 항목의 기준은 이 현재 기준이 아니라 ReviewItemView의 고정된 threshold다.
 
 ### GAP-02 · 영향 미리보기
 
-입력은 `{requestId, scenario, percent, amount}`. requestId는 월간 요청, scenario는 ACTUAL/ESTIMATE, percent·amount는 정수 24자리·소수 6자리 이내의 0 이상 십진 문자열이다.
+입력은 `{requestId, scenario, percent, amount, percentEnabled?, amountEnabled?}`. requestId는 월간 요청, scenario는 ACTUAL/ESTIMATE, percent·amount는 정수 24자리·소수 6자리 이내의 0 이상 십진 문자열이다.
 
-해당 요청에서 조직별 최신 제출 완료본(DRAFT 제외)의 해당 시나리오 OP 비교를 대상으로 후보 기준을 적용한다. 기존 review_item/gap_comparison 존재 여부와 무관하게 해당 제출본의 금융값·고정 비교본·정책으로 적용 대상 OP 전체를 재구성한다. 이전 기준에서 미초과여서 검토 행이 없던 칸도 평가한다. 두 비교가 모두 초과해도 검토 칸·조직 수는 중복 계산하지 않는다. 실제 기준 0 특례를 그대로 적용한다.
+해당 요청의 조직별 최신 완료본(DRAFT 제외)에 고정된 비교 정책을 재구성한다. 신규 2.0은 전체 보고 항목, 과거 1.0은 OP를 평가하며 기존 review_item/gap_comparison 존재 여부와 무관하다. 이전 기준에서 미초과여서 검토 행이 없던 칸도 평가한다. 두 비교가 모두 초과해도 검토 칸·조직 수는 중복 계산하지 않는다. 후보 입력의 켠 조건만 적용하며 최소 하나는 켜야 한다. 토글 생략은 true다.
 
 응답은 `{requestId, scenario, evaluatedItemCount, exceededItemCount, exceededOrganizationCount, excludedItemCount, exclusions, sourceSubmissionIds, evaluatedAt}`다. exclusions는 `{code,count}` 목록이다. 계산 불가·누락을 미초과로 세지 않는다. 이 호출은 기준·비교·소명 상태를 저장하거나 기존 제출본의 승인을 바꾸지 않는다.
 
 ### GAP-03 · 새 기준 적용
 
-입력은 `{expectedStateToken, scenario, percent, amount}`. expectedStateToken은 GAP-01 응답의 값이다. 기존 행 UPDATE 없이 해당 시나리오의 새 기준 행을 생성하고 Threshold를 반환한다. 별도 단건 조회 경로를 두지 않아 Location 헤더는 생략한다. 현재 기준은 GAP-01, 제출본의 고정 기준은 해당 검토 상세에서 조회한다.
+입력은 `{expectedStateToken, scenario, percent, amount, percentEnabled?, amountEnabled?}`. expectedStateToken은 GAP-01 응답의 값이다. 기존 행 UPDATE 없이 해당 시나리오의 새 기준 행을 생성하고 Threshold를 반환한다. 별도 단건 조회 경로를 두지 않아 Location 헤더는 생략한다. 현재 기준은 GAP-01, 제출본의 고정 기준은 해당 검토 상세에서 조회한다.
 
-이미 제출된 기준은 유지한다. 작성 중 DRAFT는 최종 제출 전에 새 유효 기준으로 validation을 거쳐야 한다. ACTUAL·ESTIMATE는 각각 적용하며, 두 값을 한꺼번에 적용하는 기능이 필요하면 원자적 일괄 적용 계약을 별도 검토한다.
+토글은 생략 시 true이며 둘 다 false는 400이다. 값과 토글을 같은 기준 이력에 저장한다. 이미 제출된 기준은 유지한다. 작성 중 DRAFT는 최종 제출 전에 새 유효 기준으로 validation을 거쳐야 한다. ACTUAL·ESTIMATE는 각각 적용하며, 두 값을 한꺼번에 적용하는 기능이 필요하면 원자적 일괄 적용 계약을 별도 검토한다.
 
 ## 9. 마스터·홈·보고
 
@@ -495,7 +540,7 @@ local,demo 환경의 D100/D200은 비활성화하고 수집 중이며 아직 확
 
 홈의 계획 보기는 위 연간 PLAN 마스터 상세 한 번으로 전사·조직의 월별/연간 손익을 표시한다. 조직별 17회 조회나 최신 제출본 재조합을 하지 않는다. 현재 제공된 매출·비용·영업이익으로만 계산하고 실적·추정·전년 대비·매출총이익·순이익을 생성하지 않는다. 미발행과 조회 실패를 구분하며 발행 마스터가 없으면 금액을 0으로 표시하지 않는다.
 
-MAS-01~04는 구현된 월간 ACTUAL 마스터 조회다. REP-01만 보고 데이터 구성의 후속 설계다.
+MAS-01~04는 월간 ACTUAL 마스터 조회다. FCT-01은 승인본 전망, REP-01~02는 고정 마스터의 보고 조회·Excel 다운로드다.
 
 ### MAS-01 · 월별 발행 현황
 
@@ -511,7 +556,7 @@ Contingency는 연간 계획의 전사 금액으로 별도 제공한다. 월별 
 
 - `GET /masters?year=2026&month=2`: year·month 필수. `Page<MasterSummary>`, 최신 seq부터. 미발행이면 빈 items.
 - `GET /masters/{masterId}`: `MasterView`. 존재하지 않는 ID는 404.
-- `GET /masters/{masterId}/report-values?organizationId=&reportItemId=`: 필터는 선택이며 `cursor,limit` 사용. `Page<ReportValue>`. 버전의 대상 연월·ACTUAL로 고정하고 다른 연월·ESTIMATE 필터는 받지 않는다.
+- `GET /masters/{masterId}/report-values?organizationId=&reportItemId=`: 필터는 선택이며 `cursor,limit` 사용. `Page<ReportValue>`. 버전의 대상 연월·ACTUAL로 고정하고 다른 연월·ESTIMATE 필터는 받지 않는다. 각 행에 같은 고정 계획 출처의 planAmount·planGapAmount·planGapRate를 함께 반환하여 조직별 추가 HTTP 조회를 줄인다.
 
 MasterSummary는 `id, requestId, year, month, seq, versionLabel, previousMasterId, triggerSubmissionId, createdAt`다. MasterView는 여기에 `scenario:"ACTUAL", calculationVersion, sources, totals, planTotals, comparisons, organizations, annualContingency`를 포함한다. sources는 `{organizationId,organizationCode,organizationName,submissionId,versionLabel,planSubmissionId}`의 고정된 전체 대상 집합이다.
 
@@ -521,16 +566,39 @@ organizations 각 행은 source 메타데이터와 그 조직의 `totals,planTot
 
 조회 시 현재 최신 제출본으로 sources를 교체하지 않는다. 이후 월 제출본이 과거 ACTUAL을 고쳤다면 그 이후 월 제출본 ID가 해당 과거 master source가 될 수 있다. 실제 값 조회에서는 마스터 대상 월만 선택한다.
 
-### REP-01 · 보고 데이터 구성 (후속 설계)
+### FCT-01 · 승인본 기준 연간 전망
 
-입력은 `{masterIds:["7001","7005"], includeExplanations:true}`다. masterIds는 필수이고 비어 있지 않으며 중복 ID·동일 연월의 복수 버전을 허용하지 않는다. includeExplanations는 선택이며 기본 false다. 다른 연도의 master도 전년 비교 목적으로 선택할 수 있다. 서버가 최신 버전으로 조용히 바꾸지 않는다.
+`GET /submission-requests/{requestId}/forecast`는 PLANNER만 호출하며 추가 쿼리를 받지 않는다. `MONTHLY_ACTUAL` 요청의 고정 필수 조직마다 **그 요청에 속한 가장 최신 APPROVED 제출본**을 선택한다. 더 새 PENDING·REJECTED·DRAFT가 있어도 기존 승인본을 유지한다. 확정 연간 계획이 필요하며 월 요청과 계획의 대상 조직 집합이 다르면 `409 MASTER_TARGET_MISMATCH`다.
+
+이 조회는 공식 월 마스터와 별개의 승인본 기준 연간 전망이다. 한 요청의 선택 제출본에서 마감월까지 ACTUAL과 이후 ESTIMATE를 읽어 12개월을 합산한다. 과거 각 월의 공식 master를 조합하지 않으며, 이후 월 요청의 승인본을 섞지도 않는다. 따라서 추정만 변경된 새 승인으로 공식 ACTUAL 마스터가 발행되지 않아도 전망에는 해당 승인본이 반영된다. 조회는 REPEATABLE_READ의 동일 DB 스냅샷에서 수행하고 승인·마스터·원본을 변경하거나 전망 버전을 저장하지 않는다.
+
+| 필드 | 구조·의미 |
+| --- | --- |
+| `requestId, year, asOfMonth` | 선택 월간 요청, 연도, 마감월 |
+| `sourceBasis, calculationVersion` | `LATEST_APPROVED_SUBMISSIONS`, `approved-forecast/1.0` |
+| `sourceToken` | 요청·확정 계획 참조·선택 제출 ID·검증된 월별 지문의 SHA-256. 조회 결과의 출처 식별용이며 공식 master ID나 변경 명령 토큰이 아님 |
+| `ready, requiredOrganizationCount, approvedOrganizationCount` | 필수 조직 전원 승인본 확보 여부 및 조직 수 |
+| `sources` | 선택된 `{organizationId,organizationCode,organizationName,submissionId,versionLabel,planSubmissionId}` 배열 |
+| `missingOrganizations` | 승인본 없는 `{organizationId,organizationCode,organizationName,latestStatus}` 배열. latestStatus는 최신 완료 상태 또는 `NOT_SUBMITTED` |
+| `totals, planTotals, comparisons` | 전사 연간 전망·확정 계획·차이. 합계는 매출/비용/영업이익/영업이익률, 비교는 각 매출/비용/영업이익의 baselineAmount/currentAmount/gapAmount/gapRate |
+| `months` | 1~12월 `{month,scenario,ready,totals,planTotals,comparisons}`. 마감월까지 ACTUAL, 이후 ESTIMATE |
+| `organizations` | 조직 식별자와 선택 source 메타데이터(있을 때), `ready,totals,planTotals,comparisons,months` |
+| `annualContingency` | `{annualPlanId,amount,scope:"ANNUAL"}`. 손익 차감·월별 배분 없음 |
+
+필수 조직에 승인본이 하나라도 없으면 전사 `ready=false`이며 연간·모든 월의 `totals/comparisons`는 null이다. `planTotals`와 이미 승인된 조직의 상세는 제공한다. 미승인 조직의 합계를 0으로 채우거나 일부 조직 합계를 전사로 표시하지 않는다. 승인본 자체의 12개월 상세·시나리오·검증 스냅샷이 손상되거나 누락되면 `409 MASTER_SOURCE_INVALID`로 차단한다.
+
+비교 계획은 확정된 조직별 PLAN 제출본의 동일 연도·월이다. 모든 금액은 정확한 십진 문자열로 반환하며 차액은 전망−PLAN이다. 표시 비율은 차액÷abs(PLAN)×100을 소수 2자리 HALF_UP으로 계산하고 PLAN=0이면 null이다. 영업이익률의 매출 분모가 0일 때도 null이다. 이 표시 비율을 소명 임계값 판정에 사용하지 않는다.
+
+### REP-01~02 · 실제 보고 데이터·Excel
+
+입력은 `{masterIds:["7001","7005"], includeExplanations:true}`다. masterIds는 필수이고 1~24개의 ID 문자열을 받으며 중복 ID·동일 연월의 복수 버전을 허용하지 않는다. includeExplanations는 선택이며 기본 false다. 다른 연도의 master도 전년 비교 목적으로 선택할 수 있다. 서버가 최신 버전으로 조용히 바꾸지 않는다.
 
 응답은 `{generatedAt, masterIds, calculationVersions, periods, annualContingencies, explanations}`이며 내부 구조는 다음과 같다.
 
 | 필드 | 구조 |
 | --- | --- |
 | calculationVersions | `{masterId, version}` 배열 |
-| periods | `{masterId, year, month, totalRows, organizations}` 배열, 연월 ASC |
+| periods | `{masterId, year, month, versionLabel, scenario, totalRows, organizations, organizationSummaries, totals, planTotals, comparisons, sources}` 배열, 연월 ASC |
 | totalRows | 전사 보고 항목별 `{reportItemId, valueStatus, amount}` 배열 |
 | organizations | `{organizationId, rows}` 배열. rows는 해당 조직의 `{reportItemId, valueStatus, amount}` 배열 |
 | annualContingencies | 선택된 연도별 `{annualPlanId, year, amount, scope:"ANNUAL"}` 배열 |
@@ -538,7 +606,7 @@ organizations 각 행은 source 메타데이터와 그 조직의 `totals,planTot
 
 모든 periods와 explanations의 시나리오는 ACTUAL이다. 금액·상태·행위자 타입은 ReportValue와 ActorRef 규약을 따른다. explanations는 선택 master source의 해당 월에 연결된 수용 소명만 사용하고 includeExplanations=false이면 빈 배열이다. 다른 제출본이나 최신 검토 중 소명을 섞지 않는다. 이어받기 참조는 Explanation.inheritedFrom 구조와 같다.
 
-기본 표·차트의 JSON만 구성하며 저장형 report 행이나 내보내기 파일은 만들지 않는다. 생성물을 프론트엔드에서 내보낼 때 masterIds·calculationVersions를 메타데이터에 포함한다. 파일 포맷·서버 내보내기가 필요하면 별도 계약으로 확장한다.
+REP-01은 JSON, REP-02는 같은 입력으로 XLSX 첨부 응답을 반환한다. 전사 손익·조직별 손익·수용 소명·고정 출처·보고 정보 5개 시트를 메모리에서 구성하며 서버 파일·보고 테이블을 만들지 않는다. 금액은 원 단위이고 Excel의 15자리 정밀도를 넘는 금액은 텍스트로 보존한다. 소명 문자열을 수식으로 실행하지 않는다. masterIds·계산 버전·제출본 출처·별도 연간 Contingency를 포함하며 Contingency를 손익에서 차감하지 않는다. PPT·PNG·주별 분석·자동 메시지 생성은 제공하지 않는다.
 
 ## 10. 파서·백엔드 연결 경계
 
@@ -547,7 +615,7 @@ organizations 각 행은 source 메타데이터와 그 조직의 `totals,planTot
 | 백엔드 | 인증·요청·조직·업무 ID·상태·멱등 처리·트랜잭션 | 사용자 임의 조직·회차·승인 상태 |
 | 파서 | 읽기·정규화·업무필드 진단·원본 근거 | 원본 파일 경로, 내부 예외 스택 |
 | 적재 어댑터 | 상세 선택·report_item 매핑·전체 범위 확인 | 모든 파서 후보를 승인 금융값으로 일괄 적재 |
-| 검토 서비스 | 원천 수정·OP 비교·소명 회차 | 클라이언트 계산 금액·초과 여부 |
+| 검토 서비스 | 원천 변경 근거·보고 항목 비교·소명 회차 | 클라이언트 계산 금액·초과 여부 |
 | 승인 서비스 | 승인과 월별 source 교체·불변 마스터 | 기술 마스터 파일을 공식 승인본으로 간주 |
 
 로컬 `src/excel_parser/`와 GitHub `parser/`는 구현 범위가 다르다. GitHub에는 상세 ID·개정번호·업무검증·기술 마스터 조립 기능이 있다. 실제 원격 필드는 [PR의 DB 매핑](https://github.com/shinharyeong/skala_final_project/blob/8c84d2783c9beb2f876810387baa7f9e3f503a50/docs/development/db-mapping.md)을 따른다.
@@ -590,7 +658,7 @@ errors는 `{field,code}` 목록이며 비어 있을 수 있다. 업무 오류는
 | 409 | STATE_TOKEN_MISMATCH | 연간 확정 후보의 상태 토큰 불일치 |
 | 409 | ANNUAL_PLAN_NOT_CONFIRMED / ANNUAL_PLAN_LOCKED / PLAN_APPROVALS_INCOMPLETE | 계획 기준·확정 조건 미충족 |
 | 409 | PLAN_SOURCE_MISSING | 해당 조직의 확정 계획본 참조 없음 |
-| 409 | PENDING_ALREADY_EXISTS / RESUBMISSION_SCOPE_CONFLICT | 조직 단위 제출 제한 또는 다른 요청의 재제출 필요 |
+| 409 | PENDING_ALREADY_EXISTS | 같은 요청·조직에 이미 검토 대기 제출본이 있음 |
 | 409 | INVALID_SUBMISSION_STATE | 현재 상태에서 명령 불가 |
 | 409 | PARSING_NOT_READY / PARSING_ATTEMPT_CONFLICT / PARSING_RETRY_NOT_ALLOWED | 파싱 준비·시도·재시도 조건 문제 |
 | 409 | VALIDATION_REQUIRED / VALIDATION_STALE | 현재 파싱 시도의 검증 미실행 / 기존 검증 무효화, 검증 후 진행 |
@@ -626,14 +694,14 @@ errors는 `{field,code}` 목록이며 비어 있을 수 있다. 업무 오류는
 | 이전 parsing attempt 결과가 늦게 도착 | 현재 결과·답변·숫자 덮어쓰기 없음 |
 | 파싱 성공, 필수 월 누락 | BLOCKED, 최종 제출 차단, 누락을 0으로 보정하지 않음 |
 | 계정은 같고 관리분류가 다름 | 별도 보고 항목으로 연결 |
-| 수정 금액이 기준 이하 | 수정 소명 필수 |
-| 같은 항목의 증감 상쇄 | changeDetected=true, 소명 필수, 합계 동일만으로 이어받지 않음 |
+| 신규 2.0 수정 금액이 기준 이하 | 변경 근거 보존, 담당자 명시 요청 전에는 필수 소명 아님 |
+| 같은 항목의 증감 상쇄 | changeDetected=true, 신규 정책은 자동 필수 아님, 합계 동일만으로 수용 소명을 이어받지는 않음 |
 | 행 재정렬·셀 이동만 발생 | 수정 소명 추가 요구 없음 |
-| 기준 0 → 현재 비0 / 기준값 누락 | 전자는 OP 초과, 후자는 비교 불가·제출 차단 |
+| 기준 0 → 현재 비0 / 기준값 누락 | 신규 정책은 켠 최소금액도 적용하고 비율 null / 누락은 비교 불가·제출 차단 |
 | 이전에 미초과 OP가 후보 기준을 낮추면 초과 | 기존 검토 행이 없어도 미리보기 대상·초과 건수에 포함 |
 | 파싱만 성공한 최초 PLAN에서 바로 submit | 검토 항목이 0개여도 VALIDATION_REQUIRED로 차단 |
 | DRAFT 중 기준·이전 제출본 변경 | submit 409, 회차 미부여, validation 후 확인 |
-| 연간 계획 최초 / 확정 전 재제출 | 최초 수정 소명 없음 / 바뀐 금액 소명 필수 |
+| 신규 2.0 연간 계획 최초 / 확정 전 재제출 | Gap 판정 없는 연간 변경은 자동 필수 소명 없음, 원천 근거·이력 보존 |
 | 소명 보완 요청 | 같은 PENDING, 새 소명 회차만 생성 |
 | 제출본 자체 오류와 미수용 소명 동시 존재 | 소명 수용 전에도 REJECT 가능 |
 | 소명 수용과 재요청 또는 승인 동시 수행 | 잠금 아래 한 전이만 성공, 나머지는 충돌 |
@@ -648,14 +716,57 @@ errors는 `{field,code}` 목록이며 비어 있을 수 있다. 업무 오류는
 
 | 항목 | 현재 제안·남은 결정 |
 | --- | --- |
-| 인증 | 역할·조직 범위는 확정. 로그인 방식, 세션 만료, CSRF·인증 challenge는 미정 |
-| 운영 한도 | 초기 한도: 원본16MiB·출력64MiB·해제64MiB·5만셀·90초·조직당 대기/실행10건. 나머지 상세 제한은 bridge 설정. 운영 확장·보관 기간은 미정 |
+| 인증 | local+demo 이메일 코드·Bearer 세션 구현. 실제 이메일·SSO와 운영 인증은 별도 |
+| 운영 한도 | 원본16MiB·출력96MiB·해제64MiB·내용8만셀·논리텍스트40MiB·90초·조직당 대기/실행10건. 나머지 상세 제한은 bridge 설정. 운영 확장·보관 기간은 미정 |
 | 멱등·토큰 | 접수 명령에 사용자·메서드·경로·키 기반24시간 영속 멱등과 같은 DB 트랜잭션 적용. 초기 기술 테이블 stored_object/idempotency_record를 추가. 연간 확정·소명 답변/검토·기준 적용·연간/월간 승인과 영향 월 마스터 발행도 잠금·멱등 트랜잭션 사용 |
 | 수치·양식 | PostgreSQL 상세 NUMERIC(30,6), 지원 양식의 연간/월간 전체 범위와 의미·금액 다중집합 비교 구현. 새 양식·추가 의미 속성의 선택 규칙은 별도 확인 |
 | 마감·조직 변경 | 자동 차단·리마인드, 기간 중 조직 신설·폐지 정책 |
 | Contingency 표시 | 연간 확정값은 고정. 월별/누적 실적 보고에 적용할 표시·배분 정책 |
-| 내보내기 | PDF/XLSX/이미지 등 지원 포맷과 클라이언트·서버 생성 책임 |
+| 내보내기 | XLSX는 서버 메모리 생성 구현. PPT·PNG·자동 보고 메시지는 후속 범위 |
 | 파서 실행 | 내부 프로세스·DB 작업 큐로 초기 구현. 컨테이너 자원 제한·운영 모니터링은 후속 설정 |
-| 계약 구현 | 39개 중 36개 경로 구현. COM-03 보고 항목 목록, REQ-04 요청 수정, REP-01 보고 데이터 구성과 OpenAPI 산출물은 후속 작업 |
+| 계약 구현 | 56개 서비스 메서드·경로. OpenAPI 산출물·운영 인증·조직/권한 관리·외부 알림 발송·PPT/PNG는 후속 작업 |
 
 HTTP 메서드·상태 의미는 [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html), 오류 표현은 [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html), 파일 전송 형식은 [RFC 7578](https://www.rfc-editor.org/rfc/rfc7578.html)을 참고한다. 경로·오류 code·멱등키·stateToken은 이 프로젝트가 제안한 계약이다.
+
+
+## 14. PRD 화면 연결 추가 계약 — V6~V8
+
+### REV-06 · 선정·제외·일괄 소명 요청
+
+`POST /review-items/actions` 입력은 `{action,items:[{reviewItemId,expectedStateToken}],note?,dueAt?}`다. action은 `SELECT / EXCLUDE / REQUEST_EXPLANATION`, 항목은 중복 없는 1~100개이며 같은 요청에 속해야 한다. 기획자 권한·현재 토큰·PENDING 제출을 검사하고 하나라도 실패하면 전체를 롤백한다. `Idempotency-Key`가 필수다.
+
+- SELECT는 NEEDS_REVIEW/SELECTED 상태에서만 선정 상태를 저장한다. 이미 요청한 필수 소명을 SELECT로 취소할 수 없고 다른 진행 단계는 REVIEW_STAGE_CONFLICT다.
+- EXCLUDE는 note가 필수이며 필수 소명·승인 준비 카운트에서 해당 항목을 제외한다. 금액과 비교 스냅샷은 유지한다.
+- REQUEST_EXPLANATION은 note·시간대 있는 dueAt이 필수다. 기준 미달 참고 항목도 명시적으로 요청하면 필수로 바뀌어 답변·수용 전 승인을 차단한다. SELECT만 한 참고 항목은 선택 사항으로 유지한다. 미답변 회차는 요청 정보를 저장하고, 기존 답변이 있으면 과거 답변을 보존한 새 회차를 연다. 기존 수용 회차를 덮어쓰지 않는다.
+
+응답은 `{items:ReviewItemView[]}`다. workflowState는 `NEEDS_REVIEW / SELECTED / IN_PROGRESS / RE_REVIEW / ACCEPTED / EXCLUDED`이고 REV-01에서 같은 필터를 지원한다. 상세 workflowHistory는 `{id,action,round,note,dueAt,actedBy,actedAt}`다. 제외된 항목은 답변·판단을 막고, 종료된 APPROVED/REJECTED 제출본은 이 명령으로 수정하지 않는다. 검토/제출 토큰은 현재 소명과 첨부 revision도 반영한다.
+
+### COMPARE-01 · 사용자가 선택한 버전 비교
+
+`GET /submissions/{submissionId}/comparison?baselineSubmissionId=...&scenario=...&baselineScenario=...&month=...`는 읽기 전용이다. baselineSubmissionId가 필수이며 두 제출은 접근 가능한 같은 조직·연도이고 원본 대조가 완료된 검증본이어야 한다. scenario는 생략하면 현재본의 PLAN 또는 ACTUAL, baselineScenario는 기준본이 연간이면 PLAN이고 그 외에는 현재 scenario다. month 생략은 선택 시나리오 전체 월이다.
+
+응답은 `{submissionId,baselineSubmissionId,organizationId,year,month,scenario,baselineScenario,items}`다. 각 item은 `reportItem:{id,code,name,kind},year,month,scenario,baselineScenario,baselineAmount,currentAmount,gapAmount,gapRate,valueStatus,baselineEvidenceUrl,currentEvidenceUrl`을 갖는다. valueStatus는 AVAILABLE/MISSING_BASELINE/MISSING_CURRENT이고 누락 금액·차이는 null이다. 기준 0의 비율은 null이다. 원천 링크는 기존 financial-values 조회를 가리키고 OP는 그 월의 매출·비용 원천 전체를 연결한다. 임의 비교가 제출 당시 필수 소명 기준·승인·마스터를 바꾸지 않는다.
+
+EXPORT-02는 같은 쿼리로 `버전 비교 / 비교 출처` 2개 시트를 XLSX로 만든다. EXPORT-01은 고정 월 master ID의 기존 보고 데이터 계약을 사용한 다운로드다. 둘 다 서버 파일을 만들지 않고 메모리 ZIP 응답을 제공한다.
+
+### ATTACH-01~03 · 소명 첨부
+
+첨부 목록은 `{reviewItemId,items:[{id,reviewItemId,round,filename,contentType,size,sha256,uploadedAt,uploadedBy}]}`다. POST는 multipart `file` 한 개와 `round`, `expectedStateToken`만 받고 Idempotency-Key가 필수다. 원문은 비어 있지 않은 16MiB 이하 PDF/XLSX/PNG/JPEG이며 파일명·서명·MIME을 확인한다. DB 원문은 불변이고 새 첨부만 추가한다.
+
+소유 조직의 DRAFT 현재 답변 가능 회차 또는 PENDING에서 보완 요청된 미답변 회차만 추가할 수 있다. 제외·수용·이어받기·종료 제출은 추가할 수 없다. 응답은 `{attachment,review}`이며 현재 회차의 attachment_revision과 검토/제출 토큰이 바뀐다. 다운로드는 동일 조직 권한과 검토-첨부 소속을 확인한 원문 바이트이며 다른 항목의 첨부 ID는 404다. 삭제·덮어쓰기 경로는 없다.
+
+### TEMPLATE-01~03 · 실제 제출 양식
+
+GET 메타정보는 미등록 시 `{available:false,filename:null,updatedAt:null}`, 등록 후에는 `available,filename,updatedAt,sha256,templateId`를 반환한다. 기획자 POST는 multipart file과 멱등키로 실제 XLSX(16MiB 이하, 기본 ZIP 구조·매크로 검사)를 등록한다. 각 등록은 새 request_template·stored_object 이력이며 원본을 수정하지 않는다. 조직 담당자는 selected=true인 자신의 요청에 대해서만 양식과 원문을 조회한다. 미등록 다운로드는 404 TEMPLATE_NOT_REGISTERED다. 개발용 샘플을 자동 생성해 실제 양식처럼 제공하지 않는다.
+
+### NOTI-01~02 · 인앱 알림
+
+기획자 GET 쿼리는 `type=ALL|SUBMISSION|REPLY|OVERDUE`, `unreadOnly=true|false`, `cursor`, `limit`(1~200)이다. 실제 제출, 명시적 소명 요청에 대한 현재 회차의 직접 회신, 선택된 미제출 조직의 기한 경과에서 안정된 event ID를 만들고 사용자별 읽음만 영속한다. REPLY는 requested_by가 있고 inherited_from_id가 없는 답변만 포함한다. 최초 제출 소명과 이어받은 답변은 별도 회신 알림으로 만들지 않는다. replyPendingCount는 PENDING 제출본·현재 PENDING 판단·제외되지 않은 회신만 집계한다. 응답은 `{items,nextCursor,summary:{unreadCount,replyPendingCount,overdueOrganizationCount},counts}`다. item은 `id,type,title,occurredAt,organizationId,organizationName,organizationCode,actorName,href,pending,read`다.
+
+POST /notifications/read의 `{eventIds:string[]}`는 1~1000개 실제 접근 가능한 ID만 받는다. 중복 읽기는 기존 읽음 시각을 유지하며 멱등키 대신 `(user_id,event_id)` 유일성을 사용한다. 읽음 이후 최신 목록/요약을 반환한다. 조직 담당자는 두 API를 호출할 수 없다. 외부 이메일·메신저는 발송하지 않는다.
+
+### AUTH-01~03 · 로컬 이메일 코드 체험
+
+local+demo 프로필에만 존재하며 등록된 활성 사용자 계정과 DB 역할을 사용한다. POST 코드/세션은 설정된 루프백 HTTP Origin·Host를 요구한다. `POST /auth/codes {email}` → `{challengeId,email,expiresAt,resendAt,delivery:"LOCAL_PREVIEW",localCode}`다. 유효기간 3분, 재발급 제한 1분이다. 실제 메일 전송은 구현 범위 밖이다.
+
+`POST /auth/sessions {challengeId,code}`는 6자리 일회용 코드를 검증하고 `{token,actor,expiresAt,organizations:[]}`를 반환한다. 실패 5회 또는 만료 시 challenge를 폐기한다. 토큰은 메모리의 해시 키로 관리하고 8시간 후 만료하며 서버 재시작 시 소멸한다. 인증 후 요청마다 DB 활성 계정·역할을 재확인한다. `DELETE /auth/session`은 현재 Bearer 세션을 폐기한다. 이 계약은 운영 이메일·SSO 통합이나 회원/역할 관리 기능이 아니다.

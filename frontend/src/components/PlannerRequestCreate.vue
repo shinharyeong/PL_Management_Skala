@@ -1,14 +1,14 @@
 <script setup>
-import { reactive, ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, reactive, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSession } from '../stores/session'
 import { query, errorText } from '../lib/display'
-import AnnualPlanConfirmation from './AnnualPlanConfirmation.vue'
 
 const route = useRoute()
 const router = useRouter()
 const session = useSession()
 const organizations = ref([])
+const selectedOrganizations = ref([])
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -17,15 +17,15 @@ const form = reactive({
   year: Number.isInteger(requestedYear) && requestedYear >= 2000 && requestedYear <= 9999
     ? requestedYear : new Date().getFullYear(),
   dueAt: '',
-  message: '',
+  message: '연간 계획 양식을 작성하여 회신 기한까지 제출해 주세요. 원본에서 확인이 필요한 항목은 수정한 후 다시 업로드해 주세요.',
 })
 const controller = new AbortController()
 let commandKey = ''
 let commandBody = ''
 
-/** 현재 활성 조직을 모두 읽어 전 조직 요청 대상을 표시한다.
+/** 현재 활성 조직을 읽고 발송 대상을 선택할 수 있게 준비한다.
  * Args: 없음. Returns: Promise<void>. Raises: 없음(API 오류를 화면에 표시).
- * Side Effects: HTTP 조회·대기/오류/조직 상태 갱신; 대상 조직 선택·제외는 허용하지 않는다.
+ * Side Effects: HTTP 조회·대기/오류/조직 상태 갱신; 최초에는 전체 조직을 선택한다.
  */
 async function loadOrganizations() {
   loading.value = true
@@ -40,10 +40,38 @@ async function loadOrganizations() {
       all.push(...page.items)
       cursor = page.nextCursor
     } while (cursor && !controller.signal.aborted)
-    if (!controller.signal.aborted) organizations.value = all
+    if (!controller.signal.aborted) {
+      organizations.value = all
+      selectedOrganizations.value = all.map(organizationId)
+    }
   } catch (cause) {
     if (cause.name !== 'AbortError') error.value = errorText(cause)
   } finally { loading.value = false }
+}
+
+/** 수신 대상을 문자열 식별자로 정규화한다.
+ * Args: item 조직 DTO. Returns: 조직 ID. Raises: 없음. Side Effects: 없음.
+ */
+function organizationId(item) { return String(item.id) }
+
+/** 사용자가 선택한 조직만 요청 수신 표에 표시한다.
+ * Args: 없음. Returns: 선택 조직 목록. Raises: 없음. Side Effects: 없음.
+ */
+const recipients = computed(function selectedRecipients() { return organizations.value.filter(isSelected) })
+
+/** 조직이 현재 발송 선택에 포함되는지 판정한다.
+ * Args: item 조직 DTO. Returns: 선택 여부. Raises: 없음. Side Effects: 없음.
+ */
+function isSelected(item) { return selectedOrganizations.value.includes(String(item.id)) }
+
+/** 특정 수신 조직을 제외하거나 전체 선택을 복원한다.
+ * Args: id 제외 조직 ID, 없으면 전체 복원. Returns: 없음. Raises: 없음. Side Effects: 발송 선택만 변경한다.
+ */
+function changeRecipients(id) {
+  if (!id) { selectedOrganizations.value = organizations.value.map(organizationId); return }
+  const retained = []
+  for (const value of selectedOrganizations.value) if (value !== String(id)) retained.push(value)
+  selectedOrganizations.value = retained
 }
 
 /** 연간 계획 요청을 생성하고 해당 요청의 진행 현황으로 이동한다.
@@ -51,7 +79,7 @@ async function loadOrganizations() {
  * Side Effects: 요청 생성 POST·라우트 이동; 같은 본문 재시도는 멱등키를 재사용한다.
  */
 async function createRequest() {
-  if (saving.value || loading.value || !organizations.value.length || session.actor.role !== 'PLANNER') return
+  if (saving.value || loading.value || !selectedOrganizations.value.length || session.actor.role !== 'PLANNER') return
   saving.value = true
   error.value = ''
   try {
@@ -60,6 +88,7 @@ async function createRequest() {
       year: Number(form.year),
       message: form.message || null,
       dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : null,
+      organizationIds: selectedOrganizations.value,
     })
     if (body !== commandBody) {
       commandBody = body
@@ -88,9 +117,8 @@ onBeforeUnmount(dispose)
 
 <template>
   <div class="annual-create" data-figma-node="2:2261">
-    <h1>연간 계획</h1>
-    <label class="confirmation-year">확인 연도<input v-model="form.year" type="number" min="2000" max="9999" :disabled="saving" /></label>
-    <AnnualPlanConfirmation :year="Number(form.year)" :organizations="organizations" />
+    <RouterLink to="/planning/requests" class="back-link">← 연간 계획 관리</RouterLink>
+    <h1>연간 계획 요청</h1>
 
     <section class="annual-card" aria-labelledby="annual-create-title" data-figma-node="2:2300">
       <form @submit.prevent="createRequest">
@@ -110,7 +138,7 @@ onBeforeUnmount(dispose)
         <fieldset :disabled="saving">
           <div class="recipient-table-wrap">
             <table>
-              <caption class="visually-hidden">연간 계획 요청을 받는 전체 조직</caption>
+              <caption class="visually-hidden">연간 계획 요청을 받는 선택 조직</caption>
               <colgroup><col class="organization-column" /><col class="code-column" /><col /></colgroup>
               <thead>
                 <tr><th scope="col">조직</th><th scope="col"><span class="visually-hidden">조직 코드</span></th><th scope="col">수신 담당자 (자동 매핑)</th></tr>
@@ -119,15 +147,16 @@ onBeforeUnmount(dispose)
                 <tr v-if="loading"><td colspan="3" class="recipient-empty" role="status">대상 조직을 불러오고 있습니다.</td></tr>
                 <tr v-else-if="!organizations.length"><td colspan="3" class="recipient-empty">{{ error ? '조직 목록을 다시 확인해 주세요.' : '요청할 수 있는 조직이 없습니다.' }}</td></tr>
                 <template v-else>
-                  <tr v-for="organization in organizations" :key="organization.id">
+                  <tr v-for="organization in recipients" :key="organization.id">
                     <td>{{ organization.name }}</td>
                     <td>{{ organization.code }}</td>
-                    <td class="recipient-name">—</td>
+                    <td class="recipient-name"><span v-if="!organization.recipients?.length">등록된 담당자 없음</span><span v-for="recipient in organization.recipients || []" :key="recipient.id" class="actual-recipient">{{ recipient.name }}<small v-if="recipient.email"> · {{ recipient.email }}</small></span><button type="button" class="remove-recipient" :aria-label="`${organization.name} 발송 대상에서 제외`" @click="changeRecipients(organization.id)">×</button></td>
                   </tr>
                 </template>
               </tbody>
             </table>
           </div>
+          <div class="recipient-controls"><span>{{ recipients.length }}개 조직 선택</span><button type="button" class="text-button" @click="changeRecipients()">전체 조직 선택</button></div>
 
           <label class="due-field" for="annual-due">
             회신 기한
@@ -142,8 +171,8 @@ onBeforeUnmount(dispose)
 
         <div class="annual-actions">
           <RouterLink to="/planning/requests" class="return-link">요청 현황으로</RouterLink>
-          <button class="create-submit" type="submit" :disabled="saving || loading || !organizations.length || session.actor.role !== 'PLANNER'">
-            {{ saving ? '요청 발송 중…' : `${organizations.length}개 조직에 연간 계획 요청 발송 →` }}
+          <button class="create-submit" type="submit" :disabled="saving || loading || !selectedOrganizations.length || session.actor.role !== 'PLANNER'">
+            {{ saving ? '요청 발송 중…' : `${recipients.length}개 조직에 연간 계획 요청 발송 →` }}
           </button>
         </div>
       </form>
@@ -248,6 +277,8 @@ onBeforeUnmount(dispose)
 
 .recipient-table-wrap td:first-child { font-weight: 500; }
 .recipient-table-wrap .recipient-name { color: #9ea2a9; }
+.recipient-name span { color:#4a4844; }.remove-recipient { float:right; background:transparent; color:#9ea2a9; font-size:18px; }.recipient-controls { display:flex; justify-content:space-between; font-size:12px; color:#777; }
+.actual-recipient { display:block; }
 
 .recipient-table-wrap .recipient-empty {
   height: 176px;

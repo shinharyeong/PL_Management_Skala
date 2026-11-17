@@ -64,7 +64,7 @@ class SubmissionRuleTests {
                 "db/migration/V2__validated_financial_submissions.sql"), new ClassPathResource(
                 "db/migration/V3__annual_plan_masters.sql"), new ClassPathResource(
                 "db/migration/V4__monthly_masters.sql"), new ClassPathResource(
-                "db/migration/V5__submission_reviews_and_gap_thresholds.sql")).execute(database);
+                "db/migration/V5__submission_reviews_and_gap_thresholds.sql"), new ClassPathResource("db/migration/V6__prd_review_workflow.sql")).execute(database);
         jdbc = JdbcClient.create(database);
         jdbc.sql("""
                 INSERT INTO organization (id, code, name, active)
@@ -107,27 +107,21 @@ class SubmissionRuleTests {
     }
 
     /**
-     * 다른 요청의 최신 제출 완료본이 반려됐으면 신규 업로드를 차단한다.
+     * 다른 요청의 최신 제출 완료본이 반려돼도 새 기간 작업은 허용한다.
      *
      * <p>Args: 없음.
      * Returns: 없음.
      * Raises: SQL 오류는 런타임 예외, 제한·롤백이 잘못되면 AssertionError.
-     * Side Effects: 메모리 DB에 과거 제출을 준비하고 거부된 명령의 무변경을 확인한다.
+     * Side Effects: 메모리 DB에 과거 반려본과 다른 기간 초안을 저장한다.
      */
     @Test
-    void rejectsUploadWhenAnotherRequestLatestSubmissionIsRejected() {
+    void allowsNewPeriodWhileOtherPeriodCorrectionRemainsPending() {
         seedSubmission(firstRequestId, 2030, 1, "APPROVED");
         seedSubmission(firstRequestId, 2030, 2, "REJECTED");
 
-        assertThatThrownBy(() -> uploadAnnual(secondRequestId, 2031))
-                .isInstanceOfSatisfying(ApiException.class, exception -> {
-                    assertThat(exception.status()).isEqualTo(HttpStatus.CONFLICT);
-                    assertThat(exception.code()).isEqualTo("RESUBMISSION_SCOPE_CONFLICT");
-                });
-        assertThat(jdbc.sql("SELECT COUNT(*) FROM submission WHERE request_id=?")
-                .param(Long.parseLong(secondRequestId)).query(Long.class).single()).isZero();
-        assertThat(jdbc.sql("SELECT COUNT(*) FROM stored_object")
-                .query(Long.class).single()).isEqualTo(2L);
+        assertThat(uploadAnnual(secondRequestId,2031).status()).isEqualTo(202);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM submission WHERE request_id=?").param(Long.parseLong(secondRequestId)).query(Long.class).single()).isEqualTo(1L);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM submission WHERE request_id=? AND status='REJECTED'").param(Long.parseLong(firstRequestId)).query(Long.class).single()).isEqualTo(1L);
     }
 
     /**

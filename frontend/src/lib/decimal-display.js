@@ -9,17 +9,17 @@ function parts(value) {
   return match ? { negative: match[1] === '-', digits: match[2] + (match[3] || ''), scale: (match[3] || '').length } : null
 }
 
-/** 원 단위 금액을 정밀도 손실 없이 원 또는 억원으로 표시한다.
- * Args: value 서버 금액, unit KRW/HUNDRED_MILLION. Returns: 구분자 포함 표시 문자열; 없으면 —.
+/** 원 단위 금액을 정밀도 손실 없이 화면의 원·천원·백만원·억원으로 표시한다.
+ * Args: value 서버 금액, unit KRW/THOUSAND/MILLION/HUNDRED_MILLION. Returns: 구분자 포함 표시 문자열; 없으면 —.
  * Raises: 없음. Side Effects: 없음; 문자열 소수점 이동만 하며 반올림·Number 변환을 하지 않는다.
  * @param {string | null | undefined} value
- * @param {'KRW' | 'HUNDRED_MILLION'} unit
+ * @param {'KRW' | 'THOUSAND' | 'MILLION' | 'HUNDRED_MILLION'} unit
  * @returns {string}
  */
 export function formatMoney(value, unit = 'KRW') {
   const parsed = parts(value)
   if (!parsed) return '—'
-  const scale = parsed.scale + (unit === 'HUNDRED_MILLION' ? 8 : 0)
+  const scale = parsed.scale + ({ KRW: 0, THOUSAND: 3, MILLION: 6, HUNDRED_MILLION: 8 }[unit] || 0)
   const digits = parsed.digits.padStart(scale + 1, '0')
   const integer = (scale ? digits.slice(0, -scale) : digits).replace(/^0+(?=\d)/, '')
   const fraction = scale ? digits.slice(-scale).replace(/0+$/, '') : ''

@@ -39,7 +39,7 @@ app:
     python: ${PARSER_PYTHON:python3}
     source-directory: ${PARSER_SOURCE_DIRECTORY:../parser/src}
     timeout-seconds: 90
-    max-output-bytes: 67108864
+    max-output-bytes: 100663296
     worker-enabled: true
     poll-delay-ms: 1000
   local-auth:

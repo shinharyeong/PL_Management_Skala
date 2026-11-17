@@ -6,6 +6,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
+from excel_parser.benchmark.monthly import _run_source, run_monthly
 from excel_parser.benchmark.monthly_evaluation import score_monthly_records
 from excel_parser.benchmark.monthly_truth import (
     _master_organization,
@@ -329,6 +330,109 @@ class MonthlyEvaluationTests(unittest.TestCase):
         self.assertIsNone(
             _master_organization(unrelated, layout, "SYN-F20-OPEX-022-IN-F13")
         )
+
+
+class MonthlyExecutionTests(unittest.TestCase):
+    """규칙 기반 실행과 정답 읽기의 분리·원본 해시 감사를 메모리에서 확인한다."""
+
+    def test_source_worker_reads_only_organization_via_rule_adapter(self) -> None:
+        """조직 워커가 규칙 어댑터의 전체 후보를 평가기에 전달하는지 확인한다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 입력 파일·후보 전달 또는 반환 축약이 잘못된 경우.
+        Side Effects:
+            어댑터·평가 함수를 메모리 대역으로 바꾸며 파일·프로세스를 만들지 않는다.
+        """
+        mapped = {"records": [{"candidate": "original"}]}
+        workbook = {"sheets": [{"name": "원본"}]}
+        parsed = {"parser": "rule", "mapped": mapped, "workbook": workbook,
+                  "completed": True, "validation_passed": True,
+                  "source_integrity": {"sha256_before": "same", "sha256_after": "same"}}
+        before = deepcopy(parsed)
+        with patch("excel_parser.benchmark.adapters.run_rule_adapter", return_value=parsed) as adapter, \
+             patch("excel_parser.benchmark.monthly_evaluation.project_predictions", return_value=[predicted_record()]) as project:
+            result = _run_source(("/memory/org.xlsx", "synthetic", "2026-01"))
+        adapter.assert_called_once_with(Path("/memory/org.xlsx"))
+        project.assert_called_once_with(mapped["records"], workbook,
+                                        type_name="synthetic", closing_month="2026-01")
+        self.assertEqual(result["trial"]["parser"], "rule")
+        self.assertEqual(result["trial"]["source_file"], "/memory/org.xlsx")
+        self.assertNotIn("mapped", result["trial"])
+        self.assertNotIn("workbook", result["trial"])
+        self.assertEqual(result["predictions"], [predicted_record()])
+        self.assertEqual(parsed, before)
+
+    def test_monthly_run_keeps_independent_scoring_and_source_integrity(self) -> None:
+        """원본과 독립 마스터를 각각 처리하고 해시 차이를 숨기지 않는지 확인한다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 독립 대조·실행 건수·원본 변경 감지가 잘못된 경우.
+        Side Effects:
+            모든 파일·폴더 저장과 프로세스 풀을 메모리 대역으로 바꾼다.
+            실제 원본과 결과 파일을 읽거나 생성하지 않는다.
+        """
+        dataset = Path("/memory/dataset")
+        output = Path("/memory/output")
+        repo = Path("/memory/repo")
+        inventory = {"selected_types": ["synthetic"], "organization_count": 1,
+                     "master_count": 1, "batches": [{"type": "synthetic",
+                     "closing_month": "2026-01", "organization_files": ["/memory/org.xlsx"],
+                     "master": "/memory/master.xlsx", "organization_count": 1}]}
+        truth = {"records": [expected_record()], "metadata": {"unmeasured_cells": 0}, "issues": []}
+        for after, unchanged in (("same", True), ("changed", False)):
+            trial = {"parser": "rule", "type": "synthetic", "closing_month": "2026-01",
+                     "source_file": "/memory/org.xlsx", "completed": True,
+                     "validation_passed": True,
+                     "source_integrity": {"sha256_before": "same", "sha256_after": after}}
+            with self.subTest(after=after), \
+                 patch("excel_parser.benchmark.monthly.validate_output_path", return_value=output), \
+                 patch("excel_parser.benchmark.monthly.inventory_dataset", return_value=inventory), \
+                 patch("excel_parser.benchmark.monthly.file_fingerprint", return_value="same"), \
+                 patch("excel_parser.benchmark.runner.implementation_fingerprint", return_value="implementation"), \
+                 patch.object(Path, "mkdir"), \
+                 patch("excel_parser.benchmark.monthly.ProcessPoolExecutor") as pool_factory, \
+                 patch("excel_parser.benchmark.monthly_truth.build_master_truth", return_value=truth) as master, \
+                 patch("excel_parser.benchmark.monthly.write_json") as write_json, \
+                 patch("excel_parser.benchmark.monthly._append_rows"), \
+                 patch("excel_parser.benchmark.monthly.write_summary"), \
+                 patch("builtins.print"):
+                pool = pool_factory.return_value.__enter__.return_value
+                pool.map.return_value = [{"trial": trial, "predictions": [predicted_record()]}]
+                report = run_monthly(dataset, ["01"], output, repo, 1)
+                pool.map.assert_called_once_with(_run_source, [("/memory/org.xlsx", "synthetic", "2026-01")])
+                master.assert_called_once_with(Path("/memory/master.xlsx"), type_name="synthetic", closing_month="2026-01")
+                self.assertEqual(report["trial_count"], 1)
+                self.assertEqual(report["sources_unchanged"], unchanged)
+                self.assertEqual({row["parser"] for row in report["summary"]}, {"rule"})
+                self.assertTrue(all(row["match_count"] == 1 for row in report["summary"]))
+                self.assertEqual(report["conditions"]["parser"], "rule")
+                self.assertTrue(report["execution_by_type"][0]["evaluation_complete"])
+                self.assertEqual(write_json.call_args_list[0].args, (output / "inventory.json", inventory))
+
+    def test_invalid_worker_count_does_not_create_output(self) -> None:
+        """잘못된 프로세스 수는 결과 폴더를 만들기 전에 거절하는지 확인한다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 입력 오류가 허용되거나 결과 폴더를 만드는 경우.
+        Side Effects:
+            폴더 생성 호출을 감시하는 메모리 대역만 사용한다.
+        """
+        with patch.object(Path, "mkdir") as mkdir:
+            with self.assertRaisesRegex(ValueError, "프로세스 수"):
+                run_monthly(Path("/memory/input"), ["01"], Path("/memory/output"), Path("/memory"), 0)
+            mkdir.assert_not_called()
 
 
 if __name__ == "__main__":

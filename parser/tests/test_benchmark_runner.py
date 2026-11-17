@@ -1,4 +1,4 @@
-"""비교 실행의 정답 격리·캐시 정책·출력 보호를 메모리에서 검증한다."""
+"""규칙 평가의 정답 격리·반복 일관성·출력 보호를 메모리에서 검증한다."""
 
 import copy
 import io
@@ -6,12 +6,10 @@ import json
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from excel_parser.benchmark.cli import main, save_report
 from excel_parser.benchmark.runner import load_dataset, run_comparison
-
 
 def manifest_fixture() -> dict:
     """합성 기본 더미 정답 계약을 만든다.
@@ -36,7 +34,6 @@ def manifest_fixture() -> dict:
         {"filename": "master.xlsx", "is_master": True, "org_code": "ALL", "expected": copy.deepcopy(expected)},
     ]}
 
-
 def adapter_fixture(engine: str) -> dict:
     """평가기에서 누락을 실제로 계산할 빈 예측 결과를 만든다.
 
@@ -50,13 +47,11 @@ def adapter_fixture(engine: str) -> dict:
         메모리 객체만 생성한다.
     """
     return {"parser": engine, "source": {"path": "/memory/org.xlsx"},
-            "mapped": {"records": []}, "workbook": {}, "semantic": {},
+            "mapped": {"records": []}, "workbook": {},
             "validation": {"extraction": {"passed": True, "issues": []},
                            "provenance": {"passed": True, "issues": []}},
             "source_integrity": {"unchanged": True, "sha256_before": "stable", "sha256_after": "stable"}, "timings": {"total_seconds": 1.0},
-            "inference": {"logical_attempted_calls": 0, "http_post_attempts": 0},
             "errors": [], "completed": True}
-
 
 class BenchmarkRunnerTests(unittest.TestCase):
     """실제 API·파일 생성 없이 비교 실행의 경계를 검사한다."""
@@ -97,7 +92,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
             엔진 실행을 메모리 결과로 대체한다.
         """
         with patch("excel_parser.benchmark.runner.run_rule_adapter", return_value=adapter_fixture("rule")) as adapter:
-            report = run_comparison([Path("/memory/org.xlsx")], manifest_fixture(), engines=("rule",))
+            report = run_comparison([Path("/memory/org.xlsx")], manifest_fixture())
         adapter.assert_called_once_with(Path("/memory/org.xlsx"))
         trial = report["trials"][0]
         self.assertEqual(trial["financial_aggregate_evaluation"]["groups_total"], 117)
@@ -106,62 +101,50 @@ class BenchmarkRunnerTests(unittest.TestCase):
         self.assertNotIn("workbook", trial)
         self.assertNotIn("mapped", trial)
 
-    def test_cache_resets_by_repetition_and_master_is_separate(self) -> None:
-        """캐시 정책과 마스터 저장소 격리를 확인한다.
+    def test_default_run_executes_rule_evaluation(self) -> None:
+        """기본 실행이 원본 규칙 평가와 독립 검증을 수행하는지 확인한다.
 
         Args:
             없음.
         Returns:
             없음.
         Raises:
-            AssertionError: 반복 또는 입력 역할 간 캐시가 잘못 섞인 경우.
+            AssertionError: 기본 실행이 실패하거나 규칙 어댑터를 호출하지 않는 경우.
         Side Effects:
-            대체 AI 함수가 메모리 캐시만 변경한다.
+            입력과 파서 실행은 메모리 응답으로 대체하고 콘솔도 메모리에 받는다.
         """
-        for mode, expected in (("cold", [0, 0, 0, 0]), ("warm", [0, 0, 1, 1])):
-            observations = []
-            client = SimpleNamespace(response_cache={}, model="fake", effort="low", timeout=1, max_calls=10)
+        with (
+            patch("excel_parser.benchmark.cli.load_dataset", return_value=(
+                [Path("/memory/org.xlsx")], manifest_fixture(), Path("/memory/manifest.json"))),
+            patch("excel_parser.benchmark.cli.file_fingerprint", return_value="manifest"),
+            patch("excel_parser.benchmark.runner.run_rule_adapter", return_value=adapter_fixture("rule")) as adapter,
+            redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(main(["run", "/memory"]), 0)
+        adapter.assert_called_once_with(Path("/memory/org.xlsx"))
 
-            def fake_ai(path, **kwargs):
-                """호출 전 캐시 크기를 기록하고 합성 캐시 한 건을 넣는다.
-
-                Args:
-                    path: 사용하지 않는 합성 입력 경로.
-                    kwargs: 실제 어댑터와 같은 호출 옵션.
-                Returns:
-                    합성 AI 어댑터 결과.
-                Raises:
-                    없음.
-                Side Effects:
-                    메모리 관측 목록과 캐시 사전을 갱신한다.
-                """
-                observations.append(len(kwargs["client"].response_cache))
-                kwargs["client"].response_cache["key"] = "cached"
-                kwargs["template_cache"]["key"] = "template"
-                return adapter_fixture("ai")
-
-            with patch("excel_parser.benchmark.runner.run_ai_adapter", side_effect=fake_ai):
-                report = run_comparison([Path("/memory/org.xlsx"), Path("/memory/master.xlsx")],
-                                        manifest_fixture(), engines=("ai",), repeats=2, cache_mode=mode,
-                                        client=client, allow_api=True)
-            self.assertEqual(observations, expected)
-            self.assertEqual(len(report["summary"]), 4)
-
-    def test_api_gate_runs_before_loading_data(self) -> None:
-        """명시적 API 실행 선택이 없으면 입력 처리 전 종료한다.
+    def test_removed_model_options_are_rejected_before_source_reads(self) -> None:
+        """제거한 외부 모델 실행 옵션이 입력 접근 전에 명시적으로 거부되는지 확인한다.
 
         Args:
             없음.
         Returns:
             없음.
         Raises:
-            AssertionError: 미허용 API 경로가 입력을 읽은 경우.
+            AssertionError: 제거한 옵션을 무시하거나 입력을 읽은 경우.
         Side Effects:
-            콘솔 출력을 메모리에 받는다.
+            콘솔을 메모리에 받고 입력 접근을 감시한다. 파일·네트워크 접근은 없다.
         """
-        with patch("excel_parser.benchmark.cli.load_dataset") as load, redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
-            self.assertEqual(main(["run", "/memory"]), 2)
-        load.assert_not_called()
+        options = (["--engines", "ai"], ["--allow-api"], ["--review", "on"],
+                   ["--cache", "warm"], ["--model", "removed"], ["--effort", "high"],
+                   ["--timeout", "1"], ["--max-output-tokens", "10"],
+                   ["--max-calls", "1"], ["--max-exception-calls", "1"])
+        for flags in options:
+            with patch("excel_parser.benchmark.cli.load_dataset") as load, redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as failure:
+                    main(["run", "/memory", *flags])
+                self.assertEqual(failure.exception.code, 2)
+            load.assert_not_called()
 
     def test_output_outside_allowed_root_is_rejected_without_writes(self) -> None:
         """Data와 임의 외부 경로의 출력 요청을 파일 생성 전에 거부한다.
@@ -181,7 +164,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
                     save_report({}, output, Path("/repo"))
 
     def test_invalid_manifest_rejected_before_engine_calls(self) -> None:
-        """정답 수치가 무효면 비용 발생 전에 실행을 거부한다.
+        """정답 수치가 무효면 파서 실행 전에 거부한다.
 
         Args:
             없음.
@@ -196,7 +179,7 @@ class BenchmarkRunnerTests(unittest.TestCase):
         manifest["files"][0]["expected"]["revenue"]["periods"]["prior"]["annual"] = "NaN"
         with patch("excel_parser.benchmark.runner.run_rule_adapter") as adapter:
             with self.assertRaises(ValueError):
-                run_comparison([Path("/memory/org.xlsx")], manifest, engines=("rule",))
+                run_comparison([Path("/memory/org.xlsx")], manifest)
         adapter.assert_not_called()
 
     def test_cross_trial_source_change_invalidates_comparison(self) -> None:
@@ -214,12 +197,12 @@ class BenchmarkRunnerTests(unittest.TestCase):
         first, second = adapter_fixture("rule"), adapter_fixture("rule")
         second["source_integrity"].update(sha256_before="changed", sha256_after="changed")
         with patch("excel_parser.benchmark.runner.run_rule_adapter", side_effect=[first, second]):
-            report = run_comparison([Path("/memory/org.xlsx")], manifest_fixture(), engines=("rule",), repeats=2)
+            report = run_comparison([Path("/memory/org.xlsx")], manifest_fixture(), repeats=2)
         self.assertFalse(report["source_consistent_across_trials"])
         self.assertFalse(report["trials"][1]["completed"])
 
-    def test_bad_output_and_nonfinite_timeout_are_preflight_errors(self) -> None:
-        """잘못된 출력·시간 설정을 원본과 API에 접근하기 전에 거부한다.
+    def test_bad_output_and_repetition_are_preflight_errors(self) -> None:
+        """잘못된 출력·반복 설정을 원본에 접근하기 전에 거부한다.
 
         Args:
             없음.
@@ -230,9 +213,9 @@ class BenchmarkRunnerTests(unittest.TestCase):
         Side Effects:
             콘솔을 메모리에 받고 입력 접근을 감시한다.
         """
-        cases = [["--timeout", "nan"], ["--timeout", "inf"],
+        cases = [["--repeats", "0"], ["--repeats", "-1"],
                  ["--write-output", "--output-dir", "/tmp/not-allowed"]]
         for flags in cases:
             with patch("excel_parser.benchmark.cli.load_dataset") as load, redirect_stderr(io.StringIO()):
-                self.assertEqual(main(["run", "/memory", "--engines", "rule", *flags]), 2)
+                self.assertEqual(main(["run", "/memory", *flags]), 2)
             load.assert_not_called()

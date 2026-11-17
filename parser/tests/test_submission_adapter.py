@@ -175,6 +175,35 @@ class SubmissionAdapterTests(unittest.TestCase):
         self.assertEqual(sources["T6"]["presence"], "EMPTY")
         self.assertEqual(sources["U6"]["cacheStatus"], "ERROR")
 
+    def test_compressed_blank_spans_preserve_stored_cell_presence(self) -> None:
+        """압축 빈 구간의 경계·틈·다른 행을 구별하고 실제 0을 보존한다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 저장된 빈 셀을 부재나 0으로 바꾼 경우.
+        Side Effects:
+            합성 메모리만 사용하며 원본 추출 계약을 변경하지 않는다.
+        """
+        workbook = submission_workbook()
+        expense = next(sheet for sheet in workbook["sheets"] if sheet["name"] == "비용")
+        expense["cells"] = [cell for cell in expense["cells"] if cell["address"] not in {"S6", "T6", "U6", "V6"}]
+        expense["blank_spans"] = [
+            {"row": 6, "start_column": 19, "end_column": 20},
+            {"row": 6, "start_column": 22, "end_column": 22},
+            {"row": 7, "start_column": 21, "end_column": 21},
+        ]
+        before = deepcopy(workbook)
+        data = build_submission_data(workbook, map_workbook(workbook))
+        values = next(line for line in data["lines"] if line["domain"] == "COST")["values"][:5]
+        self.assertEqual([value["inputPresence"] for value in values],
+                         ["PRESENT", "STORED_BLANK", "STORED_BLANK", "ABSENT_XML_CELL", "STORED_BLANK"])
+        self.assertEqual([value["amount"] for value in values], [Decimal(0), None, None, None, None])
+        self.assertEqual([value["valueStatus"] for value in values], ["AVAILABLE", "MISSING", "MISSING", "MISSING", "MISSING"])
+        self.assertEqual(workbook, before)
+
     def test_missing_header_and_unknown_report_are_not_filled(self) -> None:
         """없는 월 헤더와 잘못된 분류는 추정하지 않고 검증 근거로 남긴다.
 
@@ -263,7 +292,7 @@ class SubmissionAdapterTests(unittest.TestCase):
         workbook["diagnostics"] = []
         with patch("excel_parser.service_bridge.extract_workbook_bytes", return_value=workbook):
             response = parse_bytes(_package(), "ORG-1_2031-PLAN.xlsx")
-        self.assertEqual(response["parserVersion"], "stdlib-bridge/1.3")
+        self.assertEqual(response["parserVersion"], "stdlib-bridge/1.4")
         self.assertEqual(response["submissionData"]["adapterVersion"], "financial-submission/1.0")
         mapped = map_workbook(workbook)
         self.assertEqual(response["summary"]["recordCount"], len(mapped["records"]))

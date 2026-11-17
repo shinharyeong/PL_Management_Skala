@@ -4,7 +4,7 @@ import { useSession } from '../stores/session'
 import { amount, errorText, query } from '../lib/display'
 
 const props = defineProps({ submission: { type: Object, required: true } })
-const emit = defineEmits(['open-cell'])
+const emit = defineEmits(['open-cell', 'open-guidance'])
 const session = useSession()
 const filters = reactive({ month: '', scenario: '' })
 const pages = reactive({ values: { items: [], cursor: null, error: '' }, reports: { items: [], cursor: null, error: '' } })
@@ -19,6 +19,10 @@ let generation = 0
  * Args: cause 안전한 API 오류. Returns: 표시 문자열. Raises: 없음. Side Effects: 없음.
  */
 function resultMessage(cause) {
+  if (['VALIDATION_REQUIRED', 'PARSING_NOT_READY'].includes(cause.code)) {
+    if (props.submission.parsing?.status === 'FAILED') return '파일 처리에 실패해 적재 내역을 확인할 수 없습니다. 파싱·업무 검증 안내에서 처리 상태를 확인해 주세요.'
+    if (props.submission.parsing?.status === 'NEEDS_REVIEW') return '원본에서 확인할 항목이 있습니다. 검증 안내에 따라 원본을 수정하고 전체 파일을 다시 업로드한 뒤 업무 검증을 실행해 주세요.'
+  }
   if (cause.code === 'VALIDATION_REQUIRED') return '업무 검증을 실행하면 적재 내역과 보고 집계를 확인할 수 있습니다.'
   if (cause.code === 'VALIDATION_STALE') return '검증 기준이 변경되었습니다. 업무 검증을 다시 실행하면 현재 적재 결과를 확인할 수 있습니다.'
   if (cause.code === 'PARSING_NOT_READY') return '현재 파싱이 끝난 뒤 조회할 수 있습니다.'
@@ -87,6 +91,11 @@ function valueStatus(value) { return ({ AVAILABLE: '확인', MISSING: '누락', 
  */
 function openCell(source) { if (source?.sheet && source?.cell) emit('open-cell', source) }
 
+/** 적재 화면에서 확인할 원본 위치·사유 안내로 이동한다.
+ * Args: 없음. Returns: 없음. Raises: 없음. Side Effects: open-guidance 이벤트만 보낸다.
+ */
+function openGuidance() { emit('open-guidance') }
+
 /** 이탈한 화면의 응답이 다음 제출본에 반영되지 않게 취소한다.
  * Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 조회 세대 무효화·HTTP 취소.
  */
@@ -100,7 +109,7 @@ onBeforeUnmount(dispose)
     <div class="section-heading"><div><h2>적재 내역 · 보고 집계</h2><p class="muted section-description">{{ submission.status === 'DRAFT' ? '검증 초안의 적재 결과입니다. 최종 제출 전이며 승인된 집계가 아닙니다.' : '이 제출본에 고정된 적재 결과입니다. 공식 마스터 집계와 구분해 확인하세요.' }}</p></div><span class="muted">단위: 원</span></div>
     <form class="filters" @submit.prevent="load()"><label>대상 월<select v-model="filters.month"><option value="">전체 월</option><option v-for="month in 12" :key="month" :value="month">{{ month }}월</option></select></label><label>구분<select v-model="filters.scenario"><option value="">전체 구분</option><option value="PLAN">계획</option><option value="ACTUAL">실적</option><option value="ESTIMATE">추정</option></select></label><button class="button" :disabled="loading || !!busy">조회</button></form>
     <div v-if="summary" class="metrics"><div><span>적재 상세행</span><strong>{{ summary.lineCount }}</strong></div><div><span>월별 금액</span><strong>{{ summary.valueCount }}</strong></div><div><span>업무 검증</span><strong>{{ summary.validationState === 'CURRENT' ? '실행 완료' : '재검증 필요' }}</strong></div><div><span>완전성</span><strong>{{ summary.complete ? '충족' : '확인 필요' }}</strong></div></div>
-    <p v-if="summary && !summary.complete" class="notice warning">확인된 행만 적재되어 있습니다. 아래 진단을 확인해 주세요. 불완전한 보고값은 금액으로 표시하지 않습니다.</p>
+    <p v-if="summary && !summary.complete" class="notice warning">원본에서 확인할 내용이 남아 있습니다. 불완전한 보고값은 금액으로 표시하지 않습니다. <button class="text-button" @click="openGuidance">확인할 위치·사유 보기 →</button></p>
     <h3 class="data-title">적재 금액</h3>
     <p v-if="pages.values.error" class="notice warning" role="status">{{ pages.values.error }}</p>
     <p v-if="loading" class="empty compact" role="status">적재 내역을 불러오는 중…</p>

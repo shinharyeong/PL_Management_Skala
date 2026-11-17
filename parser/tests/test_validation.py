@@ -2,8 +2,10 @@
 
 import unittest
 from copy import deepcopy
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
+from zipfile import ZipFile
 
 from helpers import (
     PROJECT_ROOT,
@@ -95,6 +97,50 @@ class IndependentValidationTests(unittest.TestCase):
         self.assertEqual(report["required_candidate_count"], 2)
         self.assertEqual(report["covered_candidate_count"], 2)
         self.assertGreater(report["evidence_reference_count"], 0)
+
+    def test_legacy_and_threaded_comments_are_verified_independently(self) -> None:
+        """같은 셀의 일반·스레드 메모와 메모 전용 셀의 보존·누락을 검증한다.
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 원본 메모가 누락되거나 변조되어도 통과하는 경우.
+        Side Effects:
+            합성 ZIP과 변형 추출 결과를 메모리에서만 만들며 파일을 생성하지 않는다.
+        """
+        stream = BytesIO(self.package)
+        with ZipFile(stream, "a") as archive:
+            archive.writestr("xl/worksheets/_rels/sheet1.xml.rels", """
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  <Relationship Id="legacy" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments1.xml"/>
+                  <Relationship Id="thread" Type="http://schemas.microsoft.com/office/2017/10/relationships/threadedComment" Target="../threadedComments/threadedComment1.xml"/>
+                </Relationships>""")
+            archive.writestr("xl/comments1.xml", """
+                <comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                  <authors><author>검증</author></authors><commentList>
+                    <comment ref="B2" authorId="0"><text><r><t>일반 </t></r><r><t>메모</t></r></text></comment>
+                  </commentList>
+                </comments>""")
+            archive.writestr("xl/threadedComments/threadedComment1.xml", """
+                <ThreadedComments xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments">
+                  <threadedComment ref="B2" personId="synthetic"><text>대화 메모</text></threadedComment>
+                  <threadedComment ref="D9" personId="synthetic"><text>메모만 있는 셀</text></threadedComment>
+                </ThreadedComments>""")
+        package = stream.getvalue()
+        workbook = extract_memory(package)
+        with patch("excel_parser.validation.ZipFile", return_value=open_memory_archive(package)):
+            result = validate_extraction(self.source, workbook)
+        self.assertTrue(result["passed"], result["issues"])
+        cells = {cell["address"]: cell for cell in workbook["sheets"][0]["cells"]}
+        self.assertEqual([item["text"] for item in cells["B2"]["comments"]], ["일반 메모", "대화 메모"])
+        cells["B2"]["comments"].pop()
+        cells["D9"]["comments"][0]["text"] = "변조"
+        with patch("excel_parser.validation.ZipFile", return_value=open_memory_archive(package)):
+            result = validate_extraction(self.source, workbook)
+        self.assertEqual({issue.get("cell") for issue in result["issues"]
+                          if issue["code"] == "COMMENT_MISMATCH"}, {"B2", "D9"})
 
     def test_missing_candidate_and_wrong_source_are_detected(self) -> None:
         """표준 후보 누락과 다른 파일 출처로의 변조를 검출한다.

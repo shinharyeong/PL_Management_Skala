@@ -877,6 +877,60 @@ def _inactive_expense_template_row(row_number: int, index: dict, layout: dict) -
     )
 
 
+def _inactive_revenue_template_row(row_number: int, index: dict, layout: dict) -> bool:
+    """식별 정보·월 입력 없이 연간 0만 남은 매출 양식 행을 확인한다.
+
+    Args:
+        row_number: 검사할 원본 행 번호.
+        index: 같은 시트의 원본 행·셀 색인.
+        layout: 헤더로 확인한 revenue_detail 열·기간 구조.
+    Returns:
+        모든 연간 칸이 숫자 0 상수 또는 확인된 12개월 SUM의 캐시 0이며
+        다른 입력·수식·주석이 없으면 True. 공유 SUM은 기준 행·범위까지 확인한다.
+        실제 월별 0, 설명만 있는 행, 미완성 기간 구조는 False로 남긴다.
+    Raises:
+        없음. 확인하지 못한 양식은 활성 검증 대상으로 남긴다.
+    Side Effects:
+        없음. 원본 셀·값·후보를 삭제하거나 연간 값을 계산하지 않는다.
+    """
+    if layout["kind"] != "revenue_detail" or row_number <= layout["header_row"]:
+        return False
+    row, periods = index["rows"][row_number], layout["periods"]
+    annual_columns = {column for column, period in periods.items() if period["aggregation"] == "annual"}
+    if not annual_columns:
+        return False
+    for column in annual_columns:
+        annual, cell = periods[column], row.get(column)
+        if (
+            not cell or cell.get("data_type") != "number"
+            or re.fullmatch(r"[+-]?0+(?:\.0+)?(?:E[+-]?\d+)?", _text(cell).upper()) is None
+            or not isinstance(annual.get("year"), int)
+            or any(
+                periods.get(column + month, {}).get("month") != month
+                or periods.get(column + month, {}).get("year") != annual["year"]
+                or periods.get(column + month, {}).get("aggregation") != "month"
+                for month in range(1, 13)
+            )
+        ):
+            return False
+        if cell.get("formula") is not None:
+            parsed = _template_formula(cell)
+            if not parsed or cell["formula"].get("cached_status") != "stored_unverified":
+                return False
+            expression, formula_row = parsed
+            row_prefix = r"\$?" if formula_row == row_number else ""
+            header = index["rows"][layout["header_row"]]
+            first, last = header[column + 1]["column"], header[column + 12]["column"]
+            pattern = rf"SUM\(\$?{first}{row_prefix}{formula_row}:\$?{last}{row_prefix}{formula_row}\)"
+            if re.fullmatch(pattern, expression) is None:
+                return False
+    return all(
+        not cell.get("comments")
+        and (column in annual_columns or (cell.get("value") in {None, ""} and cell.get("formula") is None))
+        for column, cell in row.items()
+    )
+
+
 def _row_context(
     cell: dict,
     index: dict,
@@ -1063,7 +1117,10 @@ def _row_context(
             financial = item["code"] is not None
         role = "reference" if kind == "unknown" else "unknown"
     if inactive_template is None:
-        inactive_template = _inactive_expense_template_row(cell["row"], index, layout)
+        inactive_template = (
+            _inactive_expense_template_row(cell["row"], index, layout)
+            or _inactive_revenue_template_row(cell["row"], index, layout)
+        )
     if inactive_template:
         role = "inactive_template"
     return {
@@ -1224,8 +1281,9 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
             if not cell.get("has_content", True):
                 continue
             if cell["row"] not in inactive_rows:
-                inactive_rows[cell["row"]] = _inactive_expense_template_row(
-                    cell["row"], index, layout
+                inactive_rows[cell["row"]] = (
+                    _inactive_expense_template_row(cell["row"], index, layout)
+                    or _inactive_revenue_template_row(cell["row"], index, layout)
                 )
             context = _row_context(
                 cell, index, layout, common_org, registry, statement_items,
@@ -1265,7 +1323,7 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
             formula = cell.get("formula")
             rules = ["MAP_" + layout["kind"].upper()]
             if context["role"] == "inactive_template":
-                rules.append("ROW_INACTIVE_EXPENSE_TEMPLATE")
+                rules.append("ROW_INACTIVE_REVENUE_TEMPLATE" if layout["kind"] == "revenue_detail" else "ROW_INACTIVE_EXPENSE_TEMPLATE")
             unit_evidence = list(unit_sources) if financial else []
             if context["role"] == "subtotal" and layout["kind"].endswith("_detail"):
                 expression = (formula or {}).get("text") or ""
@@ -1375,7 +1433,9 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
                 "role": {
                     "kind": context["role"],
                     "aggregatable": False,
-                    "reason": "실제 입력 없이 확인된 조회·연간 합계 수식만 남은 양식 행"
+                    "reason": "식별 정보·월 입력 없이 연간 0 또는 확인된 12개월 SUM만 남은 매출 양식 행"
+                    if context["role"] == "inactive_template" and layout["kind"] == "revenue_detail"
+                    else "실제 입력 없이 확인된 조회·연간 합계 수식만 남은 양식 행"
                     if context["role"] == "inactive_template"
                     else "집계 시 조직·버전·기간·상세/합계 중복 제거 정책 확정 필요",
                 },

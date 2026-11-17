@@ -205,7 +205,7 @@ class ManifestScoreTests(unittest.TestCase):
         self.assertEqual(result["details"][0]["actual_won"], "1000.0001")
 
     def test_production_unresolved_value_kind_null_is_a_valid_prediction(self):
-        """AI 미분류 레코드의 null value_kind를 미확정으로 세는지 확인한다.
+        """미분류 레코드의 null value_kind를 미확정으로 세는지 확인한다.
 
         Args:
             없음.
@@ -223,8 +223,8 @@ class ManifestScoreTests(unittest.TestCase):
                     "original_value": "1", "normalized_value": None,
                     "status": status, "value_kind": None, "currency": None,
                     "source_unit": None, "multiplier": None,
-                    "rule_ids": ["AI_NOT_CLASSIFIED"],
-                    "diagnostics": ["LLM이 이 후보 셀을 분류하지 않음"],
+                    "rule_ids": [],
+                    "diagnostics": ["후보 셀의 값 종류를 확인할 수 없음"],
                 }
                 records[1]["mapping"] = {"status": "unmapped"}
                 result = score_manifest(records, entry)

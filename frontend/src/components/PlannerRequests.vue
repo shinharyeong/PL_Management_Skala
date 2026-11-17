@@ -1,8 +1,12 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSession } from '../stores/session'
-import { query, errorText } from '../lib/display'
+import { dateTime, query, errorText, saveBlob } from '../lib/display'
+import { draftStatus } from '../lib/request-workflow'
+import RequestEditor from './RequestEditor.vue'
+import AnnualPlanConfirmation from './AnnualPlanConfirmation.vue'
+import SubmissionReviews from './SubmissionReviews.vue'
 
 const route = useRoute()
 const session = useSession()
@@ -18,6 +22,57 @@ const error = ref('')
 const controller = new AbortController()
 let detailController = new AbortController()
 let detailGeneration = 0
+const expandedId = ref('')
+const expandedSubmission = ref(null)
+const expandedLoading = ref(false)
+const actionBusy = ref(false)
+const actionError = ref('')
+const rejectNote = ref('')
+const decision = ref('')
+const statusFilter = ref('ALL')
+let expansionGeneration = 0
+const actionKeys = new Map()
+
+/** 발송된 조직만 진행 상태에 따라 표시한다. Args: 없음. Returns: 대상 목록. Raises: 없음. Side Effects: 없음. */
+const visibleTargets = computed(function visibleRequestTargets() { const result = []; for (const item of selected.value?.targets || []) if (item.selected !== false && (statusFilter.value === 'ALL' || (item.latestStatus || 'NOT_SUBMITTED') === statusFilter.value)) result.push(item); return result })
+/** 연간 확정 화면에 실제 조직 목록을 제공한다. Args: 없음. Returns: 조직 목록. Raises: 없음. Side Effects: 없음. */
+const targetOrganizations = computed(function requestOrganizations() { const items = []; for (const item of selected.value?.targets || []) items.push(item.organization); return items })
+
+/** 행을 펼쳐 실제 제출본과 검토 준비 상태를 읽는다. Args: target 조직 요청 대상. Returns: Promise<void>. Raises: 없음(화면 표시). Side Effects: GET·행 선택. */
+async function expand(target) {
+  const id = String(target.organization.id)
+  if (actionBusy.value) return
+  const current = ++expansionGeneration
+  expandedId.value = expandedId.value === id ? '' : id; expandedSubmission.value = null; expandedLoading.value = false; actionError.value = ''; decision.value = ''; rejectNote.value = ''
+  if (!expandedId.value || !target.latestSubmittedSubmissionId) return
+  expandedLoading.value = true
+  try { const result = await session.request(`/api/v1/submissions/${target.latestSubmittedSubmissionId}`, { signal: detailController.signal }); if (current === expansionGeneration) expandedSubmission.value = result }
+  catch (cause) { if (current === expansionGeneration && cause.name !== 'AbortError') actionError.value = errorText(cause) }
+  finally { if (current === expansionGeneration) expandedLoading.value = false }
+}
+
+/** 열린 제출본의 원본만 내려받는다. Args: 없음. Returns: Promise<void>. Raises: 없음(화면 표시). Side Effects: GET·브라우저 다운로드. */
+async function downloadSource() {
+  if (!expandedSubmission.value || actionBusy.value) return
+  actionBusy.value = true; actionError.value = ''
+  try { const file = await session.request(`/api/v1/submissions/${expandedSubmission.value.id}/file`, { blob: true, signal: detailController.signal }); if (!detailController.signal.aborted) saveBlob(file, expandedSubmission.value.originalFilename) }
+  catch (cause) { if (cause.name !== 'AbortError') actionError.value = errorText(cause) }
+  finally { actionBusy.value = false }
+}
+
+/** 확인한 제출본을 토큰과 멱등키로 승인 또는 반려한다. Args: 없음. Returns: Promise<void>. Raises: 없음(화면 표시). Side Effects: 명시적 POST·진행표 새로고침. */
+async function decideSubmission() {
+  if (!expandedSubmission.value || actionBusy.value || !['APPROVE', 'REJECT'].includes(decision.value)) return
+  if (decision.value === 'APPROVE' && !expandedSubmission.value.readiness?.canApprove) return
+  if (decision.value === 'REJECT' && !rejectNote.value.trim()) { actionError.value = '반려 사유를 입력해 주세요.'; return }
+  const payload = { expectedStateToken: expandedSubmission.value.stateToken, action: decision.value }
+  if (decision.value === 'REJECT') payload.note = rejectNote.value.trim()
+  const body = JSON.stringify(payload); if (!actionKeys.has(body)) actionKeys.set(body, crypto.randomUUID())
+  actionBusy.value = true; actionError.value = ''
+  try { await session.request(`/api/v1/submissions/${expandedSubmission.value.id}/decisions`, { method: 'POST', body, headers: { 'Idempotency-Key': actionKeys.get(body) }, signal: detailController.signal }); actionKeys.delete(body); await select(selectedId.value) }
+  catch (cause) { if (cause.name !== 'AbortError') actionError.value = errorText(cause) }
+  finally { actionBusy.value = false }
+}
 
 /** 연간 요청 목록을 읽고 선택한 요청의 조직별 진행 현황을 연결한다.
  * Args: more 다음 페이지 여부. Returns: Promise<void>. Raises: 없음(API 오류를 화면에 표시).
@@ -34,7 +89,10 @@ async function load(more = false) {
     items.value = more ? [...items.value, ...page.items] : page.items
     nextCursor.value = page.nextCursor
     if (!more) {
-      const id = selectedId.value || items.value[0]?.id
+      const currentYear = Number(new Intl.DateTimeFormat('en', { timeZone: 'Asia/Seoul', year: 'numeric' }).format(new Date()))
+      let currentRequest = null
+      for (const item of items.value) if (item.year === currentYear) currentRequest = item
+      const id = selectedId.value || currentRequest?.id || items.value[0]?.id
       if (id) await select(id)
     }
   } catch (cause) {
@@ -51,6 +109,7 @@ async function select(id) {
   detailController = new AbortController()
   const current = ++detailGeneration
   selectedId.value = id
+  expansionGeneration++; expandedId.value = ''; expandedSubmission.value = null; decision.value = ''
   selected.value = null
   masterStatus.value = null
   masterError.value = ''
@@ -126,10 +185,21 @@ function targetLink(target) {
   return { path: target.latestSubmittedSubmissionId ? `/submissions/${target.latestSubmittedSubmissionId}` : '/history', query }
 }
 
+/** 최신 완료본과 별도로 현재 업로드 초안의 진단으로 연결한다.
+ * Args: target 조직 대상 DTO. Returns: 초안 상세 라우트. Raises: 없음. Side Effects: 없음.
+ */
+function draftLink(target) { return { path: `/submissions/${target.latestDraftSubmissionId}`, query: { from: 'requests', requestId: selected.value.id, organizationId: target.organization.id } } }
+
+/** 요청 수정 후 현재 선택의 현황과 상태 토큰을 다시 조회한다.
+ * Args: 없음. Returns: Promise<void>. Raises: 없음(조회 영역 표시). Side Effects: 요청 상세 GET.
+ */
+async function refreshSelected() { if (selectedId.value) await select(selectedId.value) }
+
 /** 화면 이탈 시 목록과 상세 요청의 갱신을 중단한다.
  * Args: 없음. Returns: 없음. Raises: 없음. Side Effects: HTTP 취소·상세 세대값 무효화.
  */
 function dispose() {
+  expansionGeneration++
   detailGeneration++
   controller.abort()
   detailController.abort()
@@ -141,9 +211,9 @@ onBeforeUnmount(dispose)
 
 <template>
   <div class="annual-requests" data-figma-node="2:1108">
-    <h1>연간 계획</h1>
+    <h1>연간 계획 관리</h1>
     <div class="request-types">
-      <RouterLink to="/planning/annual-plan" class="request-type" data-figma-node="2:1160">연간 계획 요청</RouterLink>
+      <RouterLink to="/planning/annual-plan/new" class="request-type" data-figma-node="2:1160">연간 계획 요청 <span>→</span></RouterLink>
     </div>
 
     <section class="request-progress" aria-labelledby="request-progress-title" data-figma-node="2:1252">
@@ -151,25 +221,25 @@ onBeforeUnmount(dispose)
         <h2 id="request-progress-title">{{ selected ? `${selected.year}년도 연간 계획` : '연간 계획 요청 현황' }}</h2>
         <div class="progress-controls">
           <label v-if="items.length" class="visually-hidden" for="annual-request-period">요청 기간</label>
-          <select v-if="items.length" id="annual-request-period" :value="selectedId" :disabled="loading" @change="changeRequest">
+          <select v-if="items.length" id="annual-request-period" :value="selectedId" :disabled="loading || detailLoading || actionBusy" @change="changeRequest">
             <option v-for="item in items" :key="item.id" :value="item.id">{{ item.year }}년도 연간 계획</option>
           </select>
-          <button class="refresh-link" type="button" :disabled="loading || detailLoading" @click="load(false)">새로고침</button>
+          <button class="refresh-link" type="button" :disabled="loading || detailLoading || actionBusy" @click="load(false)">새로고침</button>
         </div>
       </div>
       <div v-if="error" class="alert error" role="alert">{{ error }}</div>
       <p v-if="loading || detailLoading" class="progress-empty" role="status">요청 현황을 불러오고 있습니다.</p>
       <template v-else-if="selected">
         <div v-if="masterError" class="alert error" role="alert">마스터 상태를 확인하지 못했습니다. {{ masterError }}</div>
-        <section v-if="masterStatus" class="master-status" aria-labelledby="annual-master-status-title">
+        <details v-if="masterStatus" class="master-status" aria-labelledby="annual-master-status-title"><summary id="annual-master-status-title">연간 마스터 · {{ masterStatus.publicationState === 'PUBLISHED' ? masterStatus.latestVersionLabel : `승인 ${masterStatus.approvedOrganizationCount}/${masterStatus.requiredOrganizationCount}곳` }}</summary>
           <div>
-            <h3 id="annual-master-status-title">연간 계획 마스터</h3>
             <p v-if="masterStatus.publicationState === 'PUBLISHED'"><strong>{{ masterStatus.latestVersionLabel }}</strong> 발행됨</p>
             <p v-else><strong>첫 발행 대기</strong> · 승인 {{ masterStatus.approvedOrganizationCount }}/{{ masterStatus.requiredOrganizationCount }}곳</p>
             <p class="muted">전 조직 승인 시 승인본을 통합해 자동 발행합니다. 이후에는 새로 승인한 조직만 교체하며, Contingency를 입력하는 연간 계획 확정은 별도입니다.</p>
           </div>
           <RouterLink v-if="masterStatus.latestMasterId" :to="`/planning/annual-masters/${masterStatus.latestMasterId}`" class="button">마스터 확인 →</RouterLink>
-        </section>
+        </details>
+        <div class="status-tabs" role="group" aria-label="연간 요청 상태"><button v-for="state in [{ value: 'ALL', name: '전체' }, { value: 'NOT_SUBMITTED', name: '회신 대기' }, { value: 'PENDING', name: '검토 대기' }, { value: 'APPROVED', name: '수락 완료' }, { value: 'REJECTED', name: '반려' }]" :key="state.value" :class="{ active: statusFilter === state.value }" @click="statusFilter = state.value">{{ state.name }}</button></div>
         <div class="progress-table-wrap">
           <table>
             <caption class="visually-hidden">{{ selected.year }}년도 조직별 연간 계획 요청 진행 현황</caption>
@@ -181,40 +251,44 @@ onBeforeUnmount(dispose)
               <tr><th scope="col">조직명</th><th scope="col">조직코드</th><th scope="col">발송일</th><th scope="col">기한</th><th scope="col">수신 담당자</th><th scope="col">상태</th><th scope="col"><span class="visually-hidden">상세</span></th></tr>
             </thead>
             <tbody>
-              <tr v-for="target in selected.targets" :key="target.organization.id">
-                <td class="organization-name">{{ target.organization.name }}</td>
+              <template v-for="target in visibleTargets" :key="target.organization.id"><tr :class="{ expanded: expandedId === String(target.organization.id) }">
+                <td class="organization-name"><button class="row-toggle" :aria-expanded="expandedId === String(target.organization.id)" @click="expand(target)">{{ expandedId === String(target.organization.id) ? '▾' : '▸' }} {{ target.organization.name }}</button></td>
                 <td>{{ target.organization.code }}</td>
                 <td>{{ shortDate(selected.requestedAt) }}</td>
                 <td>{{ shortDate(selected.dueAt, true) }}</td>
-                <td class="recipient-name">—</td>
+                <td class="recipient-name"><span v-if="!target.recipients?.length">등록된 담당자 없음</span><span v-for="recipient in target.recipients || []" :key="recipient.id" class="actual-recipient">{{ recipient.name }}<small v-if="recipient.email"> · {{ recipient.email }}</small></span></td>
                 <td>
                   <span :class="['request-state', targetStatus(target).tone]">{{ targetStatus(target).label }}</span>
-                  <small v-if="target.draftCount">업로드 초안 {{ target.draftCount }}건</small>
+                  <small v-if="target.latestDraftSubmissionId">새 초안 · {{ draftStatus(target.latestDraftParsingStatus) }}</small><small v-else-if="target.draftCount">보존 초안 {{ target.draftCount }}건</small>
                 </td>
-                <td><RouterLink :to="targetLink(target)" class="detail-link">{{ target.latestStatus === 'PENDING' ? '검토' : '보기' }}</RouterLink></td>
+                <td><button class="detail-link row-toggle" @click="expand(target)">{{ expandedId === String(target.organization.id) ? '접기' : '검토' }}</button></td>
               </tr>
+              <tr v-if="expandedId === String(target.organization.id)" class="expanded-detail"><td colspan="7"><p v-if="expandedLoading" role="status">제출본을 불러오는 중…</p><p v-if="actionError" class="alert error" role="alert">{{ actionError }}</p><template v-if="expandedSubmission"><div class="reply-header"><div><strong>{{ target.organization.name }} · {{ expandedSubmission.versionLabel }}</strong><p>{{ dateTime(expandedSubmission.submittedAt || expandedSubmission.uploadedAt) }} 제출</p></div><button class="button" :disabled="actionBusy" @click="downloadSource">⤓ {{ expandedSubmission.originalFilename }}</button></div><details class="reply-explanations"><summary>변경 항목 · 소명 회신 확인</summary><SubmissionReviews :submission="expandedSubmission" @changed="refreshSelected" /></details><div v-if="expandedSubmission.status === 'PENDING'" class="review-actions"><RouterLink :to="targetLink(target)" class="text-button">제출값 · 원본 근거 확인 →</RouterLink><div v-if="!decision" class="button-row"><button class="button" :disabled="actionBusy" @click="decision = 'REJECT'">반려 · 재제출 요청</button><button class="button primary" :disabled="actionBusy || !expandedSubmission.readiness?.canApprove" @click="decision = 'APPROVE'">제출 수락</button></div><form v-else @submit.prevent="decideSubmission"><label v-if="decision === 'REJECT'">반려 사유<textarea v-model="rejectNote" required maxlength="5000" placeholder="수정이 필요한 항목과 사유를 입력해 주세요."></textarea></label><p v-else>이 제출본을 수락하면 연간 마스터 발행 조건에 반영됩니다.</p><div class="button-row"><button type="button" class="button" :disabled="actionBusy" @click="decision = ''">취소</button><button class="button primary" :disabled="actionBusy">{{ actionBusy ? '처리 중…' : decision === 'APPROVE' ? '수락 확정' : '반려 확정' }}</button></div></form></div><p v-if="expandedSubmission.status === 'PENDING' && !expandedSubmission.readiness?.canApprove" class="progress-note">필수 소명 검토를 완료한 뒤 제출을 수락할 수 있습니다.</p></template><template v-else-if="!expandedLoading"><p>아직 최종 제출된 자료가 없습니다.</p><RouterLink v-if="target.latestDraftSubmissionId" :to="draftLink(target)" class="text-button">업로드 상태 · 오류 확인 →</RouterLink></template></td></tr></template>
+              <tr v-if="!visibleTargets.length"><td colspan="7" class="progress-empty">이 상태의 조직이 없습니다.</td></tr>
             </tbody>
             <tfoot>
               <tr>
                 <td>연간 계획 ({{ selected.year }}년)</td>
-                <td>전 조직 {{ selected.targetCount }}곳</td>
+                <td>발송 {{ selected.selectedTargetCount ?? selected.targetCount }}곳</td>
                 <td>{{ shortDate(selected.requestedAt) }}</td>
                 <td>{{ shortDate(selected.dueAt, true) }}</td>
-                <td><div class="submission-progress"><progress :value="selected.submittedCount" :max="selected.targetCount || 1" aria-label="최종 제출 조직 수"></progress><span>{{ selected.submittedCount }}/{{ selected.targetCount }}</span></div></td>
+                <td><div class="submission-progress"><progress :value="selected.submittedCount" :max="(selected.selectedTargetCount ?? selected.targetCount) || 1" aria-label="발송 대상 중 최종 제출 조직 수"></progress><span>{{ selected.submittedCount }}/{{ selected.selectedTargetCount ?? selected.targetCount }}</span></div></td>
                 <td><span class="summary-state">{{ selected.status === 'OPEN' ? '진행 중' : '마감' }}</span></td>
                 <td></td>
               </tr>
             </tfoot>
           </table>
         </div>
-        <p class="progress-note">최종 제출 {{ selected.submittedCount }}/{{ selected.targetCount }}곳 · 승인 {{ selected.approvedCount }}/{{ selected.targetCount }}곳. 업로드 초안은 최종 제출 완료에 포함하지 않습니다.</p>
+        <p class="progress-note">발송 대상 {{ selected.selectedTargetCount ?? selected.targetCount }}곳 중 제출 {{ selected.submittedCount }}곳 · 수락 {{ selected.approvedCount }}곳. 연간 마스터 첫 발행은 전사 {{ selected.requiredOrganizationCount ?? selected.targetCount }}곳의 수락이 필요합니다.</p>
       </template>
       <div v-else-if="!error" class="progress-empty">
         <p>아직 발송한 연간 계획 요청이 없습니다.</p>
-        <RouterLink to="/planning/annual-plan" class="empty-link">연간 계획 요청 작성 →</RouterLink>
+        <RouterLink to="/planning/annual-plan/new" class="empty-link">연간 계획 요청 작성 →</RouterLink>
       </div>
       <button v-if="nextCursor" class="more-link" type="button" :disabled="loading" @click="load(true)">이전 요청 더 불러오기</button>
     </section>
+    <RequestEditor v-if="selected" :key="`${selected.id}:${selected.stateToken}`" :request="selected" @updated="refreshSelected" @refresh="refreshSelected" />
+    <details v-if="selected" class="annual-confirmation"><summary>연간 계획 확정 · Contingency</summary><AnnualPlanConfirmation :year="selected.year" :organizations="targetOrganizations" /></details>
   </div>
 </template>
 
@@ -227,6 +301,7 @@ onBeforeUnmount(dispose)
   letter-spacing: -.6px;
 }
 .request-types { display: flex; gap: 12px; margin-top: 20px; }
+.draft-link { display:block; margin-top:8px; }
 .request-type {
   display: flex;
   align-items: center;
@@ -244,7 +319,7 @@ onBeforeUnmount(dispose)
 .request-type:hover { border-color: #a9875b; }
 .request-progress {
   min-height: 361px;
-  margin-top: 118px;
+  margin-top: 28px;
   padding: 24px 25px 30px;
   border: 1px solid #e7e4de;
   border-radius: 12px;
@@ -304,6 +379,7 @@ onBeforeUnmount(dispose)
 .progress-table-wrap td { height: 54px; padding: 12px 7px; border-bottom: 1px solid #e7e4de; vertical-align: middle; overflow-wrap: anywhere; }
 .progress-table-wrap .organization-name { font-weight: 500; }
 .progress-table-wrap .recipient-name { color: #9ea2a9; }
+.actual-recipient { display:block; color:#4a4844; }
 .progress-table-wrap tbody tr:last-child td { border-bottom: 1px solid #e7e4de; }
 .request-state {
   display: inline-flex;
@@ -331,7 +407,7 @@ onBeforeUnmount(dispose)
 .submission-progress progress::-moz-progress-bar { background: #14171e; border-radius: 999px; }
 .summary-state { font-size: 11px; }
 .progress-note { margin-top: 12px; color: #9a9690; font-size: 11px; }
-.master-status { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:24px; padding:18px; border:1px solid #e7e4de; border-radius:10px; background:#faf9f6; }
+.master-status { margin-bottom:20px; padding:14px 18px; border:1px solid #e7e4de; border-radius:10px; background:#faf9f6; }.master-status summary { font-size:12px; }.master-status[open]>div { margin-top:14px; }.status-tabs { display:flex; gap:6px; margin-bottom:18px; }.status-tabs button { padding:8px 13px; background:transparent; border-radius:7px; font-size:12px; color:#777; }.status-tabs .active { background:#14171e; color:white; }.row-toggle { padding:0; text-align:left; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; }.expanded { background:#faf7f1; }.expanded-detail>td { padding:24px!important; background:#fcfbf9; }.reply-header { display:flex; justify-content:space-between; align-items:center; gap:20px; }.reply-header p { font-size:11px; color:#9ea2a9; margin-top:6px; }.reply-explanations { margin:20px 0; }.reply-explanations summary { font-size:12px; }.review-actions { display:flex; align-items:center; justify-content:space-between; gap:18px; flex-wrap:wrap; }.review-actions form { width:100%; }.review-actions form>.button-row { justify-content:flex-end; margin-top:12px; }.annual-confirmation { padding:18px; border:1px solid var(--line); background:white; border-radius:10px; margin-top:18px; }.annual-confirmation summary { font-size:13px; }.request-type { gap:25px; }
 .master-status h3 { margin-bottom:8px; }.master-status p { font-size:13px; line-height:1.7; }.master-status .muted { max-width:720px; margin-top:7px; font-size:12px; }.master-status .button { flex-shrink:0; }
 .progress-empty { display: flex; min-height: 220px; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #7c808a; font-size: 13px; text-align: center; }
 .empty-link { color: #75552f; font-size: 12px; }
@@ -342,7 +418,7 @@ onBeforeUnmount(dispose)
 }
 @media (max-width: 760px) {
   .master-status { align-items:flex-start; flex-direction:column; }
-  .request-progress { margin-top: 54px; }
+  .request-progress { margin-top: 24px; }.reply-header { align-items:flex-start; flex-direction:column; }
   .request-types { flex-wrap: wrap; }
   .progress-heading { margin-bottom: 22px; }
   .progress-controls { width: 100%; justify-content: space-between; }

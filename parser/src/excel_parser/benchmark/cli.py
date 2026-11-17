@@ -1,12 +1,10 @@
-"""기본은 콘솔만 사용하며 실제 AI 통신과 결과 저장을 명시적으로 선택한다."""
+"""규칙 파서의 원본 대조를 실행하며 기본 결과는 콘솔에만 출력한다."""
 
 from __future__ import annotations
 
 import argparse
 import csv
 import json
-import math
-import os
 import sys
 from datetime import datetime
 from decimal import Decimal
@@ -36,7 +34,7 @@ def json_value(value: object) -> str:
 
 
 def validate_output_path(output: Path, repo: Path) -> Path:
-    """비용이 발생하기 전에 출력 경로의 안전성과 덮어쓰기를 검사한다.
+    """실행 전에 출력 경로의 안전성과 덮어쓰기를 검사한다.
 
     Args:
         output: 요청한 새 실행 폴더.
@@ -99,7 +97,7 @@ def make_parser() -> argparse.ArgumentParser:
     Side Effects:
         없음.
     """
-    parser = argparse.ArgumentParser(description="규칙 기반 vs LLM 구조 파서 비교: 기본은 파일 저장 없음")
+    parser = argparse.ArgumentParser(description="규칙 파서 원본 대조: 기본은 파일 저장 없음")
     sub = parser.add_subparsers(dest="command", required=True)
     master = sub.add_parser("master", help="조직 원본만으로 월별 마스터 생성 후 독립 대조")
     master.add_argument("stage", choices=("generate", "evaluate"))
@@ -111,8 +109,7 @@ def make_parser() -> argparse.ArgumentParser:
     master.add_argument("--publication-policy", choices=("source-contract-v4",),
                         help="생성에서만 원본 생성 계약에 근거한 v4 발행 제외 정책 적용")
     master.add_argument("--write-output", action="store_true")
-    monthly = sub.add_parser("monthly", help="월별 조직 전체 컨텍스트 내보내기와 오프라인 재생")
-    monthly.add_argument("stage", choices=("export", "run"))
+    monthly = sub.add_parser("monthly", help="월별 조직 원본의 규칙 파서 실행·독립 대조")
     monthly.add_argument("dataset", type=Path)
     monthly.add_argument("--types", default="01,02,03,04,05,06,07,08,09")
     monthly.add_argument("--output-dir", type=Path, required=True)
@@ -124,19 +121,9 @@ def make_parser() -> argparse.ArgumentParser:
         command.add_argument("--manifest", type=Path)
         command.add_argument("--include-master", action="store_true", help="마스터를 독립 입력·별도 집계로 포함")
         command.add_argument("--max-files", type=int)
-        command.add_argument("--review", choices=("on", "off"), default="on")
         if name == "run":
-            command.add_argument("--engines", choices=("both", "rule", "ai"), default="both")
-            command.add_argument("--allow-api", action="store_true", help="AI 데이터 전송과 유료 API 요청을 명시적으로 실행")
             command.add_argument("--truth", type=Path, help="독립 셀 정답 JSON. 없으면 의미 정확도는 미측정")
             command.add_argument("--repeats", type=int, default=1)
-            command.add_argument("--cache", choices=("cold", "warm"), default="cold")
-            command.add_argument("--model")
-            command.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default="high")
-            command.add_argument("--timeout", type=float, default=240)
-            command.add_argument("--max-output-tokens", type=int, default=32768)
-            command.add_argument("--max-calls", type=int, default=300, help="전체 실험의 캐시 제외 논리 호출 상한; 금액 상한 아님")
-            command.add_argument("--max-exception-calls", type=int, default=0)
             command.add_argument("--write-output", action="store_true")
             command.add_argument("--output-dir", type=Path)
     return parser
@@ -152,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     Raises:
         SystemExit: argparse의 도움말 또는 잘못된 명령행 처리.
     Side Effects:
-        원본·정답 읽기와 콘솔 출력. allow-api 때만 통신하고 write-output 때만 저장한다.
+        원본·정답 읽기와 콘솔 출력. write-output 때만 저장하며 네트워크 호출은 없다.
     """
     parser = make_parser()
     args = parser.parse_args(argv)
@@ -177,30 +164,25 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(report, ensure_ascii=False, default=json_value))
             return 0
         if args.command == "monthly":
-            from .monthly import export_contexts, run_monthly
+            from .monthly import run_monthly
 
             if not args.write_output or args.workers < 1:
                 raise ValueError("월별 실행에는 --write-output과 양수 --workers가 필요합니다")
-            if args.stage == "export":
-                report = export_contexts(args.dataset, args.types.split(","), args.output_dir, repo, args.workers)
-            else:
-                report = run_monthly(args.output_dir.resolve(), args.workers)
+            report = run_monthly(args.dataset, args.types.split(","), args.output_dir, repo, args.workers)
             print(json.dumps(report, ensure_ascii=False, default=json_value))
             return 0
         if args.command == "run":
-            if args.engines != "rule" and not args.allow_api:
-                raise ValueError("AI 실행에는 --allow-api가 필요합니다. 요청량만 보려면 plan을 사용하세요")
             if args.output_dir and not args.write_output:
                 raise ValueError("--output-dir에는 --write-output이 필요합니다")
-            if args.repeats < 1 or args.max_calls < 1 or not math.isfinite(args.timeout) or args.timeout <= 0 or args.max_output_tokens < 1 or args.max_exception_calls < 0:
-                raise ValueError("반복·호출·시간·토큰은 양수, 예외 호출은 0 이상이어야 합니다")
+            if args.repeats < 1:
+                raise ValueError("반복 횟수는 양수여야 합니다")
             if args.write_output:
                 name = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:8]
                 output = validate_output_path(args.output_dir or repo / "parser/output/comparisons" / name, repo)
         files, manifest, manifest_path = load_dataset(args.dataset, args.manifest,
                                                      include_master=args.include_master, max_files=args.max_files)
         if args.command == "plan":
-            report = plan_comparison(files, review=args.review == "on")
+            report = plan_comparison(files)
         else:
             truth = load_truth(args.truth, files)
             evaluation_sources = {"manifest": str(manifest_path),
@@ -209,21 +191,7 @@ def main(argv: list[str] | None = None) -> int:
                                   "truth_sha256": file_fingerprint(args.truth) if args.truth else None,
                                   "hash_capture": "before_engine_execution",
                                   "provided_to_engines": False}
-            client = None
-            if args.engines != "rule":
-                from excel_parser_ai.client import ResponsesClient, read_env
-
-                read_env(repo / "parser_ai/.env")
-                if not os.environ.get("OPENAI_API_KEY"):
-                    raise ValueError("OPENAI_API_KEY가 없습니다. plan 또는 --engines rule은 API 없이 실행됩니다")
-                client = ResponsesClient(repo / "parser_ai/cache", response_cache={},
-                                         model=args.model, effort=args.effort, timeout=args.timeout,
-                                         max_output_tokens=args.max_output_tokens, max_calls=args.max_calls,
-                                         progress=lambda message: print(message, file=sys.stderr, flush=True))
-            engines = ("rule", "ai") if args.engines == "both" else (args.engines,)
-            report = run_comparison(files, manifest, engines=engines, repeats=args.repeats,
-                                    cache_mode=args.cache, review=args.review == "on", allow_api=args.allow_api,
-                                    client=client, truth=truth, max_exception_calls=args.max_exception_calls,
+            report = run_comparison(files, manifest, repeats=args.repeats, truth=truth,
                                     progress=lambda message: print(message, file=sys.stderr, flush=True))
             report["evaluation_sources"] = evaluation_sources
             if args.write_output:

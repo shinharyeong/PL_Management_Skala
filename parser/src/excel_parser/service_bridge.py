@@ -9,8 +9,9 @@ import sys
 from dataclasses import dataclass
 from decimal import Decimal
 from io import BytesIO, StringIO
+from itertools import chain
 from pathlib import PurePosixPath
-from typing import BinaryIO, TextIO
+from typing import BinaryIO, Iterator, TextIO
 from xml.etree import ElementTree as ET
 from xml.parsers import expat
 from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile
@@ -22,7 +23,7 @@ from .submission_adapter import build_submission_data
 
 PROTOCOL_VERSION = "1.0"
 PREVIEW_CONTRACT_VERSION = "preview-records/1.0"
-BRIDGE_VERSION = "stdlib-bridge/1.3"
+BRIDGE_VERSION = "stdlib-bridge/1.4"
 _WORKBOOK_TYPE = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"
 )
@@ -53,16 +54,16 @@ class BridgeLimits:
     max_uncompressed_bytes: int = 64 * 1024 * 1024
     max_entry_bytes: int = 16 * 1024 * 1024
     max_entries: int = 1024
-    max_cells: int = 50_000
+    max_cells: int = 80_000
     max_xml_cells: int = 250_000
     max_xml_nodes: int = 600_000
     max_xml_depth: int = 64
     max_xml_attribute_chars: int = 8192
     max_text_chars: int = 32_767
-    max_logical_text_bytes: int = 16 * 1024 * 1024
+    max_logical_text_bytes: int = 40 * 1024 * 1024
     max_expansion_ratio: int = 200
     max_cell_context_work: int = 6_000_000
-    max_output_bytes: int = 64 * 1024 * 1024
+    max_output_bytes: int = 96 * 1024 * 1024
 
 
 class BridgeError(ValueError):
@@ -560,6 +561,98 @@ def _public_diagnostic(item: dict) -> dict:
     }
 
 
+def _business_diagnostic(record: dict, issue: dict) -> dict | None:
+    """업무 오류의 실제 입력 셀이 확인될 때 원인별 정정 안내를 만든다.
+
+    Args:
+        record: dimensions와 원본 금액 셀을 가진 표준 매핑 후보.
+        issue: business_validation.issues의 field·code·provenance 문제 한 건.
+    Returns:
+        같은 행의 필드 출처와 오류 근거가 일치하면 공개 진단을 반환한다.
+        지원하지 않는 문제이거나 위치가 불확실하면 None을 반환한다.
+    Raises:
+        KeyError: 표준 매핑 후보에 필수 source가 없는 경우.
+        주소를 해석할 수 없으면 위치를 추정하지 않고 None을 반환한다.
+    Side Effects:
+        없음. 원본 값·후보·상태를 변경하거나 관측값을 메시지에 복제하지 않는다.
+    """
+    fields = {
+        "account_code": ("예산Code", "예산 계정코드", "같은 파일의 계정 코드표에 등록되지 않았습니다."),
+        "detail_id": ("거래내역 및 산출근거", "상세 ID", "유효한 식별자가 아닙니다."),
+        "management_category": ("관리분류", "관리분류", "같은 파일의 집계 기준과 일치하지 않습니다."),
+    }
+    field = issue.get("field")
+    if field not in fields:
+        return None
+    header, label, invalid_reason = fields[field]
+    code = issue.get("code")
+    if code not in {f"BUSINESS_{field.upper()}_INVALID", f"BUSINESS_{field.upper()}_MISSING"}:
+        return None
+    source = record.get("dimensions", {}).get(header, {}).get("source") or {}
+    amount_source = record["source"]
+    if not source.get("sheet") or source.get("sheet") != amount_source.get("sheet"):
+        return None
+    try:
+        if cell_position(source.get("cell"))[0] != cell_position(amount_source.get("cell"))[0]:
+            return None
+    except (TypeError, ValueError):
+        return None
+    if not any(ref.get("sheet") == source["sheet"] and ref.get("cell") == source["cell"]
+               for ref in issue.get("provenance", [])):
+        return None
+    reason = invalid_reason if code.endswith("_INVALID") else "확인할 수 없습니다."
+    return {
+        "code": code,
+        "severity": "WARNING",
+        "stage": "MAPPING",
+        "message": (
+            f"{label}: {reason} 담당자가 원본의 해당 셀을 확인·수정한 뒤 "
+            "전체 파일을 다시 업로드해 주세요."
+        ),
+        "source": {"sheet": source["sheet"], "cell": source["cell"]},
+    }
+
+
+def _review_diagnostics(unresolved: list[dict]) -> list[dict]:
+    """반복 업무 오류는 원본 필드별로 묶고 별도 불확실성은 금액 셀에 남긴다.
+
+    Args:
+        unresolved: 기존 상태 판정으로 선택된 미확정 재무 상세 후보 전체.
+    Returns:
+        업무 오류의 code·sheet·cell별 고유 진단과 일반 불확실성 안내 목록.
+        원인 위치를 확정하지 못하거나 금액·매핑도 미확정이면 기존 안내를 유지한다.
+    Raises:
+        KeyError: 표준 매핑 후보의 필수 필드가 없는 경우.
+    Side Effects:
+        없음. 진단만 구성하며 후보·금액·검토 수와 입력 객체를 변경하지 않는다.
+    """
+    diagnostics, seen = [], set()
+    for record in unresolved:
+        issues = record.get("business_validation", {}).get("issues", [])
+        located = 0
+        for issue in issues:
+            diagnostic = _business_diagnostic(record, issue)
+            if diagnostic is None:
+                continue
+            located += 1
+            source = diagnostic["source"]
+            key = (diagnostic["code"], source["sheet"], source["cell"])
+            if key not in seen:
+                seen.add(key)
+                diagnostics.append(diagnostic)
+        if (not issues or located != len(issues)
+                or record["mapping"]["status"] != "mapped"
+                or record["value"]["status"] != "confirmed"):
+            diagnostics.append({
+                "code": "FINANCIAL_DETAIL_UNRESOLVED",
+                "severity": "WARNING",
+                "stage": "MAPPING",
+                "message": "재무 상세의 조직·기간·금액·업무키를 확인해야 합니다.",
+                "source": {"sheet": record["source"]["sheet"], "cell": record["source"]["cell"]},
+            })
+    return diagnostics
+
+
 def parse_bytes(
     content: bytes, filename: str, limits: BridgeLimits | None = None
 ) -> dict:
@@ -612,19 +705,7 @@ def parse_bytes(
             if item.get("severity") == "info":
                 continue
             diagnostics.append(_public_diagnostic(item))
-        for record in unresolved:
-            diagnostics.append(
-                {
-                    "code": "FINANCIAL_DETAIL_UNRESOLVED",
-                    "severity": "WARNING",
-                    "stage": "MAPPING",
-                    "message": "재무 상세의 조직·기간·금액·업무키를 확인해야 합니다.",
-                    "source": {
-                        "sheet": record["source"]["sheet"],
-                        "cell": record["source"]["cell"],
-                    },
-                }
-            )
+        diagnostics.extend(_review_diagnostics(unresolved))
         if not details:
             diagnostics.append(
                 {
@@ -690,21 +771,21 @@ def _decimal_json(value: object) -> str:
     raise TypeError("지원하지 않는 프로토콜 타입입니다.")
 
 
-def _encode_response(response: dict, limit: int) -> str:
-    """응답 크기를 제한하면서 JSON 한 건을 메모리에서 구성한다.
+def _response_chunks(response: dict, limit: int) -> Iterator[str]:
+    """응답 전체를 검증한 뒤 같은 JSON을 작은 조각으로 다시 직렬화한다.
 
     Args:
         response: 브리지 응답 사전.
         limit: 허용할 UTF-8 응답 바이트 수. 마지막 줄바꿈도 포함한다.
     Returns:
-        줄바꿈 한 개로 끝나는 JSON 문자열.
+        JSON 조각과 마지막 줄바꿈을 순서대로 반환하는 반복자.
     Raises:
-        BridgeError: 직렬화 결과가 응답 크기 한도를 넘는 경우.
-        TypeError, ValueError: 지원하지 않는 값이나 비유한 숫자가 있는 경우.
+        BridgeError: 반환 전에 확인한 응답 크기가 한도를 넘는 경우.
+        TypeError, ValueError: 반환 전 검사에서 지원하지 않는 값이나 비유한 숫자가 있는 경우.
     Side Effects:
-        메모리만 사용한다. 검증 완료 전 stdout에 일부 결과를 쓰지 않는다.
+        메모리만 사용한다. 첫 순회는 크기·형식만 검사하고 응답을 저장하지 않는다.
+        호출자는 반환 후 순회가 끝날 때까지 response를 변경하지 않아야 한다.
     """
-    output = StringIO()
     size = 1
     encoder = json.JSONEncoder(
         ensure_ascii=False, allow_nan=False, default=_decimal_json, separators=(",", ":")
@@ -713,8 +794,25 @@ def _encode_response(response: dict, limit: int) -> str:
         size += len(piece.encode("utf-8"))
         if size > limit:
             raise BridgeError("PARSER_OUTPUT_LIMIT_EXCEEDED")
-        output.write(piece)
-    output.write("\n")
+    return chain(encoder.iterencode(response), ("\n",))
+
+
+def _encode_response(response: dict, limit: int) -> str:
+    """검증된 JSON 조각을 문자열이 필요한 내부 호출자에게 모아 반환한다.
+
+    Args:
+        response: 브리지 응답 사전.
+        limit: 마지막 줄바꿈을 포함한 UTF-8 응답 바이트 상한.
+    Returns:
+        줄바꿈 한 개로 끝나는 JSON 문자열.
+    Raises:
+        BridgeError: 응답 크기가 상한을 넘는 경우.
+        TypeError, ValueError: 응답 값이 JSON으로 표현할 수 없는 경우.
+    Side Effects:
+        메모리 문자열을 만든다. 실제 CLI는 이 함수를 쓰지 않고 조각을 직접 출력한다.
+    """
+    output = StringIO()
+    output.writelines(_response_chunks(response, limit))
     return output.getvalue()
 
 
@@ -755,14 +853,15 @@ def main(
             response = parse_bytes(
                 source.read(limits.max_input_bytes + 1), arguments[1], limits
             )
-        encoded = _encode_response(response, limits.max_output_bytes)
+        chunks = _response_chunks(response, limits.max_output_bytes)
     except BridgeError as error:
         response = _failure(str(error))
-        encoded = json.dumps(response, ensure_ascii=False) + "\n"
+        chunks = iter((json.dumps(response, ensure_ascii=False) + "\n",))
     except Exception:
         response = _failure("PARSER_INTERNAL_ERROR")
-        encoded = json.dumps(response, ensure_ascii=False) + "\n"
-    output.write(encoded)
+        chunks = iter((json.dumps(response, ensure_ascii=False) + "\n",))
+    for piece in chunks:
+        output.write(piece)
     output.flush()
     if response["status"] == "FAILED":
         errors.write(response["errorCode"] + "\n")

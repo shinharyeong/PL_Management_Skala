@@ -136,7 +136,7 @@ public class SubmissionValidationService {
         }
         for (JsonNode diagnostic : snapshot.path("diagnostics")) {
             if ("ERROR".equals(diagnostic.path("severity").asText())) {
-                throw conflict("SUBMISSION_NOT_READY", "미해결 검증 오류 또는 필수 수정 소명이 있어 승인할 수 없습니다.");
+                throw conflict("SUBMISSION_NOT_READY", "미해결 검증 오류 또는 필수 소명이 있어 승인할 수 없습니다.");
             }
         }
         var reviewCounts = reviews.counts(id(submissionId));
@@ -155,7 +155,7 @@ public class SubmissionValidationService {
         }
     }
 
-    /** 저장된 근거로 현재 준비 상태를 계산한다.
+    /** 저장된 근거로 현재 준비 상태를 계산하고 파싱 성공 후에만 업무 검증을 안내한다.
      * Args: submissionRow id를 가진 내부 제출 행. Returns: readiness DTO.
      * Raises: IllegalStateException 저장 결과 손상. Side Effects: DB 읽기; 상태·금액 변경 없음.
      */
@@ -166,8 +166,10 @@ public class SubmissionValidationService {
         String validationState = "NOT_RUN";
         Object attempt = null;
         boolean preparing = Set.of("QUEUED", "RUNNING").contains(row.get("parsing_status"));
-        if (saved.isEmpty()) blockers.add(blocker(preparing ? "PARSING_NOT_READY" : "VALIDATION_REQUIRED", preparing ? "파싱 완료 후 검증할 수 있습니다." : "업무 검증을 실행해 주세요.", "COMPLETENESS"));
-        else {
+        if (saved.isEmpty()) {
+            if (preparing) blockers.add(blocker("PARSING_NOT_READY", "파싱 완료 후 검증할 수 있습니다.", "COMPLETENESS"));
+            else if ("SUCCEEDED".equals(row.get("parsing_status"))) blockers.add(blocker("VALIDATION_REQUIRED", "업무 검증을 실행해 주세요.", "COMPLETENESS"));
+        } else {
             Map<String, Object> validation = saved.getFirst();
             JsonNode snapshot = objectResult(validation.get("validation_result_object_key").toString());
             attempt = validation.get("attempt_no");
@@ -180,20 +182,14 @@ public class SubmissionValidationService {
         if (!"SUCCEEDED".equals(row.get("parsing_status")) && !preparing) blockers.add(blocker("PARSING_REQUIRES_ATTENTION", "파싱 진단을 해결한 파일을 다시 접수해 주세요.", "PARSING"));
         if ("DRAFT".equals(row.get("status")) && !"OPEN".equals(row.get("request_status"))) blockers.add(blocker("REQUEST_CLOSED", "닫힌 요청에는 최종 제출할 수 없습니다.", "COMPLETENESS"));
         if ("ANNUAL_PLAN".equals(row.get("type")) && !"COLLECTING".equals(row.get("plan_status"))) blockers.add(blocker("ANNUAL_PLAN_LOCKED", "확정된 연간 계획입니다.", "COMPLETENESS"));
-        if (!rows("SELECT id FROM submission WHERE organization_id=? AND status='PENDING' AND id<>?", row.get("organization_id"), row.get("id")).isEmpty()) blockers.add(blocker("PENDING_ALREADY_EXISTS", "검토 중인 다른 제출본이 있습니다.", "COMPLETENESS"));
-        if (!rows("""
-                SELECT rejected.id FROM submission rejected WHERE rejected.organization_id=?
-                  AND rejected.request_id<>? AND rejected.status='REJECTED'
-                  AND rejected.seq=(SELECT MAX(latest.seq) FROM submission latest
-                    WHERE latest.organization_id=rejected.organization_id AND latest.request_id=rejected.request_id
-                      AND latest.status<>'DRAFT')
-                """, row.get("organization_id"), row.get("request_id")).isEmpty()) blockers.add(blocker("RESUBMISSION_SCOPE_CONFLICT", "재제출 요청을 받은 기간부터 제출해 주세요.", "COMPLETENESS"));
+        if (!rows("SELECT id FROM submission WHERE organization_id=? AND request_id=? AND status='PENDING' AND id<>?", row.get("organization_id"), row.get("request_id"), row.get("id")).isEmpty()) blockers.add(blocker("PENDING_ALREADY_EXISTS", "검토 중인 다른 제출본이 있습니다.", "COMPLETENESS"));
+
         if (rows("SELECT request_id FROM request_target WHERE request_id=? AND organization_id=? AND excluded=FALSE", row.get("request_id"), row.get("organization_id")).isEmpty()) blockers.add(blocker("REQUEST_TARGET_EXCLUDED", "현재 제출·승인 대상에서 제외된 조직입니다.", "COMPLETENESS"));
         if ("MONTHLY_ACTUAL".equals(row.get("type")) && !"CONFIRMED".equals(row.get("plan_status"))) blockers.add(blocker("ANNUAL_PLAN_NOT_CONFIRMED", "확정된 연간 계획이 필요합니다.", "COMPLETENESS"));
         boolean countsKnown = "CURRENT".equals(validationState) && saved.size() == 1;
         var counts = reviews.counts(((Number) row.get("id")).longValue());
         boolean draft = "DRAFT".equals(row.get("status"));
-        if (countsKnown && draft && ((Number) counts.get("unansweredCount")).intValue() > 0) blockers.add(blocker("REQUIRED_EXPLANATIONS_MISSING", "수정·Gap 필수 소명을 작성해 주세요.", "EXPLANATION"));
+        if (countsKnown && draft && ((Number) counts.get("unansweredCount")).intValue() > 0) blockers.add(blocker("REQUIRED_EXPLANATIONS_MISSING", "필수 항목의 소명을 작성해 주세요.", "EXPLANATION"));
         if (countsKnown && "PENDING".equals(row.get("status")) && ((Number) counts.get("pendingReviewCount")).intValue() > 0) blockers.add(blocker("EXPLANATIONS_NOT_ACCEPTED", "필수 소명 수용이 필요합니다.", "EXPLANATION"));
         boolean ready = "CURRENT".equals(validationState) && blockers.isEmpty() && draft;
         return object("state", preparing ? "PREPARING" : "STALE".equals(validationState) ? "STALE" : ready ? "READY" : "BLOCKED", "validationState", validationState, "validatedAttemptNo", attempt, "canSubmit", ready,
@@ -218,6 +214,24 @@ public class SubmissionValidationService {
 
     /** 현재 검증 진단을 읽는다. Args: submissionId 제출. Returns: 진단 목록. Raises: 저장 손상. Side Effects: DB 읽기. */
     public List<JsonNode> diagnostics(String submissionId) { JsonNode snapshot = validationResult(submissionId); var result = new ArrayList<JsonNode>(); if (snapshot != null) { if ("STALE".equals(readiness(row(submissionId)).get("validationState"))) result.add(mapper.valueToTree(blocker("VALIDATION_STALE", "파싱 또는 비교 문맥이 변경되어 다시 검증해야 합니다.", "COMPARISON"))); else snapshot.path("diagnostics").forEach(result::add); } return result; }
+
+    /** 저장 검증이 없는 초안에서도 확인 가능한 입력 오류를 읽기 전용으로 함께 안내한다.
+     * Args: submissionId 접근 권한을 확인한 제출, parsed 현재 시도의 저장 파싱 결과.
+     * Returns: 저장 검증 진단 또는 원본 완전성·업무키·합계의 사전 진단.
+     * Raises: IllegalStateException 저장 결과 손상. Side Effects: DB 읽기·메모리 계산만 수행하며 적재·소명·제출 준비 상태를 변경하지 않는다.
+     */
+    public List<JsonNode> diagnostics(String submissionId, JsonNode parsed) {
+        if (validationResult(submissionId) != null) return diagnostics(submissionId);
+        var row = row(submissionId);
+        if (!"DRAFT".equals(row.get("status")) || !Set.of("SUCCEEDED", "NEEDS_REVIEW").contains(row.get("parsing_status"))
+                || !parsed.path("submissionData").isObject()) return List.of();
+        var evaluated = rules.evaluate(parsed.path("submissionData"), row.get("source_sha256").toString(),
+                row.get("organization_code").toString(), ((Number) row.get("year")).intValue(), row.get("type").toString(),
+                row.get("month") == null ? null : ((Number) row.get("month")).intValue());
+        var result = new ArrayList<JsonNode>();
+        for (var item : (List<Map<String, Object>>) evaluated.get("diagnostics")) result.add(mapper.valueToTree(item));
+        return result;
+    }
 
     /** 실제 적재된 월별 값을 권한·필터 범위에서 조회한다.
      * Args: actor 행위자, submissionId 제출, query 연월·보고항목·커서.
@@ -274,7 +288,29 @@ public class SubmissionValidationService {
         if (row.get("result_object_key") == null) throw conflict("PARSING_NOT_READY", "원본 셀 추출이 완료되지 않았습니다.");
         JsonNode parsed = result(row);
         for (JsonNode source : parsed.path("submissionData").path("sourceCells")) if (query.get("sheet").equals(source.path("sheet").asText()) && query.get("cell").equals(source.path("cell").asText())) return sourceEvidence(parsed, source);
+        for (JsonNode record : parsed.path("records")) if (query.get("sheet").equals(record.path("source").path("sheet").asText()) && query.get("cell").equals(record.path("source").path("cell").asText())) return sourceEvidence(parsed, candidateSource(record));
         throw new ApiException(HttpStatus.NOT_FOUND, "SOURCE_CELL_NOT_FOUND", "해당 시트·셀의 수집 근거가 없습니다.");
+    }
+
+    /** 적재에서 제외한 후보도 이미 보존한 원문만으로 원본 셀 조회에 연결한다.
+     * Args: record 시트·셀·원문·값 종류가 보존된 파싱 후보.
+     * Returns: SourceCell JSON. Raises: 없음.
+     * Side Effects: 메모리 투영만 수행하며 파일 재파싱·수식 실행·빈 셀 추정·금액 보정을 하지 않는다.
+     */
+    private JsonNode candidateSource(JsonNode record) {
+        JsonNode raw = record.path("raw_value"), formula = record.path("formula"), value = record.path("value");
+        boolean hasFormula = formula.isObject();
+        boolean present = hasFormula || !raw.isMissingNode() && !raw.isNull() && !raw.asText().isEmpty();
+        boolean amount = "amount".equals(value.path("value_kind").asText());
+        return mapper.valueToTree(object("sheet", record.path("source").path("sheet").asText(), "cell", record.path("source").path("cell").asText(),
+                "presence", present ? "PRESENT" : "EMPTY", "dataType", record.path("data_type").asText("blank").toUpperCase(Locale.ROOT),
+                "rawValue", raw.isMissingNode() ? null : raw, "formula", stringNode(formula.path("text")),
+                "cachedValue", hasFormula && !raw.isMissingNode() ? raw : null,
+                "cacheStatus", hasFormula ? formula.path("cached_status").asText("missing").toUpperCase(Locale.ROOT) : "NOT_FORMULA",
+                "normalizationStatus", value.path("status").asText(present ? "not_numeric" : "missing").toUpperCase(Locale.ROOT),
+                "normalizedAmount", amount ? stringNode(value.path("normalized_value")) : null,
+                "sourceUnit", amount ? stringNode(value.path("source_unit")) : null,
+                "multiplier", amount ? stringNode(value.path("multiplier")) : null));
     }
 
     /** 공유 수식 종속 셀에 실제 보존된 기준 수식만 덧붙인다.

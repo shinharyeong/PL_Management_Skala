@@ -560,6 +560,7 @@ def _line_value(context: dict, sheet: str, row: int, column: int, period: dict) 
     record = context["records"].get((sheet, address), {})
     value, formula = record.get("value", {}), (cell or {}).get("formula")
     present = formula is not None or (cell or {}).get("value") not in (None, "")
+    stored_blank = any(start <= column <= end for start, end in context["blank_ranges"][sheet].get(row, []))
     available = (value.get("status") == "confirmed" and value.get("value_kind") == "amount"
                  and value.get("source_unit") in _UNIT_MULTIPLIERS
                  and value.get("multiplier") == _UNIT_MULTIPLIERS[value["source_unit"]])
@@ -570,7 +571,7 @@ def _line_value(context: dict, sheet: str, row: int, column: int, period: dict) 
         "scenario": str(period.get("scenario", "unknown")).upper(),
         "amount": value.get("normalized_value") if available else None,
         "valueStatus": "AVAILABLE" if available else "MISSING" if not present else "UNRESOLVED",
-        "inputPresence": "PRESENT" if present else "STORED_BLANK" if cell else "ABSENT_XML_CELL",
+        "inputPresence": "PRESENT" if present else "STORED_BLANK" if cell or stored_blank else "ABSENT_XML_CELL",
         "sourceCell": address, "sourceRecordId": source_id,
         "sourceUnit": value.get("source_unit"), "multiplier": value.get("multiplier"),
         "formulaCacheStatus": formula.get("cached_status", "missing").upper() if formula else "NOT_FORMULA",
@@ -670,8 +671,13 @@ def build_submission_data(workbook: dict, mapped: dict) -> dict:
     registry = _organization_registry(list(indices.values()))
     common_org = _workbook_organization(list(layouts.values()), list(indices.values()), registry)
     records = {(record["source"]["sheet"], record["source"]["cell"]): record for record in mapped["records"]}
+    blank_ranges = {sheet["name"]: defaultdict(list) for sheet in workbook["sheets"]}
+    for sheet in workbook["sheets"]:
+        for span in sheet.get("blank_spans", []):
+            blank_ranges[sheet["name"]][span["row"]].append((span["start_column"], span["end_column"]))
     context = {
         "indices": indices, "layouts": layouts, "records": records, "registry": registry,
+        "blank_ranges": blank_ranges,
         "common_org": common_org, "source_sha256": workbook["file"]["file_id"],
         "sheet_ids": {sheet["name"]: str(sheet.get("sheet_id", sheet["name"])) for sheet in workbook["sheets"]},
         "source_keys": set(), "diagnostics": [], "detail_rows": defaultdict(list),

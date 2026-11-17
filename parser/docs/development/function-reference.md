@@ -16,7 +16,7 @@ CLI main() → pipeline.run_parser()
 
 외부 Python 코드는 extract_workbook과 map_workbook을 순서대로 호출해 메모리에서 처리할 수 있습니다. 결과 파일 생성은 pipeline에서 분리합니다. Python 실행에는 -B 또는 PYTHONDONTWRITEBYTECODE=1을 사용합니다. 정확한 실행·입출력 형식은 [README](../../README.md)와 [출력 계약](output-contract.md)을 따릅니다.
 
-서비스 내부 프로세스 호출은 `python3 -B -m excel_parser.service_bridge --filename <파일명>`을 사용합니다. xlsx 원본 바이트를 stdin으로 전달하며 `service_bridge.main → parse_bytes → _validate_package → extraction.extract_workbook_bytes → _extract_workbook_source → mapping.map_workbook → (_preview_record, submission_adapter.build_submission_data) → _encode_response` 순서입니다. 표준 추출·매핑 결과는 그대로 유지하고 전체 후보의 미리보기와 제출용 원본 근거를 별도 계약으로 제공합니다. 원본 저장·업무 요청·승인·전체 제출 검증은 호출자인 백엔드의 책임이며, 이 경로는 파일·로그·임시 폴더를 만들지 않습니다.
+서비스 내부 프로세스 호출은 `python3 -B -m excel_parser.service_bridge --filename <파일명>`을 사용합니다. xlsx 원본 바이트를 stdin으로 전달하며 `service_bridge.main → parse_bytes → _validate_package → extraction.extract_workbook_bytes → _extract_workbook_source → mapping.map_workbook → (_review_diagnostics, _preview_record, submission_adapter.build_submission_data) → _response_chunks` 순서입니다. 표준 추출·매핑 결과는 그대로 유지하고 전체 후보의 미리보기와 제출용 원본 근거를 별도 계약으로 제공합니다. 원본 저장·업무 요청·승인·전체 제출 검증은 호출자인 백엔드의 책임이며, 이 경로는 파일·로그·임시 폴더를 만들지 않습니다.
 
 ## 함수별 명세
 
@@ -26,7 +26,7 @@ CLI main() → pipeline.run_parser()
 
 | 함수 | 호출 관계·입출력·제약 |
 | --- | --- |
-| `build_submission_data(workbook: dict, mapped: dict) -> dict` | parse_bytes → 아래 색인/보고/행/원본 셀 함수. adapterVersion·SHA·owner·sheets·reportItems·lines·controls·sourceCells를 구성. 요청 연도 선택·승인·중복 선택 없음 |
+| `build_submission_data(workbook: dict, mapped: dict) -> dict` | parse_bytes → 아래 색인/보고/행/원본 셀 함수. adapterVersion·SHA·owner·sheets·reportItems·lines·controls·sourceCells를 구성. 압축 빈 구간은 시트·행별 열 범위로 색인하며 개별 빈 셀 객체로 확장하지 않음. 요청 연도 선택·승인·중복 선택 없음 |
 | `_column_name(number: int) -> str` | 양수 원본 열 번호 → 주소 문자. 추출 계약 범위 전제 |
 | `_refs(references: list[dict \| None]) -> list[dict]` | provenance/source → 고유 sheet/cell. 경로·내부 원본 ID 생략 |
 | `_remember(context: dict, references: list[dict \| None]) -> list[dict]` | `_refs` 호출 및 응답에 필요한 원본 주소 집합 갱신 |
@@ -41,7 +41,7 @@ CLI main() → pipeline.run_parser()
 | `_total_leaves(context: dict, sheet: str, address: str, leaf_cells: dict, visited: set[str]) -> list[str] \| None` | 총계 참조 → 확인된 말단 키. 순환·32단계 초과·파일당200,000회 방문·말단 수 초과·미지원 경로 차단, 중복 보존 |
 | `_control_value(context: dict, sheet: str, cell: dict \| None, address: str, period: dict, **identity: str) -> dict` | 검증된 표시 단위와 원본 캐시 → 원 단위 대조값. 부재/미확정은 null. 캐시를 계산 정답으로 표현하지 않음 |
 | `_reports(context: dict) -> tuple[list[dict], dict, list[dict]]` | `_report_binding`, `_total_leaves`, `_control_value` → 보고 말단·분류별 키집합·월별 대조값. 총계 말단의 중복·누락, OP 부호 확인 |
-| `_line_value(context: dict, sheet: str, row: int, column: int, period: dict) -> dict` | 알려진 월 열 → 원본 슬롯. 실제0/저장빈칸/XML부재/수식오류·캐시누락 구분 |
+| `_line_value(context: dict, sheet: str, row: int, column: int, period: dict) -> dict` | 알려진 월 열 → 원본 슬롯. 실제0/저장빈칸/XML부재/수식오류·캐시누락 구분. `blank_ranges`의 해당 행·열 포함 여부로 압축된 저장 빈 셀도 STORED_BLANK로 보존 |
 | `_lines(context: dict, classifications: dict) -> list[dict]` | `_row_context`, `validate_business_row`, `_line_value` → 활성 행별 차원·근거·전체기간 월값. 미사용만 제외하고 업무 오류·중복/개정을 보존 |
 
 검증 정의: [test_submission_adapter.py](../../tests/test_submission_adapter.py). 모든 fixture는 `memory_workbook`, `append_sheet`를 사용하며 파일을 만들지 않습니다.
@@ -52,6 +52,7 @@ CLI main() → pipeline.run_parser()
 | `submission_workbook() -> dict` | 동일 계정의 서로 다른 매출 분류·비용 E:E·12개월·조직/계정표·보고 캐시를 독립 상수로 합성 |
 | `test_formula_mapping_controls_and_input_are_preserved()` | 분류별 보고 키, 원 환산/OP, 원본·표준 후보의 깊은 동등성 |
 | `test_month_slots_distinguish_zero_blank_missing_and_formula_error()` | 실제0·저장빈칸·XML부재·캐시오류와 원본 조회 근거 |
+| `test_compressed_blank_spans_preserve_stored_cell_presence()` | 압축 빈 구간의 양 끝·구간 사이 틈·다른 행을 구분하고 실제0과 입력 불변을 유지 |
 | `test_missing_header_and_unknown_report_are_not_filled()` | 없는 월 헤더·미등록 보고 분류를 추정하지 않음 |
 | `test_shared_totals_and_unsupported_arithmetic_are_guarded()` | 공유 합계의 원문 보존·추가 연산 차단·OP 부호 검사 |
 | `test_inactive_rows_stay_out_but_active_lookup_error_is_preserved()` | 미사용 행만 제외하고 실제 조직 오류·0 유지 |
@@ -1350,13 +1351,15 @@ Args:
     part: 검사할 시트 XML 부분 경로.
     strings: 공유 문자열 목록.
 Returns:
-    전체 XML 주소 집합, 값 셀, 행열 속성, 병합 범위와 메모 목록.
+    전체 XML 주소 집합, 값 셀, 행열 속성, 병합 범위와 일반·대화형 메모 목록.
 Raises:
     KeyError: 지정된 ZIP 부분이 없는 경우.
     ET.ParseError: 원본 XML이 손상된 경우.
 Side Effects:
     시트와 연결된 메모 XML을 읽으며 원본은 수정하지 않는다.
 ```
+
+앞의 `_scan_sheet` 메모 검증은 [test_validation.py](../../tests/test_validation.py)의 `IndependentValidationTests.test_legacy_and_threaded_comments_are_verified_independently`로 회귀 검사한다. 메모리 ZIP에 일반 리치 텍스트 메모와 대화형 메모를 같은 셀 및 내용 없는 셀에 구성하고, 정상 보존 통과와 대화형 메모 삭제·변조 탐지를 확인한다. 인자·반환값은 없고 불일치 시 AssertionError가 발생하며, 파일·캐시 생성이나 외부 관계 조회는 없다.
 
 ### _column_label
 
@@ -1519,63 +1522,52 @@ Side Effects:
     발행하거나 일반 수식 계산 엔진을 실행하지 않으며 원본을 변경하지 않는다.
 ```
 
-## 파서 비교 환경
+## 규칙 파서 평가 환경
 
-실험 조건·명령·정답 스키마는 [파서 비교 문서](parser-comparison.md)에 정의한다. 각 함수의 전체 Args/Returns/Raises/Side Effects 명세는 연결된 소스의 한국어 docstring에 있다.
+실행 조건·명령·정답 스키마는 [원본 대조와 마스터 검증 문서](parser-comparison.md)에 정의한다. 각 함수의 전체 Args/Returns/Raises/Side Effects 명세는 연결된 소스의 한국어 docstring에 있다.
 
 | 모듈 | 함수 | 입력 → 출력 및 호출 관계 |
 |---|---|---|
-| [benchmark/cli.py](../../src/excel_parser/benchmark/cli.py) | `main`, `make_parser` | CLI → 계획 또는 두 파서 실행. API·저장 선택을 분리한다. |
+| [benchmark/cli.py](../../src/excel_parser/benchmark/cli.py) | `main`, `make_parser` | CLI → 입력 조사 또는 규칙 파서 실행. 기본 콘솔 출력과 명시적 저장을 분리한다. |
 | 위와 같음 | `validate_output_path`, `save_report`, `json_value` | 출력 경로 사전 검사 → 명시적으로 선택한 새 JSON/CSV 저장. Decimal은 문자열로 보존한다. |
 | [benchmark/runner.py](../../src/excel_parser/benchmark/runner.py) | `load_dataset`, `load_truth` | 기본 manifest와 선택 파일·독립 셀 정답 읽기. 기본 마스터 제외. |
-| 위와 같음 | `plan_comparison` | 원본 시트 → 캐시 없는 구조 작업량·생략 내역. API 미호출. |
-| 위와 같음 | `run_comparison` | 동일 파일 → 독립 어댑터 → 평가 → 반복별 보고서. 정답을 엔진에 전달하지 않는다. |
+| 위와 같음 | `plan_comparison(files)` | 원본 파일 → 시트·후보 개수 조사. 원본 읽기만 수행하며 결과 파일을 만들지 않는다. |
+| 위와 같음 | `run_comparison(files, manifest, *, repeats=1, truth=None, progress=None)` | 동일 파일 → 규칙 어댑터 → 독립 평가 → 반복별 보고서. 정답을 파서에 전달하지 않는다. |
 | 위와 같음 | `_compact_validation`, `_summarize_result`, `summarize_trials` | 대형 원본을 제외하고 검증·누락·금액·선택적 의미 점수를 집계한다. |
-| 위와 같음 | `implementation_fingerprint` | 두 파서·평가기 Python 소스 → 재현용 SHA256. |
-| [benchmark/adapters.py](../../src/excel_parser/benchmark/adapters.py) | `_run_adapter`, `run_rule_adapter`, `run_ai_adapter` | 파일 → 새 추출·원본 검증·기존 해석·출처 검증. 단계별 시간·완료/검증 상태를 분리한다. |
-| 위와 같음 | `_inference_delta` | 공유 client 전후 상태 → 해당 파일의 호출·캐시·관측 토큰·사용량 미확인 통계. |
+| 위와 같음 | `implementation_fingerprint` | 규칙 파서·평가기 Python 소스 → 재현용 SHA256. |
+| [benchmark/adapters.py](../../src/excel_parser/benchmark/adapters.py) | `run_rule_adapter(path, *, metadata=None, root=None)` | 파일 → 새 추출·원본 검증·규칙 매핑·출처 검증. 단계별 시간·완료/검증 상태를 분리한다. |
 | [benchmark/manifest.py](../../src/excel_parser/benchmark/manifest.py) | `score_manifest`, `_group_specs`, `_index_records`, `_amount`, `_column`, `_exact_sum` | 기본 더미 생성 계약과 예측 → 반올림 없는 Decimal 합계로 117개 금액 그룹의 완전성·일치 여부. 의미 정확도와 분리한다. |
 | [benchmark/evaluation.py](../../src/excel_parser/benchmark/evaluation.py) | `score_records`, `_truth_index`, `_compare_record`, `_source_key`, `_decimal`, `_section` | 독립 셀 정답과 표준 레코드 → 누락·중복·의미·금액의 독립 비교. |
 
-AI 클라이언트의 `ResponsesClient(response_cache=...)`는 응답 캐시 저장소를 메모리로 바꾼다. `infer_structure(template_cache=...)`는 구조 템플릿 저장소를 메모리로 바꾼다. 두 옵션을 생략한 기존 실행의 디스크 캐시 동작은 유지된다. 새 비교 실행은 두 메모리 옵션을 모두 사용한다.
+### 규칙 평가 테스트
 
-### 오프라인 구조 계획 요청과 재생
+아래 메모리 테스트는 실제 원본·파일 출력·네트워크를 사용하지 않는다. 각 테스트 메서드는 인자 없이 `None`을 반환하며 실패는 `AssertionError`로 드러난다. 입력 준비·검사 범위·모의 호출의 부작용은 소스의 함수 명세를 따른다.
 
-정의 파일: [benchmark/replay.py](../../src/excel_parser/benchmark/replay.py). 모든 함수는 파일·네트워크에 접근하지 않으며, 출력 저장은 별도 월별 실행 모듈에서 담당한다. 계획 JSON의 숫자는 좌표·기간·범위이고 금액 레코드는 기존 AI 엔진이 원본을 읽어 생성한다.
-
-| 실제 서명 | 호출자 → 호출 대상, 입력·반환 및 한계 |
+| 정의 파일 | 함수·메서드 및 호출 관계 |
 |---|---|
-| `request_description(task: str, instructions: str, context: dict, schema: dict, *, model: str = "codex-session-plan", effort: str = "high", max_output_tokens: int = 32768) -> dict` | 수집기·재생 클라이언트 → 기존 `ResponsesClient.ask`와 동일한 본문 구성 및 `PROMPT_VERSION` SHA256. 지시문·원본 맥락·스키마·설정과 해시를 반환한다. JSON 직렬화 불가 시 `TypeError`. |
-| `collect_initial_requests(workbook: dict, *, model: str = "codex-session-plan", effort: str = "high", max_output_tokens: int = 32768) -> dict` | 월별 원본 수집 → 기존 `structure_context`, `_formula_ratio`, `_row_blocks`, `_header_row_range`. `requests`, `skipped_sheets` 반환. 응답에 의존하는 repair·review 요청은 초기 목록에 포함하지 않는다. |
-| `OfflineReplayClient.__init__(plans: dict[str, dict], *, requests: dict \| None = None, model: str = "codex-session-plan", effort: str = "high", max_output_tokens: int = 32768, source_id: str \| None = None) -> None` | 월별 실행 → 고정 `request_hash → response` 사전과 메모리 관측 상태 초기화. 사전 계약 위반 시 `TypeError`. 생성 중 파일 읽기·디렉터리 생성·환경변수 조회가 없다. |
-| `OfflineReplayClient.ask(task: str, instructions: str, context: dict, schema: dict, *, refresh: bool = False, max_connection_attempts: int \| None = None) -> dict` | 기존 `engine.infer` → 정확한 요청 해시 조회 → 응답 복사본. 기존 `validate_plan`과 `apply_plans`가 후속 검증·적용을 수행한다. 누락/잘못된 응답은 `ModelError`; API·룰 대체가 없다. 요청·이벤트·캐시만 메모리에서 갱신한다. |
-| `OfflineReplayClient._notify(message: str) -> None` | 기존 구조 엔진의 호환 알림. 출력·저장 없이 반환한다. |
-| `NetworkBlocker.__init__() -> None` | 오프라인 실행 → 메모리 차단 목록·`ExitStack` 초기화. |
-| `NetworkBlocker.__enter__() -> NetworkBlocker` | `with` 진입 → `urllib.request.urlopen`, `socket.create_connection`, `socket.socket.connect/connect_ex`를 일시 차단. 다른 네트워크 작업과 같은 프로세스에서 병행하지 않는다. |
-| `NetworkBlocker._deny(*args: Any, **kwargs: Any) -> None` | 차단된 전송 경계 → 메모리 시도 건수 추가 후 `RuntimeError`. 요청 인자·비밀값은 기록하지 않고 실제 송신 전에 거부한다. |
-| `NetworkBlocker.__exit__(exc_type: Any, exc: Any, traceback: Any) -> bool` | 범위 종료 → 원래 전송 함수 복원 후 `False`. 본문 예외를 숨기지 않는다. |
+| [test_benchmark_adapters.py](../../tests/test_benchmark_adapters.py) | `_memory_io(package, *, fingerprints=None)`: 합성 OOXML과 원본 해시를 메모리 I/O로 제공한다. `BenchmarkAdapterTests`가 사용한다. |
+| 같은 파일 `BenchmarkAdapterTests` | `test_rule_executes_real_extraction_mapping_and_validation_without_output`, `test_extraction_validation_failure_keeps_mapping_and_provenance_results`, `test_changed_source_hash_prevents_success`: 규칙 추출·매핑·출처검사, 검사 실패 보존, 원본 변경 차단을 검증한다. |
+| [test_benchmark_runner.py](../../tests/test_benchmark_runner.py) | `manifest_fixture`, `adapter_fixture`: 독립 합계 정답과 규칙 어댑터 결과를 메모리에 준비한다. |
+| 같은 파일 `BenchmarkRunnerTests` | `test_master_excluded_by_default_and_names_validated`, `test_truth_never_passes_to_engine_and_missing_is_scored`, `test_default_run_executes_rule_evaluation`: 파일 선택, 정답 격리·누락 채점, 기본 규칙 실행을 확인한다. |
+| 같은 클래스 | `test_output_outside_allowed_root_is_rejected_without_writes`, `test_invalid_manifest_rejected_before_engine_calls`, `test_cross_trial_source_change_invalidates_comparison`, `test_bad_output_and_repetition_are_preflight_errors`, `test_removed_model_options_are_rejected_before_source_reads`: 출력 경계, 정답 계약, 반복 간 원본 변경, 잘못된 실행 조건과 삭제된 옵션의 선행 거부를 검사한다. |
 
-`run_ai_adapter(..., allow_api=False)`는 정확한 `OfflineReplayClient` 타입만 오프라인으로 허용한다. 임의 객체의 `offline_replay` 플래그만으로 실행 권한을 허용하지 않는다. 기존 온라인 호출에는 `allow_api=True`가 계속 필요하다. `_inference_delta`는 오프라인 `api_calls=0`과 `offline_requests`, `offline_plan_loads`, `offline_plan_missing`을 분리하며, 재생을 모델 토큰 사용이나 API 처리 시간으로 해석하지 않는다.
+### 월별 규칙 파서 실행과 평가
 
-### 월별 원본 요청 수집
-
-정의 파일: [benchmark/monthly.py](../../src/excel_parser/benchmark/monthly.py). 실제 실행 명령과 저장 범위는 [비교 문서](parser-comparison.md)의 월별 검증 절을 따른다.
+정의 파일: [benchmark/monthly.py](../../src/excel_parser/benchmark/monthly.py). 실제 실행 명령과 저장 범위는 [원본 대조 문서](parser-comparison.md)의 월별 검증 절을 따른다.
 
 | 실제 서명 | 호출자 → 호출 대상, 입출력·예외·부작용 |
 |---|---|
 | `write_json(path: Path, value: object) -> None` | 월별 저장 단계 → 배타적 `open("x")`. Decimal을 보존한 새 JSON 저장. 기존 파일이면 `FileExistsError`; 저장 실패는 `OSError`. |
-| `inventory_dataset(dataset: Path, types: list[str]) -> dict` | 월별 export → 실제 유형·기준월·조직 및 마스터 경로 목록. 파일명과 폴더만 읽으며 마스터 내용을 읽지 않는다. 유형 누락·마스터 비유일은 `ValueError`. |
-| `_capture_source(path: str) -> dict` | export 작업 프로세스 → 새 `extract_workbook` → `collect_initial_requests`. 조직 원본만 읽고 요청·생략·처리 전후 해시·시간 반환. 읽기 실패는 `OSError`. |
-| `export_contexts(dataset: Path, types: list[str], output: Path, repo: Path, workers: int) -> dict` | 월별 export CLI → 출력 경로 검사·목록·병렬 원본 읽기 → 요청 해시별 새 JSON 및 목록 저장. 기존 폴더를 덮어쓰지 않는다. 잘못된 목록/경로는 `ValueError`, 접근 실패는 `OSError`. |
+| `inventory_dataset(dataset: Path, types: list[str]) -> dict` | 월별 CLI → 실제 유형·기준월·조직 및 마스터 경로 목록. 파일명과 폴더만 읽으며 마스터 내용을 읽지 않는다. 유형 누락·마스터 비유일은 `ValueError`. |
 | `_append_rows(path: Path, rows: list[dict]) -> None` | 월별 실행 저장 → 현재 실행의 gzip JSONL에 입력 순서대로 행 추가. 중복·미확정 레코드를 보존하며 기존 타 실행 파일에는 사용하지 않는다. 저장 실패는 `OSError`. |
-| `_run_source(job: tuple[str, str, str, str]) -> dict` | 월별 작업 프로세스 → 동일 조직 파일을 `run_rule_adapter`, `run_ai_adapter`에서 각각 새로 읽기 → 평가용 상세 출력과 실행 내역. 계획·조직 파일만 읽고 네트워크를 차단한다. |
+| `_run_source(job: tuple[str, str, str]) -> dict` | 월별 작업 프로세스 → 조직 파일·유형·기준월 → `run_rule_adapter` → 평가용 상세 출력과 실행 내역. 조직 파일만 읽으며 입력 해시를 보존한다. |
 | `summarize_months(rows: list[dict]) -> list[dict]` | 월별 점수 → 유형별·전체 마이크로 집계. 월별 비율 평균이 아닌 정답·확정 출력·일치 건수를 합산한다. 필수 필드 누락은 `KeyError`; 메모리 연산. |
-| `write_summary(report: dict, output: Path) -> None` | 월별 실행 완료 → `summary.csv`, 한국어 `report.md` 새 저장. 실행 조건·해시·API 건수·시간 해석·산출물·명령을 기록한다. 기존 요약은 `FileExistsError`, 저장 실패는 `OSError`. |
-| `run_monthly(output: Path, workers: int) -> dict` | 월별 run CLI → 고정 계획·원본 해시 확인 → 두 파서 실행 → 독립 마스터 정답·레코드 채점 → 새 `results/` 저장. 이미 결과가 있으면 `FileExistsError`, 계획 변경은 `ValueError`. 원본·계획은 읽기만 한다. |
+| `write_summary(report: dict, output: Path) -> None` | 월별 실행 완료 → `summary.csv`, 한국어 `report.md` 새 저장. 실행 조건·해시·시간·산출물·명령을 기록한다. 기존 요약은 `FileExistsError`, 저장 실패는 `OSError`. |
+| `run_monthly(dataset: Path, types: list[str], output: Path, repo: Path, workers: int) -> dict` | 월별 CLI → 실제 입력 목록 고정 → 규칙 파서 실행 → 독립 마스터 정답·레코드 채점 → 새 inventory·results·요약 저장. 기존 경로는 `FileExistsError` 또는 `ValueError`; 원본·마스터는 읽기만 한다. |
 
 ### 월별 독립 정답과 상세 대조
 
-정답 함수는 모델 요청이나 두 생산 파서에 전달되지 않는다. 결과 투영은 파서가 출력한 조직·계정·기간·금액만 사용하고, 같은 원본의 설명 ID는 상세행 식별을 위해 추가한다.
+정답 함수는 생산 파서에 전달되지 않는다. 결과 투영은 파서가 출력한 조직·계정·기간·금액만 사용하고, 같은 원본의 설명 ID는 상세행 식별을 위해 추가한다.
 
 | 정의 파일 및 실제 서명 | 호출자 → 호출 대상, 입출력·예외·부작용 |
 |---|---|
@@ -1587,7 +1579,7 @@ AI 클라이언트의 `ResponsesClient(response_cache=...)`는 응답 캐시 저
 | 같은 파일 `build_master_truth(master_path: Path, *, type_name: str, closing_month: str \| int) -> dict` | 월별 실행의 평가 단계 → 마스터 상세 원본·원본 단위·실적/추정 헤더 확인 → records, metadata, issues, totals. 마스터와 형제 파일명·해시만 읽는다. 읽기/마감월 오류는 `OSError`/`ValueError`. |
 | [monthly_evaluation.py](../../src/excel_parser/benchmark/monthly_evaluation.py) `_code(value: object) -> str \| None` | 예측 투영 → 출력된 계정 코드의 표기만 통일. 새 코드 추론·원본 보완 없음. |
 | 같은 파일 `_account(record: dict, domain: str) -> str \| None` | 예측 투영 → 파서의 item.code·코드 차원·매출 분류 경로에서 계정 추출. 원본·정답값으로 보완하지 않는다. |
-| 같은 파일 `project_predictions(records: list[dict], workbook: dict, *, type_name: str, closing_month: str \| int) -> list[dict]` | 두 어댑터 결과 → 월별 상세 출력 평탄화. 원본은 ID·대상 셀 범위 판정에만 사용. 금액 확정과 의미 확정을 구별하고 미확정·중복도 보존. 잘못된 마감월은 `ValueError`. |
+| 같은 파일 `project_predictions(records: list[dict], workbook: dict, *, type_name: str, closing_month: str \| int) -> list[dict]` | 규칙 어댑터 결과 → 월별 상세 출력 평탄화. 원본은 ID·대상 셀 범위 판정에만 사용. 금액 확정과 의미 확정을 구별하고 미확정·중복도 보존. 잘못된 마감월은 `ValueError`. |
 | 같은 파일 `record_key(record: dict) -> tuple` | 채점 → 유형·마감월·영역·조직·계정·연월·구분·상세 ID 키. 수정번호는 보존하지만 자동 최신본 선택에 사용하지 않는다. |
 | 같은 파일 `_detail(status: str, truth: dict \| None, prediction: dict \| None, *, duplicate: bool = False) -> dict` | 채점 → 두 원본의 파일·시트·셀·키·값·수정번호·미확정 사유를 담은 오류 행. |
 | 같은 파일 `_metrics(expected: int, confirmed: int, matched: int) -> dict` | 전체/매출·비용 집계 → TP·FP·FN, Precision·Recall·F1. 정답이 없으면 미측정. |
@@ -1602,13 +1594,11 @@ AI 클라이언트의 `ResponsesClient(response_cache=...)`는 응답 캐시 저
 
 | 정의 파일 | 함수·메서드 및 호출 관계 |
 |---|---|
-| [test_benchmark_replay.py](../../tests/test_benchmark_replay.py) | `reference_plan() -> dict`, `captured_request() -> dict`: 기존 메모리 OOXML과 초기 요청 수집기로 실제 검증을 통과하는 응답·요청을 준비한다. |
-| 같은 파일 `BenchmarkReplayTests` | `test_request_digest_matches_existing_responses_client`, `test_fixed_plan_cache_returns_isolated_copies`, `test_missing_plan_records_failure_without_transport_fallback`: 요청 해시 호환·고정 계획 복사 격리·누락 시 API 대체 금지를 검증한다. |
-| 같은 클래스 | `test_network_boundaries_block_before_io_and_restore`, `test_adapter_accepts_offline_client_without_api_permission`: HTTP·소켓 차단과 복원, API 허용 없는 실제 검증·적용 경로를 검사한다. |
 | [test_benchmark_monthly.py](../../tests/test_benchmark_monthly.py) | `expected_record(**changes: object) -> dict`, `predicted_record(**changes: object) -> dict`, `memory_cell(row: int, column: int, value: object) -> dict`: 독립 정답·예측·추출 셀의 메모리 자료를 준비한다. |
 | 같은 파일 `MonthlyEvaluationTests` | `test_exact_decimal_match_preserves_inputs`, `test_amount_mismatch_is_one_detail_and_one_fp_one_fn`, `test_duplicate_predictions_and_truth_keep_multiplicity`, `test_duplicate_truth_missing_copy_stays_in_recall`: Decimal 일치, 금액 오류의 FP/FN, 정답·출력 중복 보존을 검증한다. |
 | 같은 클래스 | `test_zero_and_blank_are_distinct`, `test_missing_and_unresolved_keep_all_truth_in_recall`, `test_different_detail_ids_are_not_merged`, `test_closing_snapshots_are_evaluated_separately`: 빈 값/0, 미확정 분모, 상세 ID 및 마감월 분리를 검사한다. |
 | 같은 클래스 | `test_master_blank_is_unmeasured_while_zero_is_truth`, `test_missing_location_points_to_master_evidence`, `test_master_transfer_uses_recipient_without_rewriting_donor`: 실제 정답 변환 경로의 빈칸/0, 누락 출처, 이관 수신 조직 근거를 검사한다. |
+| 같은 파일 `MonthlyExecutionTests` | `test_source_worker_reads_only_organization_via_rule_adapter`, `test_monthly_run_keeps_independent_scoring_and_source_integrity`, `test_invalid_worker_count_does_not_create_output`: 규칙 어댑터 전용 호출, 독립 채점·입력 해시 보존, 잘못된 worker 수의 출력 생성 차단을 메모리에서 확인한다. |
 
 ## 조직 원본 매핑 보완과 기술 마스터 조립
 
@@ -1962,25 +1952,32 @@ AI 클라이언트의 `ResponsesClient(response_cache=...)`는 응답 캐시 저
 | `_failure(code: str) -> dict` | 내부 오류 → 빈 records·0 카운트·고정 메시지의 FAILED 응답 | 원본 값·경로·예외 원문 없음 |
 | `_preview_record(record: dict) -> dict` | 표준 매핑 후보 → 내부 미리보기 필드 | 모든 후보·금액·수식·업무 오류 근거 보존. 중복 행 문맥·내부 경로는 전달하지 않음. 입력은 변경하지 않고 중첩 읽기 값 참조를 공유 |
 | `_public_diagnostic(item: dict) -> dict` | 추출·매핑 진단 → 원인별 고정 안내·확인된 원본 셀 | 조직 조회 오류·이름 충돌·코드 불일치·모호함을 구분. 직접 셀이 없으면 동일 시트의 provenance 셀 사용. 원문 값·경로·예외 메시지는 복제하지 않음 |
+| `_business_diagnostic(record: dict, issue: dict) -> dict \| None` | `_review_diagnostics` → 계정·상세 ID·관리분류의 고정 원인·담당자 정정 및 전체 파일 재업로드 안내 | issue의 field/code/provenance와 dimensions 필드 출처가 일치하고 금액 셀과 같은 시트·행인 경우만 정확한 입력 셀 사용. 코드표·다른 행·위치 불명은 None. 관측값·금액·상태 변경 없음 |
+| `_review_diagnostics(unresolved: list[dict]) -> list[dict]` | parse_bytes → 업무 오류는 code·sheet·cell별 한 번 표시하고 나머지 일반 안내 유지 | 금액·매핑의 별도 불확실성, 미지원 사유와 출처 부족은 기존 금액 셀 안내로 보존. 진단 수만 줄이며 후보·미확정 수·검토 상태는 변경하지 않음 |
 | `parse_bytes(content: bytes, filename: str, limits: BridgeLimits \| None = None) -> dict` | 검사 → 기존 메모리 추출·매핑 → 전체 후보의 검토 상태 판단 → 미리보기 프로토콜 | 일반 예외는 고정 실패코드. Decimal 유지. 참고/미확정 후보를 제거하거나 성공으로 바꾸지 않음 |
 | `_decimal_json(value: object) -> str` | JSONEncoder → 유한 Decimal의 지수 없는 문자열 | 비유한 값은 ValueError, 다른 미지원 타입은 TypeError |
-| `_encode_response(response: dict, limit: int) -> str` | main → 공백 없는 상한 내 JSON 한 건 | StringIO로 토큰 조각 목록의 메모리 낭비 방지. UTF-8 한도 초과는 BridgeError. 부분 stdout 출력 없음 |
+| `_response_chunks(response: dict, limit: int) -> Iterator[str]` | main/문자열 호출 → 응답 전체의 형식·UTF-8 바이트를 먼저 검사한 뒤 같은 JSON 조각 반복자 반환 | 상한/비유한 값 검사는 반환 전에 완료. 반환 후 응답을 변경하지 않으며 CLI는 전체 문자열을 만들지 않음 |
+| `_encode_response(response: dict, limit: int) -> str` | 문자열이 필요한 내부 호출 → 검증된 조각을 StringIO로 수집 | 응답 상한과 계약은 동일. 실제 CLI는 이 수집 경로를 사용하지 않음 |
 | `main(argv: list[str] \| None = None, *, input_stream: BinaryIO \| None = None, output_stream: TextIO \| None = None, error_stream: TextIO \| None = None, limits: BridgeLimits \| None = None) -> int` | stdin 바이트 → stdout JSON, FAILED일 때만 stderr 오류코드 한 줄 | SUCCEEDED/NEEDS_REVIEW는 0, FAILED는 1. 입력은 한도+1까지만 읽음. 출력 파이프 쓰기 오류는 전파. 임시·결과·캐시 파일 생성 없음 |
 
-`BridgeLimits`는 변경 불가능한 한도 dataclass이며 별도의 생성자 검증은 하지 않습니다. 기본값은 입력 16 MiB, 전체 해제 64 MiB, 개별 엔트리 16 MiB, 1,024개 엔트리, 해제 배율 200, 내용/자식 요소가 있는 워크시트 셀 50,000개(`max_cells`), 서식 빈 셀을 포함한 물리 워크시트 셀 250,000개(`max_xml_cells`), 전체 XML 요소 600,000개·깊이 64, XML 이름/속성 값 8,192자, 단일 값·수식·리치/공유 문자열 32,767자, 물리 셀×병합/열 문맥 작업량 합계 6,000,000, JSON 출력 64 MiB입니다. workbook의 sheetId는 1~4,294,967,295의 최대 10자리 ASCII 정수, 시트명은 1~31자로 제한합니다. 원본 17개 재검증에서 물리 셀 약 20만 개와 전체 XML 약 45만 개를 관측해 물리 셀과 요소에 유한 상한을 별도로 뒀습니다. 첫 파일 문맥 작업량 5,167,709에 맞춰 이 상한을 기존 5,000,000에서 조정했습니다. 주석이 있는 빈 셀은 extractor에서 보존되므로 문맥 비용은 내용 셀 수로 줄이지 않고 물리 셀 기준을 유지합니다. 입력·해제·개별 엔트리·텍스트·응답 바이트 상한은 늘리지 않았습니다. 모든 업무 파일을 지원한다는 뜻은 아니며, 핵심 XML 파트는 `.xml` 확장자를 요구하고 매크로·암호화 파일은 처리하지 않습니다.
+`BridgeLimits`는 변경 불가능한 한도 dataclass이며 별도의 생성자 검증은 하지 않습니다. 기본값은 입력 16 MiB, 전체 해제 64 MiB, 개별 엔트리 16 MiB, 1,024개 엔트리, 해제 배율 200, 내용/자식 요소가 있는 워크시트 셀 80,000개(`max_cells`), 서식 빈 셀을 포함한 물리 워크시트 셀 250,000개(`max_xml_cells`), 전체 XML 요소 600,000개·깊이 64, XML 이름/속성 값 8,192자, 단일 값·수식·리치/공유 문자열 32,767자, 물리 셀×병합/열 문맥 작업량 합계 6,000,000, JSON 출력 96 MiB입니다. workbook의 sheetId는 1~4,294,967,295의 최대 10자리 ASCII 정수, 시트명은 1~31자로 제한합니다. 원본 17개 재검증에서 물리 셀 약 20만 개와 전체 XML 약 45만 개를 관측해 물리 셀과 요소에 유한 상한을 별도로 뒀습니다. 첫 파일 문맥 작업량 5,167,709에 맞춰 이 상한을 기존 5,000,000에서 조정했습니다. 주석이 있는 빈 셀은 extractor에서 보존되므로 문맥 비용은 내용 셀 수로 줄이지 않고 물리 셀 기준을 유지합니다. 2026-11-17에 808개 상세행을 가진 대용량 원본의 내용 셀 75,510개·논리 텍스트 37,346,854바이트·JSON 91,888,707바이트(마지막 줄바꿈 포함)를 확인하여 내용 셀·논리 텍스트·응답의 세 상한만 조정했습니다. 입력·해제·개별 엔트리·XML·단일 텍스트·반복 문맥 상한은 유지합니다. 모든 업무 파일을 지원한다는 뜻은 아니며, 핵심 XML 파트는 `.xml` 확장자를 요구하고 매크로·암호화 파일은 처리하지 않습니다.
 
-논리 텍스트 작업량은 공유 문자열 표의 길이와 `각 논리 행의 값/문자열 UTF-8 바이트 합계 × 그 행의 내용 셀 수 + 수식 텍스트 바이트`를 합쳐 16 MiB로 제한합니다. `_extract_sheet`가 빈 서식 셀을 희소 구간으로 다루므로 이 셀은 행 문맥 횟수에서 제외합니다. 수식은 행 설명으로 복제하지 않아 1회분만 계산하되 단일 길이와 전체 텍스트 상한은 계속 적용합니다. 공유 문자열 참조는 원문 길이로 환산하며 복수 표의 같은 인덱스는 가장 긴 값을 사용합니다. XML row 배치 대신 셀 주소의 논리 행을 사용합니다. 큰 상세 ID·공유 문자열의 문맥 증폭은 추출 전에 제한합니다. 이 보수적 작업량은 실제 결과 크기와 다르며, 프로세스 RSS를 강제하는 OS 메모리 쿼터는 아닙니다.
+논리 텍스트 작업량은 공유 문자열 표의 길이와 `각 논리 행의 값/문자열 UTF-8 바이트 합계 × 그 행의 내용 셀 수 + 수식 텍스트 바이트`를 합쳐 40 MiB로 제한합니다. `_extract_sheet`가 빈 서식 셀을 희소 구간으로 다루므로 이 셀은 행 문맥 횟수에서 제외합니다. 수식은 행 설명으로 복제하지 않아 1회분만 계산하되 단일 길이와 전체 텍스트 상한은 계속 적용합니다. 공유 문자열 참조는 원문 길이로 환산하며 복수 표의 같은 인덱스는 가장 긴 값을 사용합니다. XML row 배치 대신 셀 주소의 논리 행을 사용합니다. 큰 상세 ID·공유 문자열의 문맥 증폭은 추출 전에 제한합니다. 이 보수적 작업량은 실제 결과 크기와 다르며, 프로세스 RSS를 강제하는 OS 메모리 쿼터는 아닙니다.
 
-외곽 프로토콜 `1.0`은 `{protocolVersion,status,errorCode,summary,diagnostics,records}`이며, 메타데이터 `parserVersion=stdlib-bridge/1.3`, `contractVersion=preview-records/1.0`과 별도 `submissionData`를 함께 제공합니다. Java는 기존 외곽 프로토콜을 검증하고 Worker는 제공된 버전을 저장합니다. 미리보기·제출 어댑터 계약 버전은 표준 `map_workbook` 출력 계약과 다릅니다.
+실제 CLI는 JSON을 두 번 순회합니다. 첫 순회에서 전체 형식과 UTF-8 출력 상한을 검사하고, 성공한 응답만 두 번째 순회에서 작은 조각으로 stdout에 씁니다. 원본 후보나 근거 필드를 삭제하지 않으며, 큰 Unicode 문자열과 인코딩 바이트를 동시에 보유하는 추가 메모리를 줄입니다. 출력 스트림 오류는 기존처럼 호출자에게 전파됩니다.
+
+2026-11-17 같은 1월 대용량 원본의 실제 CLI를 macOS 독립 자식 프로세스로 측정했습니다. 분할 출력 적용 전 최대 RSS는 1,412,923,392바이트, 적용 후에는 813,187,072바이트였습니다. 최신 응답은 91,875,423바이트·종료코드0·`SUCCEEDED`·stderr0바이트이며 원본 SHA-256이 같았습니다. 적용 후 실행시간16.55초는 다른 전수 검증이 동시에 실행된 환경의 관측값입니다. 이 측정은 Docker의 JVM과 Python 동시 메모리 사용량을 보장하지 않습니다.
+
+외곽 프로토콜 `1.0`은 `{protocolVersion,status,errorCode,summary,diagnostics,records}`이며, 메타데이터 `parserVersion=stdlib-bridge/1.4`, `contractVersion=preview-records/1.0`과 별도 `submissionData`를 함께 제공합니다. Java는 기존 외곽 프로토콜을 검증하고 Worker는 제공된 버전을 저장합니다. 미리보기·제출 어댑터 계약 버전은 표준 `map_workbook` 출력 계약과 다릅니다.
 
 - summary는 `sheetCount, recordCount, mappedCount, unresolvedCount, unusedTemplateRowCount` 정수입니다. recordCount와 mappedCount는 표준 후보 전체 기준이며 unresolvedCount는 재무 금액 상세 중 의미·금액·업무키가 미확정인 수입니다. 참고·코드표 숫자와 엄격히 확인된 미사용 양식 후보를 이 수에 포함하지 않습니다. unusedTemplateRowCount는 `role.kind=inactive_template` 후보의 시트·행 조합을 중복 제거한 수이며, 원본 후보는 records에 유지합니다. Java는 이전 저장 결과에 이 필드가 없으면 0으로 표시합니다.
-- diagnostics는 `{code,severity,stage,message,source}`입니다. severity는 ERROR/WARNING, stage는 PARSING/MAPPING, source는 `{sheet,cell}` 또는 null입니다. 정보성 info 진단은 생략하며 기존 표준 후보는 내부 records에서 보존합니다. 모든 원본 셀·스타일 추출 사전을 이 프로토콜에 포함하는 것은 아닙니다.
+- diagnostics는 `{code,severity,stage,message,source}`입니다. severity는 ERROR/WARNING, stage는 PARSING/MAPPING, source는 `{sheet,cell}` 또는 null입니다. 정보성 info 진단은 생략하며 기존 표준 후보는 내부 records에서 보존합니다. 계정·상세 ID·관리분류 오류는 실제 필드 출처와 issue 근거가 확인된 같은 행의 셀만 안내하며, 월별로 반복된 동일 code·sheet·cell은 하나로 묶습니다. 담당자가 원본을 정정한 뒤 전체 파일을 다시 업로드하도록 안내하고, 코드표 셀이나 다른 행을 정정 위치로 추측하지 않습니다. 별도 금액·매핑 불확실성 또는 확인하지 못한 사유는 기존 일반 안내로 남깁니다. 모든 원본 셀·스타일 추출 사전을 이 프로토콜에 포함하는 것은 아닙니다.
 - records는 모든 표준 후보의 내부 미리보기 투영입니다. `source(sheet,cell)`, `organization(code,name,status)`, `item(code,name,detail_id,detail_revision,metric_code)`, `period(year,month,quarter,aggregation,scenario)`, `role(kind,aggregatable)`, `value`, `mapping`, `formula`, `raw_value`, `data_type`을 보존합니다. 업무 검증이 있는 후보는 `business_validation(status,issues)`도 보존하며 issues의 코드·관측값·근거 셀을 생략하지 않습니다. value/formula/mapping 내용은 표준 결과 그대로이고 Decimal은 CLI에서 십진 문자열입니다.
 - 반복되는 항목·조직·기간 provenance, dimensions, 정상 업무검증의 상세 문맥, 스타일·제출 메타데이터, source의 내부 경로/원본 ID는 이 미리보기 계약에 포함하지 않습니다. 업무 오류 issues의 원본 근거는 그대로입니다. 표준 추출/매핑의 원본 계약은 변경하지 않았고 저장된 원본을 재추출해 확보합니다. 이 결과는 공개 source-cells 전체 조회나 승인 금융 자료가 아닙니다. 후보를 제거해 정상으로 보이게 하거나 서로 다른 자료를 합치지 않습니다.
 - 재무 금액 상세가 없거나 관측한 상세의 의미·금액·업무키 검증이 실패하면 NEEDS_REVIEW/PARSER_REVIEW_REQUIRED입니다. 나머지는 SUCCEEDED지만 필수 월·조직 전체 제출, 로그인 조직 일치, 보고 항목 매핑, Gap·소명·승인 검증 완료를 의미하지 않습니다. 빈 셀을 0으로 보충하지 않으며 지원하지 않는 재무 영역의 누락을 완전하다고 주장하지 않습니다.
 - 실패는 FAILED와 고정 오류코드, 빈 records입니다. stdin/ZIP/XML/형식/내부 오류의 원문을 stdout 진단이나 stderr에 복사하지 않습니다. stdout을 끝까지 확인한 후 부모 프로세스가 종료코드를 판정해야 실패 JSON을 읽을 수 있습니다.
 
-[test_service_bridge.py](../../tests/test_service_bridge.py)의 `_package`, `_shared_package`는 메모리 ZIP, `_invoke`는 메모리 stdin/stdout/stderr만 사용합니다. `ServiceBridgeTests`의 22개 메서드는 실제 추출·매핑의 십진 정밀도·0·명시 ID, 캐시 누락, 무효 업무 ID의 금액 보존, 기존 경로 API 호환, 파일 열기 금지, 자원 한도, UTF-8/UTF-16 DTD, 원문 비노출, 상세 부재 및 `python -B -m` 종료코드·JSON 프로토콜을 검사합니다. 시트 ID/이름, 속성·텍스트, 리치 문자열, 공유 문자열 ZIP 순서·없는 참조·행 증폭도 검사합니다. 추가 회귀 메서드는 아래와 같습니다. 모두 메모리에서 실행하며 합성 원본·임시 폴더·테스트 결과 파일을 만들거나 Data를 읽지 않습니다.
+[test_service_bridge.py](../../tests/test_service_bridge.py)의 `_package`, `_shared_package`는 메모리 ZIP, `_invoke`는 메모리 stdin/stdout/stderr만 사용합니다. `ServiceBridgeTests`의 30개 메서드는 실제 추출·매핑의 십진 정밀도·0·명시 ID, 캐시 누락, 무효 업무 ID의 금액 보존, 기존 경로 API 호환, 파일 열기 금지, 자원 한도, UTF-8/UTF-16 DTD, 원문 비노출, 상세 부재 및 `python -B -m` 종료코드·JSON 프로토콜을 검사합니다. 시트 ID/이름, 속성·텍스트, 리치 문자열, 공유 문자열 ZIP 순서·없는 참조·행 증폭도 검사합니다. 추가 회귀 메서드는 아래와 같습니다. 모두 메모리에서 실행하며 합성 원본·임시 폴더·테스트 결과 파일을 만들거나 Data를 읽지 않습니다.
 
 | 추가 회귀 메서드 | 확인하는 실패 방지 |
 | --- | --- |
@@ -1991,6 +1988,14 @@ AI 클라이언트의 `ResponsesClient(response_cache=...)`는 응답 캐시 저
 | `test_sparse_format_cells_have_a_separate_physical_limit` | 주석만 있는 빈 셀 80개가 추출에서 보존되어도 금액 후보가 되지 않으며 물리 셀·문맥 반복 상한은 유지 |
 | `test_formula_text_is_charged_once_without_disabling_text_limit` | 수식의 행 문맥 과대계산 방지와 전체 텍스트 한도 유지 |
 | `test_preview_keeps_every_candidate_value_formula_and_issue` | 참고·미확정 후보 수, 값·수식·매핑·원문·업무 오류 근거 보존과 표준 결과 불변 |
+| `test_large_financial_cell_boundary_remains_bounded` | 메모리 OOXML의 80,000개 내용 셀을 허용하고 상한 1개 초과를 매핑 전에 거부 |
+| `test_large_response_and_text_budget_keep_exact_boundaries` | 논리 텍스트 경계 허용·1바이트 초과 거부 및 줄바꿈 포함 UTF-8 JSON 경계 유지 |
+| `test_cli_streams_only_after_complete_response_validation` | CLI의 전체 문자열 수집 방지, 조각 출력과 기존 JSON 값의 일치, 상한 실패 시 부분 JSON 비출력 |
+| `test_business_diagnostics_locate_fields_and_preserve_candidates` | 계정·ID·분류의 반복 진단을 실제 입력 셀별로 묶으며 후보·금액·원본과 기존 필수 응답 필드 유지. 각 진단 셀의 원문을 submissionData.sourceCells에서 그대로 조회 가능 |
+| `test_missing_business_field_keeps_its_observed_source` | 빈 계정과 오류 계정 모두 확인된 실제 입력 셀만 안내. 오류값을 빈값으로 단정하거나 보정하지 않음 |
+| `test_business_location_requires_matching_field_and_row_evidence` | 코드표만 있는 근거, 필드 출처 부재, 다른 행 위치는 일반 안내로 남기고 잘못된 정정 위치를 만들지 않음 |
+| `test_business_diagnostics_keep_other_rows_and_unknown_reasons` | 동일 오류만 묶고 다른 행은 별도 표시. 알 수 없는 추가 검증 사유의 일반 안내 유지 |
+| `test_business_diagnostic_does_not_hide_missing_amount_cache` | 업무키 오류를 묶어도 별도 금액 캐시 누락은 해당 금액 셀에 남기고 0·빈값·미확정 수 보존 |
 
 ### 2026-11-16 사업부 원본 17개 메모리 재검증
 
@@ -2003,3 +2008,30 @@ AI 클라이언트의 `ResponsesClient(response_cache=...)`는 응답 캐시 저
 - 기간 해석은 원본 헤더를 따릅니다. 첫 파일 `답안지_IFRS15後!AT6=추정`, `AT8=9월` 근거로 2026년 1~8월 actual, 9~12월 estimate입니다. manifest의 `close_month=9` 설명과 차이가 있지만 원본을 변경하거나 파서에서 9월을 실적으로 강제하지 않았습니다. 2026 PLAN 대조에는 영향이 없습니다.
 
 관련 회귀 실행은 parser 디렉터리에서 `env -u EXCEL_PARSER_TEST_DATA PYTHONPATH=src:tests python3 -B -m unittest test_extraction test_mapping test_mapping_monthly test_business_validation test_service_bridge`이며 54개 중 52개 통과, 외부 자료 의존 2개 건너뜀입니다. 주석 빈 셀의 마지막 문맥 상한 보강 후에도 17개 원본의 자원 검사를 다시 통과했고 후보·금액·직렬화 계약은 변경하지 않았습니다.
+
+## source_audit.py · 월별 원본의 독립 메모리 대조
+
+정의: [benchmark/source_audit.py](../../src/excel_parser/benchmark/source_audit.py). `월별검증_2026/검증기준/manifest_01.json`부터 `manifest_09.json`까지는 평가 파일·상세 행·연월·단위의 정답 범위로만 사용합니다. 생산 `service_bridge.parse_bytes`에는 원본 XLSX 바이트와 파일명만 전달합니다. 평가기는 표준 추출·정규화·매핑 함수를 정답 생성에 호출하지 않고 ZIP·XML과 독립 Decimal 해석을 사용합니다. 반려·삭제·중복 행도 원본에 있으면 대조 분모에 남기므로 정제 마스터 정확도와 다른 지표입니다.
+
+| 함수·자료형 | 호출 관계와 역할 | 입력·반환·예외·부작용 |
+| --- | --- | --- |
+| `NativeCell` | `read_native` → 원문 값·자료형·수식·수식 존재 보존 | 불변 메모리 자료형. 실제 빈 셀과 XML 부재를 구분 |
+| `_column`, `_row` | 행·슬롯·조직 표의 독립 주소 처리 | 열 번호→문자, 셀 주소→행 번호. 잘못된 입력은 ValueError |
+| `_decode`, `read_native` | workbook 관계표 → 모든 시트·공유 문자열·셀 XML 판독 | 숫자 렉심과 원본 수식 보존. ZIP/XML 오류 전파. 외부 관계 조회·수식 실행 없음 |
+| `_amount`, `_present` | 원문 값의 독립 금액·입력 존재 판정 | 한국식 그룹·괄호 음수·지수 숫자를 Decimal로 해석. 오류·빈칸은 0으로 바꾸지 않음 |
+| `_registry` | 원본의 사업부코드·사업부명 표 → 이름별 코드 집합 | 동명 조직 모호함 보존. manifest 조직명·파일명·ID를 근거로 보충하지 않음 |
+| `expected_rows` | manifest 행 + 상세 입력 ID → 원본 행별 48개월 슬롯·비용 추가 추정 12개월 | 2025 실적, 2026 계획/마감 실적·추정, 2027 계획, 별도 2027 추정. 원본 반려·중복·0원 행 유지. 범위 오류는 ValueError/KeyError |
+| `_mismatch`, `audit_prediction` | 원본 정답 → 실제 bridge 제출 행·월·근거 비교 | 원본 행·매출/비용 domain·금액·0·빈칸·자료형·기간·단위·배율·ID·조직·수식·출처와 누락/추가/중복 비교. 실패 응답도 원본 분모 유지. 제한된 예시만 메모리 보관 |
+| `audit_file` | 원본 읽기 → 독립 OOXML → 실제 parse_bytes → 대조 → 원본 해시 재검사 | 파일 읽기만 수행. 입력 경로가 데이터셋 밖이면 ValueError. 예외·불일치 숨기지 않음 |
+| `load_jobs`, `_numbers` | CLI 유형·월 → manifest의 사업조직 작업 목록 | 마스터 파일 제외, 중복 경로 거부, 1~9 범위 선택. manifest를 생산 파서에 전달하지 않음 |
+| `_summary`, `main` | 기본 2개 프로세스 → 유형·월별 17파일 즉시 요약 → 전체 요약 | JSON 콘솔 출력만 수행. 불일치 0개면 종료 0, 있으면 1. `--limit`은 진단용 일부 실행. 파일·로그·캐시 생성 없음 |
+
+저장된 원본/수식 캐시와 비교하며 Excel 재계산 결과를 주장하지 않습니다. `NEEDS_REVIEW`는 그 자체로 원본 불일치가 아니며 bridge 상태·업무 진단과 값 정확도를 따로 집계합니다. 실제 원본에 없는 양식 변화·새 단위까지 검증했다는 의미가 아닙니다. 실행은 저장소에서 `PYTHONPATH=parser/src python3 -B -m excel_parser.benchmark.source_audit --dataset <월별검증_2026 절대경로> --types 1-9 --months 1-9 --workers 2`입니다.
+
+[test_source_audit.py](../../tests/test_source_audit.py)의 `fixture`, `prediction_fixture`는 독립 메모리 원본과 비교 결과 변형용 자료를 만듭니다. 일곱 검증은 숫자 문자열·0·빈칸·시나리오 경계·반려행 보존, FAILED 분모 유지, 합계가 상쇄되는 셀 교환, 원문 변경·슬롯 중복, 메모리 ZIP의 XML 빈 셀·수식 판독을 확인합니다. `test_domain_change_is_detected_with_identical_amounts_and_sources`는 정상 fixture에 명시된 domain 하나만 매출에서 비용으로 바꾸어 금액·출처가 같아도 `ROW_DOMAIN`을 검출하는지 확인합니다. 이 합성 결과는 실제 데이터의 정답으로 사용하지 않습니다.
+
+### 연간 0만 남은 빈 매출 양식 행
+
+`mapping._inactive_revenue_template_row(row_number, index, layout)`는 알려진 매출 헤더 아래에서 모든 연간 칸의 숫자 0 상수 또는 확인된 12개월 SUM 캐시 0과 각 12개월 소속을 확인하고, 조직·분류·설명·월 입력·다른 수식·주석 등 다른 내용이 전혀 없을 때만 비활성 양식으로 판정합니다. 공유 SUM은 기존 `_template_formula`로 같은 열의 기준 행·공유 범위·수식 상대 참조를 확인합니다. `map_workbook`은 행별 결과를 캐시하고 `_row_context`에서도 같은 판정을 사용합니다. 연간 0 원본 후보·수식·정규화 값은 `role.kind=inactive_template`, `ROW_INACTIVE_REVENUE_TEMPLATE` 근거로 그대로 보존하며 기존 제출 어댑터가 비활성 행만 제외합니다. 월의 실제 0이나 미확인 연간 수식·문자열·비영 값은 이 규칙으로 제외하지 않습니다.
+
+[test_revenue_template_rows.py](../../tests/test_revenue_template_rows.py)의 `revenue_template_workbook`은 실제 상세와 빈 연간 0 행을 메모리로 합성합니다. 여섯 회귀 테스트는 후보·원본 보존, 월 0·조직·설명·미확인 열·주석의 활성 유지, 연간 비영·문자열·미확인 수식 검토 유지, 명시 SUM·공유 SUM 확인, 잘못된 공유 범위·다른 행·캐시 누락, 불완전 월 헤더의 보수적 처리 경계를 확인합니다.
