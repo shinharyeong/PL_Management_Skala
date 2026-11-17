@@ -8,10 +8,10 @@
 | 상태 | 논리 ERD v0.2 기반과 V1~V8 물리 구현·PRD v0.8 정책 연결. API 0.11-draft 56개 경로 구현. 실제 실행 검증은 [로컬 환경](local-environment.md)에서 별도 관리 |
 | 적용 대상 | 조직별 연간 계획·월간 실적/추정의 전체 제출, 금액 수정 소명, 손익 Gap, 승인, 월별 마스터 |
 | 관련 계약 | [DB 매핑](db-mapping.md), [현재 파서 출력 계약](../../parser/docs/development/output-contract.md) |
-| 관련 업무 문서 | [도메인 규칙](../domain-rules.md), [업무 흐름도](../flow.md) |
+| 관련 업무 문서 | [도메인 규칙](../domain-rules.md) |
 | 화면 참고 | [조직 담당자 v3](https://www.figma.com/design/ZW7ZlgvtY4phycygZqir3z?node-id=202-196), [경영기획팀](https://www.figma.com/design/ZW7ZlgvtY4phycygZqir3z?node-id=2-235) |
 
-합의한 업무 규칙과 논리 스키마는 이 문서, 파서 필드 연결은 [DB 매핑](db-mapping.md), 현재 파서의 반환값은 [출력 계약](../../parser/docs/development/output-contract.md)을 기준으로 한다. [도메인 규칙](../domain-rules.md)과 [업무 흐름도](../flow.md)는 이 설계를 요약한다. 직선 SVG는 v0.2 기반 테이블·필드·핵심 관계를 표현한다. 현재 추가 필드와 테이블은 마지막 V6~V8 확장 절을 함께 본다.
+합의한 업무 규칙과 논리 스키마는 이 문서, 파서 필드 연결은 [DB 매핑](db-mapping.md), 현재 파서의 반환값은 [출력 계약](../../parser/docs/development/output-contract.md)을 기준으로 한다. [도메인 규칙](../domain-rules.md)은 이 설계를 요약한다. 직선 SVG는 v0.2 기반 테이블·필드·핵심 관계를 표현한다. 현재 추가 필드와 테이블은 마지막 V6~V8 확장 절을 함께 본다.
 
 이전 ERD는 Git 이력에서 확인한다. 아래 논리 ERD와 V3~V8의 물리 구현 차이는 문서 끝의 구현 확장 절에서 관리한다. 원본 데이터나 실행 산출물은 문서에 포함하지 않는다. 기존 파서의 기술 마스터 생성·평가와 서비스의 승인 마스터 발행은 서로 다른 기능이다.
 
