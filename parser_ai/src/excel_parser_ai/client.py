@@ -6,7 +6,6 @@ HTTP error, only a sanitized diagnostic is surfaced: HTTP status, the
 server's error.code/error.type/error.message, and the request id — never
 the raw response body verbatim and never anything from the request we sent.
 """
-import copy
 import hashlib
 import http.client
 import json
@@ -81,32 +80,12 @@ def read_env(path):
 
 
 class ResponsesClient:
-    def __init__(self, cache_dir, *, model=None, effort=None, timeout=None, max_output_tokens=None, transport=None, max_calls=300, progress=None, response_cache: dict | None = None):
-        """응답 캐시와 호출 예산을 가진 클라이언트를 구성한다.
-
-        Args:
-            cache_dir: 기본 디스크 캐시 경로.
-            model: 요청 모델. 없으면 환경 설정을 사용한다.
-            effort: 추론 강도.
-            timeout: HTTP 대기 제한 초.
-            max_output_tokens: 응답 토큰 상한.
-            transport: 테스트용 전송 함수. 없으면 실제 HTTP 전송을 사용한다.
-            max_calls: 캐시를 제외한 논리 호출 상한.
-            progress: 진행 메시지 수신 함수.
-            response_cache: 제공하면 디스크 대신 사용하는 메모리 사전.
-        Returns:
-            없음.
-        Raises:
-            ValueError: 환경 설정의 숫자 형식이 잘못된 경우.
-        Side Effects:
-            객체 상태만 초기화하며 파일과 네트워크에 접근하지 않는다.
-        """
+    def __init__(self, cache_dir, *, model=None, effort=None, timeout=None, max_output_tokens=None, transport=None, max_calls=300, progress=None):
         self.model = model or os.getenv("PARSER_AI_MODEL", "gpt-6-astra")
         self.effort = effort or os.getenv("PARSER_AI_REASONING_EFFORT", "high")
         self.timeout = timeout or float(os.getenv("PARSER_AI_TIMEOUT_SECONDS", "240"))
         self.max_output_tokens = max_output_tokens or int(os.getenv("PARSER_AI_MAX_OUTPUT_TOKENS", "32768"))
         self.cache_dir = Path(cache_dir)
-        self.response_cache = response_cache
         self.transport = transport or self._request
         self.max_calls = max_calls
         self.events = []
@@ -202,24 +181,6 @@ class ResponsesClient:
                 time.sleep(2 ** connection_attempt + random.random())
 
     def ask(self, task, instructions, context, schema, *, refresh=False, max_connection_attempts=None):
-        """구조화 응답을 요청하고 선택한 저장소에 캐시한다.
-
-        Args:
-            task: 작업 이름.
-            instructions: 시스템 지시문.
-            context: 원본에서 만든 요청 맥락.
-            schema: 응답 JSON 스키마.
-            refresh: 기존 응답 캐시를 무시할지 여부.
-            max_connection_attempts: 연결 오류 재시도 상한 재정의.
-        Returns:
-            응답 본문을 파싱한 객체.
-        Raises:
-            ModelError: 호출 상한, 전송 또는 응답 형식 오류.
-            OSError: 디스크 캐시 사용 시 저장소 접근 실패.
-        Side Effects:
-            캐시 미적중 시 전송 함수를 호출하고 통계를 갱신한다.
-            response_cache가 제공되면 캐시 파일을 읽거나 쓰지 않는다.
-        """
         body = {
             "model": self.model, "store": False,
             "reasoning": {"effort": self.effort},
@@ -231,14 +192,8 @@ class ResponsesClient:
         encoded = json.dumps(body, sort_keys=True, ensure_ascii=False)
         digest = hashlib.sha256(json.dumps({"version": PROMPT_VERSION, "body": body}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         path = self.cache_dir / (digest + ".json")
-        cached = None
-        if not refresh:
-            if self.response_cache is not None:
-                with self.lock:
-                    cached = copy.deepcopy(self.response_cache.get(digest))
-            elif path.is_file():
-                cached = json.loads(path.read_text())
-        if cached is not None:
+        if path.is_file() and not refresh:
+            cached = json.loads(path.read_text())
             with self.lock:
                 self.events.append({"task": task, "cached": True, "model": self.model, "seconds": 0, "usage": {}, "request_hash": digest})
             self._notify(f"[{task}] 캐시 사용 — API 호출 없음")
@@ -278,16 +233,12 @@ class ResponsesClient:
             data = json.loads("".join(pieces))
         except (ValueError, TypeError):
             raise ModelError("모델 JSON 응답을 읽을 수 없습니다. 원본 추출은 보존되며 룰 결과로 대체하지 않습니다.") from None
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
         envelope = {"data": data, "model": response.get("model", self.model), "prompt_version": PROMPT_VERSION,
                     "usage": response.get("usage", {}), "request_hash": digest}
-        if self.response_cache is not None:
-            with self.lock:
-                self.response_cache[digest] = copy.deepcopy(envelope)
-        else:
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_suffix(f".{threading.get_ident()}.tmp")
-            temporary.write_text(json.dumps(envelope, ensure_ascii=False), encoding="utf-8")
-            temporary.replace(path)
+        temporary = path.with_suffix(f".{threading.get_ident()}.tmp")
+        temporary.write_text(json.dumps(envelope, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(path)
         with self.lock:
             self.events.append({"task": task, "cached": False, "model": envelope["model"], "seconds": round(time.monotonic() - start, 3),
                                 "usage": envelope["usage"], "request_hash": digest})

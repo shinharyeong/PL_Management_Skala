@@ -80,7 +80,5 @@ PYTHONPATH=parser_ai/src python3 -B -m unittest discover -s parser_ai/tests -v
 
 ## 더 자세한 문서
 
-- [규칙 기반 파서와 동일 조건 비교](../parser/docs/development/parser-comparison.md): 독립 입력, 메모리 캐시, 금액 합계·선택적 셀 정답 평가. 실제 API 실행은 명시적 옵션이 필요합니다.
-
 - [실행 중 겪은 문제와 조치](docs/development/troubleshooting.md)
 - [구현·검증 상태와 변경 기록](IMPLEMENTATION_STATUS.md)

@@ -1,0 +1,57 @@
+{
+ "_설명": "예시 질문(빠른 질문) 설정. label 의 {month}·{org} 는 DB 의 최신 월·실제 조직 이름으로 채운다. sql 은 고정 SQL(AI 없이 답할 때도 이 SQL 을 쓴다). {org_filter} 는 조직이 해석된 때만 값 바인딩으로 채운다.",
+ "quick_questions": [
+  {
+   "id": "org_op",
+   "label": "{month}월 조직별 영업이익",
+   "keywords": [
+    "조직별",
+    "부서별",
+    "사업부별",
+    "영업이익"
+   ],
+   "sql": "SELECT org_name, revenue_won, cost_won, op_won FROM v_op WHERE version = :version AND year = :base_year AND month = :base_month AND scenario = :scn{org_filter} ORDER BY op_won DESC"
+  },
+  {
+   "id": "cost_top",
+   "label": "{month}월 비용 상위 항목",
+   "keywords": [
+    "비용",
+    "상위",
+    "항목",
+    "큰"
+   ],
+   "sql": "SELECT cat1, cat2, item, SUM(amount_won) AS amount_won FROM fact WHERE version = :version AND kind = '영업비용' AND year = :base_year AND month = :base_month AND scenario = :scn{org_filter} GROUP BY cat1, cat2, item ORDER BY amount_won DESC LIMIT 20"
+  },
+  {
+   "id": "gap_list",
+   "label": "Gap 목록",
+   "keywords": [
+    "gap",
+    "갭",
+    "변동"
+   ],
+   "sql": "SELECT gap_id, org_name, item, month, scenario, basis, previous_won, current_won, diff_won, explanation_status FROM gap WHERE version = :version{org_filter} ORDER BY ABS(diff_won) DESC LIMIT 200"
+  },
+  {
+   "id": "expl_status",
+   "label": "{org} 소명 현황",
+   "keywords": [
+    "소명",
+    "사유",
+    "이유"
+   ],
+   "sql": "SELECT explanation_id, org_name, item, month, scenario, link_type, status, verdict, rounds, answer, src FROM explanation WHERE version = :version{org_filter} ORDER BY org_code, month"
+  },
+  {
+   "id": "monthly",
+   "label": "월별 추이",
+   "keywords": [
+    "월별",
+    "추이",
+    "흐름"
+   ],
+   "sql": "SELECT month, scenario, SUM(revenue_won) AS revenue_won, SUM(cost_won) AS cost_won, SUM(op_won) AS op_won FROM v_op WHERE version = :version AND year = :base_year AND scenario IN ('ACTUAL', 'ESTIMATE'){org_filter} GROUP BY month, scenario ORDER BY month, scenario"
+  }
+ ]
+}

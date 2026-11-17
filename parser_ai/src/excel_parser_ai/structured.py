@@ -824,25 +824,10 @@ def _resolve_sheet_plan(workbook, sheet, client, review, data_rows, timeout_fall
         return plan, None
 
 
-def infer_structure(workbook, client, *, review=False, max_exception_calls=0, metadata=None, template_cache: dict | None = None):
-    """시트 또는 행 블록의 구조를 해석하고 원본 셀에 적용한다.
-
-    Args:
-        workbook: 원본 추출 객체.
-        client: 구조화 응답 클라이언트.
-        review: 독립 검토 요청 여부.
-        max_exception_calls: 예외 영역 추가 요청 상한.
-        metadata: 별도로 확인된 제출 메타데이터.
-        template_cache: 제공하면 디스크 대신 사용하는 구조 템플릿 사전.
-    Returns:
-        표준 레코드 결과와 구조 해석 내역의 튜플.
-    Raises:
-        OSError: 디스크 모드에서 템플릿 저장에 실패한 경우.
-        ValueError: 구조 적용 계약이 잘못된 경우.
-    Side Effects:
-        필요한 모델 요청과 캐시 갱신을 수행한다. 원본은 변경하지 않는다.
-        template_cache가 제공되면 구조 템플릿 파일을 읽거나 쓰지 않는다.
-    """
+def infer_structure(workbook, client, *, review=False, max_exception_calls=0, metadata=None):
+    """One plan request per sheet (or several row-range blocks for a large
+    one), with conservative exact-structure reuse. Formula-heavy
+    "auto-calculated" sheets are excluded from LLM interpretation entirely."""
     from .engine import infer
     plans = []
     reused = []
@@ -853,10 +838,7 @@ def infer_structure(workbook, client, *, review=False, max_exception_calls=0, me
     events_before = len(client.events)
     template_dir = _template_dir(client)
     sheet_templates = []
-    if template_cache is not None:
-        sheet_templates = [item for item in template_cache.values()
-                           if item.get("version") == 1 and item.get("contract") == _template_contract()]
-    elif template_dir.is_dir():
+    if template_dir.is_dir():
         for path in template_dir.glob("*.json"):
             try:
                 item = json.loads(path.read_text())
@@ -912,16 +894,11 @@ def infer_structure(workbook, client, *, review=False, max_exception_calls=0, me
             if whole_context is not None and whole_context["omitted_row_profiles"]:
                 observed_rows[sheet["name"]] = {r["row"] for r in whole_context["row_profiles"]}
             fingerprint = structure_fingerprint(workbook, plan)
-            template_key = _template_contract()[:16] + "-" + fingerprint
-            template = {"version": 1, "contract": _template_contract(),
-                        "fingerprint": fingerprint, "plan": plan}
-            if template_cache is not None:
-                template_cache.setdefault(template_key, json.loads(json.dumps(template, ensure_ascii=False)))
-            else:
-                template_dir.mkdir(parents=True, exist_ok=True)
-                path = template_dir / (template_key + ".json")
-                if not path.exists():
-                    path.write_text(json.dumps(template, ensure_ascii=False))
+            template_dir.mkdir(parents=True, exist_ok=True)
+            path = template_dir / (_template_contract()[:16] + "-" + fingerprint + ".json")
+            if not path.exists():
+                path.write_text(json.dumps({"version": 1, "contract": _template_contract(),
+                                            "fingerprint": fingerprint, "plan": plan}, ensure_ascii=False))
         plans.append(plan)
     exception_regions = [{"sheet": p["sheet"], **x} for p in plans for t in p["tables"] for x in t["exceptions"]]
     resolutions = []
