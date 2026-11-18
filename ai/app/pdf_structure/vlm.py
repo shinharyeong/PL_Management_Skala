@@ -90,7 +90,12 @@ def _pool(lines) -> list[str]:
     for l in lines:
         out.append(X.mask(l.raw)[0].strip())
         out += [X.mask(c["text"])[0].strip() for c in l.cells]
-    return [t for t in dict.fromkeys(out) if t]
+    more = []
+    for t in out:                                                  # 목록 항목은 앞의 번호·글머리와 뒤의 숫자 자리를 뗀 글자로도 맞춰 본다('3. 일시적/정정 효과 {수치}' → '일시적/정정 효과')
+        core = re.sub(r"\s*(\{수치\}\s*)+\S{0,3}$", "", re.sub(r"^\s*(?:\d+[.)]|[•·●○■□▪\-])\s*", "", t)).strip()
+        if core and core != t:
+            more.append(core)
+    return [t for t in dict.fromkeys(out + more) if t]
 
 
 def _best(t: str, pool: list[str]) -> tuple[str | None, float]:
@@ -138,6 +143,113 @@ def repair_text(blocks: list[dict], page_lines: dict[int, list], min_ratio: floa
     return fixed
 
 
+_WORD = re.compile(r"[가-힣]{2,}")
+
+
+def _page_words(lines) -> set[str]:
+    return set(_WORD.findall(" ".join(X.mask(l.raw)[0] for l in lines)))
+
+
+def _near_word(w: str, words: set[str]) -> str | None:
+    """같은 길이이고 글자 대부분이 같은 PDF 단어가 하나뿐일 때만 그 단어(월정액↔원정액 같은 한두 글자 오독)."""
+    if len(w) < 3:
+        return None
+    c = [p for p in words if len(p) == len(w) and SequenceMatcher(None, w, p).ratio() >= 0.6]
+    return c[0] if len(c) == 1 else None
+
+
+def repair_words(blocks: list[dict], page_lines: dict[int, list]) -> int:
+    """글자 PDF 의 단어 사전으로 단어 단위 오독을 바로잡는다. 블록 전체가 길게 합쳐 읽혀 줄 단위 대조가 안 맞는 경우를 위한 보정. 반환: 고친 단어 수."""
+    fixed = 0
+    for b in blocks:
+        lines = page_lines.get(b["page"])
+        if not lines:
+            continue
+        words = _page_words(lines)
+
+        def fx(t: str) -> str:
+            nonlocal fixed
+
+            def sub(m):
+                nonlocal fixed
+                w = m.group(0)
+                if w in words:
+                    return w
+                n = _near_word(w, words)
+                if n:
+                    fixed += 1
+                    return n
+                return w
+            return _WORD.sub(sub, t) if t else t
+        k = b["kind"]
+        if k in ("title", "paragraph", "footnote"):
+            b["text"] = fx(b["text"])
+        elif k == "table":
+            for r in b["table"]["rows"]:
+                for c in r:
+                    if c["type"] == "text":
+                        c["text"] = fx(c["text"])
+        elif k == "list":
+            def walk(items):
+                for it in items:
+                    it["text"] = fx(it["text"])
+                    walk(it.get("children") or [])
+            walk(b["items"])
+    return fixed
+
+
+def snap_bboxes(blocks: list[dict], page_lines: dict[int, list], page_dims: dict[int, tuple[float, float]], rule_blocks: list[dict] | None = None) -> int:
+    """모델이 그린 박스는 글자 위치와 어긋나기 쉽다. 글자 PDF 면 실제 PDF 줄의 위치로 맞춘다. 반환: 맞춘 블록 수.
+    표·목록은 글자가 가장 많이 겹치는 규칙 블록의 박스를 쓰고, 제목·문장·각주는 각 줄을 글자가 가장 잘 맞는 블록 하나에 배정해 그 줄들의 합집합으로 맞춘다."""
+    done: set[int] = set()
+    for b in blocks:                                                   # 표·목록: 같은 쪽의 규칙 블록 중 글자가 가장 겹치는 것의 박스
+        if b["kind"] not in ("table", "list") or not rule_blocks:
+            continue
+        mine = {w for t in _texts(b) for w in _WORD.findall(t or "")}
+        best, bj = None, 0.0
+        for r in rule_blocks:
+            if r["kind"] != b["kind"] or r["page"] != b["page"]:
+                continue
+            theirs = {w for t in _texts(r) for w in _WORD.findall(t or "")}
+            j = len(mine & theirs) / max(1, len(mine | theirs))
+            if j > bj:
+                best, bj = r, j
+        if best is not None and bj >= 0.3:
+            b["bbox"] = list(best["bbox"])
+            done.add(id(b))
+    by_page: dict[int, list[dict]] = {}
+    for b in blocks:
+        if id(b) not in done and b["kind"] in ("title", "paragraph", "footnote", "table", "list"):
+            by_page.setdefault(b["page"], []).append(b)
+    for pg, bs in by_page.items():
+        lines = page_lines.get(pg)
+        if not lines:
+            continue
+        W, H = page_dims.get(pg, (1.0, 1.0))
+        words = {id(b): {w for t in _texts(b) for w in _WORD.findall(t or "")} for b in bs}
+        got: dict[int, list] = {id(b): [] for b in bs}
+        for l in lines:
+            lw = _WORD.findall(X.mask(l.raw)[0].replace("{수치}", " "))
+            if not lw:
+                continue
+            cy = (l.top + l.bottom) / 2
+            best, bs_ = None, (0.0, 0.0)
+            for b in bs:
+                if not (b["bbox"][1] - 0.05 * H <= cy <= b["bbox"][3] + 0.05 * H):
+                    continue
+                frac = sum(1 for w in lw if w in words[id(b)]) / len(lw)
+                if frac >= 0.7 and (frac, -abs(cy - (b["bbox"][1] + b["bbox"][3]) / 2)) > bs_:
+                    best, bs_ = b, (frac, -abs(cy - (b["bbox"][1] + b["bbox"][3]) / 2))
+            if best is not None:
+                got[id(best)].append(l)
+        for b in bs:
+            hit = got[id(b)]
+            if hit:
+                b["bbox"] = [round(min(l.x0 for l in hit) - 2, 1), round(min(l.top for l in hit) - 2, 1), round(max(l.x1 for l in hit) + 2, 1), round(max(l.bottom for l in hit) + 2, 1)]
+                done.add(id(b))
+    return len(done)
+
+
 def cross_check(blocks: list[dict], page_lines: dict[int, list]) -> None:
     """VLM 이 읽은 글자를 pdfplumber 글자와 대조한다(글자 PDF 에서만). 맞지 않는 블록은 노란 표시."""
     for b in blocks:
@@ -146,8 +258,12 @@ def cross_check(blocks: list[dict], page_lines: dict[int, list]) -> None:
             continue
         pn = _page_text(lines)
         bad = [t for t in _texts(b) if t and not _present(t, pn)]
+        words = _page_words(lines)
+        odd = sorted({w for t in _texts(b) for w in _WORD.findall(t or "") if w not in words})     # PDF 에 없는 단어(1~2글자 오독도 잡는다)
+        if not bad and odd and b["kind"] not in ("chart", "numbercard"):
+            b["needs_review"].append(X._flag("text_mismatch", f"VLM 이 읽은 단어 {len(odd)}개가 PDF 글자에 없습니다(예: ‘{odd[0]}’{', ‘' + odd[1] + '’' if len(odd) > 1 else ''})", {"words": odd[:12]}))
         if bad:
-            b["needs_review"].append(X._flag("text_mismatch", f"VLM 이 읽은 글자 {len(bad)}곳이 PDF 글자와 맞지 않습니다(예: ‘{bad[0][:20]}’)"))
+            b["needs_review"].append(X._flag("text_mismatch", f"VLM 이 읽은 글자 {len(bad)}곳이 PDF 글자와 맞지 않습니다(예: ‘{bad[0][:20]}’)", {"words": [t[:30] for t in bad[:6]]}))
 
 
 def semantic_flags(blocks: list[dict], known: dict) -> None:
@@ -237,7 +353,12 @@ def build_blocks(out: dict, page: dict) -> list[dict]:
             for it in items:
                 if not isinstance(it, dict):
                     raise ValueError("목록 항목 형식 오류")
-                text, cnt = X.mask(str(it.get("text") or ""))
+                raw_t = str(it.get("text") or "").strip()
+                mk = str(it.get("marker") or "").strip()
+                if mk and raw_t.startswith(mk):                          # 모델이 번호를 marker 와 text 에 두 번 적은 경우('1. 1. …')
+                    raw_t = raw_t[len(mk):].strip()
+                raw_t = re.sub(r"^[•·●○■□▪]\s*", "", raw_t)               # 번호 뒤에 남은 글머리 기호
+                text, cnt = X.mask(raw_t)
                 lv = it.get("level") if it.get("level") in (0, 1, 2) else 0
                 node = {"text": text, "marker": str(it.get("marker") or "•")[:4], "level": 0, "children": [], "numbers_masked": cnt}
                 lv = min(lv, len(stack))
@@ -299,6 +420,19 @@ def extract_pages(s, pages: list[dict], all_lines: list[list], images: list[byte
     return out_blocks, info
 
 
+def _row_texts(table: dict) -> list[str]:
+    return [" ".join(str(c.get("text") or "") for c in r if c.get("type") == "text").strip() for r in table["rows"]]
+
+
+def _row_diff(t: dict, rt: dict) -> dict:
+    """모델 표와 PDF 글자 표의 줄 차이: PDF 에만 있는 줄(모델이 놓침) · 모델에만 있는 줄."""
+    mine, theirs = _row_texts(t), _row_texts(rt)
+    nm, nt = [_norm(x) for x in mine], [_norm(x) for x in theirs]
+    return {"model_rows": len(mine), "pdf_rows": len(theirs),
+            "missing_in_model": [theirs[i] for i, x in enumerate(nt) if x and x not in nm][:6],
+            "extra_in_model": [mine[i] for i, x in enumerate(nm) if x and x not in nt][:6]}
+
+
 def reconcile_tables(vlm_blocks: list[dict], rule_blocks: list[dict]) -> int:
     """VLM 이 읽은 표와 PDF 글자로 읽은 표의 모양(행·열 수)이 다르면 글자 PDF 쪽 표를 쓰고 노란 표시를 한다(머리줄 누락 등). 반환: 바꾼 표 수."""
     fixed = 0
@@ -319,13 +453,13 @@ def reconcile_tables(vlm_blocks: list[dict], rule_blocks: list[dict]) -> int:
         t, rt = b["table"], best["table"]
         if (len(t["rows"]), t["columns"]) != (len(rt["rows"]), rt["columns"]):
             if len(rt["rows"]) > len(t["rows"]) and rt["columns"] == t["columns"]:      # VLM 이 줄을 빠뜨린 경우(예: 머리줄 누락)만 PDF 글자 표를 쓴다
-                b["needs_review"].append(X._flag("table_shape", f"VLM 표 {len(t['rows'])}행×{t['columns']}열 ≠ PDF 글자 표 {len(rt['rows'])}행×{rt['columns']}열 — PDF 글자 표를 사용했습니다"))
+                b["needs_review"].append(X._flag("table_shape", f"VLM 표 {len(t['rows'])}행×{t['columns']}열 ≠ PDF 글자 표 {len(rt['rows'])}행×{rt['columns']}열 — PDF 글자 표를 사용했습니다", _row_diff(t, rt)))
                 for k in ("rows", "columns", "header_rows", "unit_hint", "number_cells"):
                     t[k] = rt[k]
                 t["header_rows"] = lead_header_rows(t["rows"], t["header_rows"])
                 fixed += 1
             else:                                                                        # 규칙 표가 더 어긋난 경우(칸이 섞임 등)는 VLM 표를 두고 확인만 요청
-                b["needs_review"].append(X._flag("table_shape", f"VLM 표 {len(t['rows'])}행×{t['columns']}열, PDF 글자 표 {len(rt['rows'])}행×{rt['columns']}열 — 서로 달라 VLM 표를 두었습니다. 확인 필요"))
+                b["needs_review"].append(X._flag("table_shape", f"VLM 표 {len(t['rows'])}행×{t['columns']}열, PDF 글자 표 {len(rt['rows'])}행×{rt['columns']}열 — 서로 달라 VLM 표를 두었습니다. 확인 필요", _row_diff(t, rt)))
     return fixed
 
 
@@ -344,6 +478,10 @@ def add_missed(vlm_blocks: list[dict], rule_blocks: list[dict], page_dims: dict[
         if len(txt) < 2:
             continue
         if txt in pnorm.get(r["page"], ""):
+            continue
+        rw = [w for t in _texts(r) for w in _WORD.findall(t or "")]
+        bag = set(w for b in vlm_blocks if b["page"] == r["page"] for t in _texts(b) for w in _WORD.findall(t or ""))
+        if rw and sum(1 for w in rw if w in bag) >= 0.8 * len(rw):          # 모델이 다른 블록에 합쳐 읽었을 뿐이면 놓친 것이 아니다
             continue
         if any(SequenceMatcher(None, txt, _norm(t)).ratio() >= 0.6 for b in vlm_blocks if b["page"] == r["page"] for t in _texts(b) if t):
             continue

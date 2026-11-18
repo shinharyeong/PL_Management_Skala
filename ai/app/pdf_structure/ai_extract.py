@@ -354,7 +354,9 @@ def vlm_primary(pages: list[dict], all_lines: list[list], rule_blocks: list[dict
     vb = [b for b in blocks if b.get("from_vlm")]
     info["tables_replaced"] = V.reconcile_tables(vb, rule_blocks)
     V.repair_text(vb, {i + 1: ls for i, ls in enumerate(all_lines)})
+    V.repair_words(vb, {i + 1: ls for i, ls in enumerate(all_lines)})
     V.cross_check(vb, {i + 1: ls for i, ls in enumerate(all_lines)})
+    info["boxes_snapped"] = V.snap_bboxes(vb, {i + 1: ls for i, ls in enumerate(all_lines)}, {p["page"]: (p["width"], p["height"]) for p in pages}, rule_blocks)
     V.semantic_flags(blocks, known or {})
     info["coverage"] = V.coverage([b for b in blocks if b.get("from_vlm")], rule_blocks)
     X._link(blocks, body)

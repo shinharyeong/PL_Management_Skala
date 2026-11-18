@@ -76,8 +76,11 @@ def _bbox(lines: list[_Line]) -> list[float]:
     return [round(min(l.x0 for l in lines), 1), round(min(l.top for l in lines), 1), round(max(l.x1 for l in lines), 1), round(max(l.bottom for l in lines), 1)]
 
 
-def _flag(code: str, reason: str) -> dict:
-    return {"code": code, "reason": reason}
+def _flag(code: str, reason: str, detail: dict | None = None) -> dict:
+    f = {"code": code, "reason": reason}
+    if detail:
+        f["detail"] = detail                      # 어느 부분이 다른지(단어·줄)를 화면에 보여 주기 위한 참고 정보
+    return f
 
 
 def _table(lines: list[_Line], unit_rx=re.compile(r"단위")) -> tuple[dict, list[dict]]:

@@ -25,14 +25,14 @@ COMPARES = ("계획", "직전 월", "전년 동월", "직전 추정")
 FONTS = {"gothic": "고딕", "serif": "명조"}
 SIZE_RANGE = (8, 40)
 INTENTS = ("query", "edit", "refuse", "no_data", "clarify", "unknown")
-QTYPES = ("value", "org_rank", "gap_orgs", "org_explanation", "unexplained")
+QTYPES = ("value", "org_rank", "gap_orgs", "org_explanation", "unexplained", "gap_count", "org_gap_count", "explanation_count", "cost_top", "monthly")
 OPS = ("add_block", "remove_block", "set_style", "move_block", "add_column")
 
 SYSTEM = """당신은 보고서 편집·조회 도우미다. 사용자 요청을 아래 JSON 하나로만 돌려준다. 숫자나 문장을 직접 만들지 않는다(값은 코드가 DB 에서 계산한다).
 입력 context: base(기준 월), metrics(DB 지표 사전), compare_bases, orgs(DB 조직 이름), blocks(보고서의 블록: id·종류·설명), fonts, size_range.
 출력 JSON:
 {"intent":"query|edit|refuse|no_data|clarify|unknown",
- "query":{"type":"value|org_rank|gap_orgs|org_explanation|unexplained","metric":지표 이름|null,"org":조직 이름|null,"year":정수|null,"month":정수|null,"compare":"계획|직전 월|전년 동월|직전 추정"|null,"order":"desc|asc","limit":정수|null},
+ "query":{"type":"value|org_rank|gap_orgs|org_explanation|unexplained|gap_count|org_gap_count|explanation_count|cost_top|monthly","metric":지표 이름|null,"org":조직 이름|null,"year":정수|null,"month":정수|null,"compare":"계획|직전 월|전년 동월|직전 추정"|null,"order":"desc|asc","limit":정수|null},
  "edits":[
    {"op":"add_block","kind":"breakdown|metric_table|chart|numbercard","metric":지표|null,"metrics":[지표],"compare":[비교 기준],"chart_type":"bar|line|donut|waterfall"|null,"limit":정수|null,"months":정수|null,"orgs":[조직 이름],"after":블록 id|null},
    {"op":"remove_block","target":{"id":블록 id|null,"kind":"title|paragraph|table|footnote|list"|null,"words":"블록을 가리키는 말"|null}},
@@ -43,7 +43,8 @@ SYSTEM = """당신은 보고서 편집·조회 도우미다. 사용자 요청을
  "unknown_metric":DB 지표 사전에 없는 지표 이름|null}
 규칙:
 - 조회(질문)면 intent=query 와 query 를 채운다. 11월처럼 월만 말하면 month 만 채운다. 조직 이름은 orgs 에 있는 그대로. 지표를 말하지 않은 조직 순위는 metric=영업이익.
-  value=한 지표의 값, org_rank=조직별 지표 순위, gap_orgs=Gap 이 걸린 조직 목록, org_explanation=한 조직의 소명 내용, unexplained=소명이 없는 변경(Gap) 항목.
+  value=한 지표의 값, org_rank=조직별 지표 순위, gap_orgs=Gap 이 걸린 조직 목록, org_explanation=한 조직의 소명 내용, unexplained=소명이 없는 변경(Gap) 항목, gap_count=Gap 전체 건수와 종류별 건수("몇 건", "종류별"), org_gap_count=조직별 Gap 건수 순위, explanation_count=소명 건수·상태별, cost_top=영업비용(또는 매출 metric) 상위 항목(limit 개, org 가 있으면 그 조직만), monthly=한 지표의 월별 추이("월별·추이·흐름"을 물을 때만; metric, org 선택; 월 단위만, 주별·일별은 no_data). 특정 월 하나의 값을 물으면(예: "11월 영업이익은?") 반드시 value 이고 month 를 채운다.
+  "Gap 은 몇 건"처럼 건수를 묻는 질문은 gap_orgs 가 아니라 gap_count 로 한다.
 - 편집이면 intent=edit 와 edits. "본문"은 paragraph, "제목"은 title, "표"는 table. 블록을 가리킬 때는 가능하면 blocks 의 id 로 쓴다. 블록 종류 전체에 적용하면 kind 만 쓴다.
   비용 상세·매출 상세 표 추가=add_block kind=breakdown(metric=영업비용|매출). 지표별 표 추가=add_block kind=metric_table. 그래프·차트 추가=add_block kind=chart(막대=bar, 선·추이=line(months=개월 수), 도넛=donut, 워터폴=waterfall, 조직별은 orgs 비움=전사 상위 limit개, 특정 조직만이면 orgs). 숫자 카드·KPI 카드 추가=add_block kind=numbercard(metrics, compare). 표에 비교 열 추가=add_column.
 - 숫자 값을 바꾸라는 요청, 데이터를 지어내라는 요청은 intent=refuse 와 message.
@@ -159,6 +160,14 @@ def interpret(request: str, base: dict, blocks: list[dict]) -> dict:
     why = refuse_number_change(request, metrics)
     if why:
         return res("refuse", why)
+    gran = re.search(r"주별|주간|일별|일간|분기별|시간별|요일별", request)
+    if gran:                                                      # DB 는 월 단위만 있다: 더 잘게 쪼갠 요청은 AI 에 보내기 전에 '데이터 없음'
+        return res("no_data", f"데이터 없음 — “{gran.group(0)}” 단위 값은 없습니다. 조회 DB 는 월 단위로만 적재돼 있습니다.")
+    own = re.search(r"(우리|내|저희)\s*(사업부|조직|팀|부서)", request)
+    if own and not D.match_org(request, info["orgs"]):             # '우리 사업부'가 어느 조직인지 DB 에 없다: 추측해서 답하지 않고 되묻는다
+        return res("clarify", "어느 조직(사업부)인지 알려 주세요. 예: " + ", ".join(o["name"] for o in info["orgs"][:3]) + " …")
+    if re.search(r"(지난달|전월|지난 달|이전)\S*\s*(이랑|와|과|하고)?\s*비교", request) and not any(m in request for m in metrics):
+        return res("clarify", f"무엇을 비교할까요? 지표를 알려 주세요(예: {', '.join(metrics)}).")
     have = {(m["year"], m["month"]) for m in info["months"]}
     context = {"base": base, "metrics": metrics, "compare_bases": list(COMPARES), "orgs": [o["name"] for o in info["orgs"]][:60],
                "blocks": [{"id": b["id"], "kind": b["kind"], "label": b["label"]} for b in blocks],
@@ -181,7 +190,10 @@ def interpret(request: str, base: dict, blocks: list[dict]) -> dict:
     if intent == "unknown":
         return res("unknown", msg or "무슨 요청인지 알 수 없습니다(모름). 예: 영업이익 조회, 표 추가, 글꼴·크기 변경.")
     if intent == "query":
-        return _run_query(out.get("query") or {}, base, info, metrics, have, res)
+        q = dict(out.get("query") or {})
+        if q.get("type") == "monthly" and not re.search(r"월별|추이|추세|매월|월간|흐름|변화|트렌드", request):     # '11월 전사 영업이익은?' 같은 한 달 질문을 월별 추이로 오해하지 않는다
+            q["type"] = "value"
+        return _run_query(q, base, info, metrics, have, res)
     return _plan_edits(out.get("edits"), blocks, metrics, res, request, info["orgs"])
 
 
@@ -198,7 +210,7 @@ def _run_query(q, base, info, metrics, have, res):
         avail = ", ".join("%d.%02d" % (m["year"], m["month"]) for m in info["months"])
         return res("no_data", f"데이터 없음 — {b['year']}년 {b['month']}월은 조회 DB에 없습니다(있는 월: {avail}).")
     metric = q.get("metric") or "영업이익"
-    if typ in ("value", "org_rank") and metric not in D.METRIC_COL:
+    if typ in ("value", "org_rank", "monthly") and metric not in D.METRIC_COL:
         return res("no_data", f"데이터 없음 — “{metric}”는 조회 DB 지표 사전({', '.join(metrics)})에 없습니다.")
     org = None
     if q.get("org"):
@@ -212,13 +224,23 @@ def _run_query(q, base, info, metrics, have, res):
         r = D.q_org_rank(b, metric, "asc" if q.get("order") == "asc" else "desc", q.get("limit") if isinstance(q.get("limit"), int) and 0 < q["limit"] <= 50 else None)
     elif typ == "gap_orgs":
         r = D.q_gap_orgs(b)
+    elif typ == "gap_count":
+        r = D.q_gap_count(b)
+    elif typ == "org_gap_count":
+        r = D.q_org_gap_count(b, q.get("limit") if isinstance(q.get("limit"), int) and 0 < q["limit"] <= 50 else None)
+    elif typ == "explanation_count":
+        r = D.q_explanation_count(b)
+    elif typ == "cost_top":
+        r = D.q_cost_top(b, q.get("limit") if isinstance(q.get("limit"), int) and 0 < q["limit"] <= 50 else None, org, metric if metric in ("매출", "영업비용") else "영업비용")
+    elif typ == "monthly":
+        r = D.q_monthly(b, metric, org)
     elif typ == "org_explanation":
         if org is None:
             return res("clarify", "어느 조직의 소명을 볼까요? 조직 이름을 알려 주세요.")
         r = D.q_org_explanation(b, org)
     else:
         r = D.q_unexplained(b)
-    qspec = {"type": typ, "metric": metric if typ in ("value", "org_rank") else None, "org": org, "year": b["year"], "month": b["month"], "compare": cmp_,
+    qspec = {"type": typ, "metric": metric if typ in ("value", "org_rank", "monthly", "cost_top") else None, "org": org, "year": b["year"], "month": b["month"], "compare": cmp_,
              "order": "asc" if q.get("order") == "asc" else "desc", "limit": q.get("limit") if isinstance(q.get("limit"), int) and 0 < q["limit"] <= 50 else None}
     return res("answer", r["text"], table=r.get("table"), qspec=qspec)
 

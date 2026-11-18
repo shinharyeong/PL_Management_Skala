@@ -5,20 +5,18 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
-:root{/* 팀 Vue 앱(frontend/src/styles.css)의 토큰을 그대로 사용: canvas #f5f4f0 · ink #16181d · muted #5f636b · line #e7e4de · gold #a9875b · gold-ink #75552f · sidebar #14171e · 글꼴 Noto Sans KR · 버튼/배지/패널 모양 */
---bg:#f5f4f0;--card:#fff;--line:#e7e4de;--line2:#efeeea;--ink:#16181d;--sub:#5f636b;--gold:#a9875b;--gold-ink:#75552f;--sidebar:#14171e;
---blue:#a9875b;--blue-bg:#f4efe7;--blue-d:#75552f;--warn:#d9a441;--warn-bg:#f8f0df;--warn-chip:#f8f0df;--warn-ink:#8b641d;--ok:#216943;--ok-bg:#e8f4ec;--red:#b83c35;--red-bg:#fbe9e7;--gray:#d9cdb9}
+:root{--bg:#F6F7F9;--card:#fff;--line:#E3E6EB;--line2:#EEF0F3;--ink:#15171C;--sub:#5B616E;--blue:#2F5BD8;--blue-bg:#E8EEFC;--blue-d:#1E3F9E;--warn:#E0B420;--warn-bg:#FFF8DD;--warn-chip:#FFF1C2;--warn-ink:#6B5200;--ok:#1F7A4D;--gray:#C9CFD8}
 *{box-sizing:border-box}html,body{margin:0}
 body{font-family:'Noto Sans KR',-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;background:var(--bg);color:var(--ink);font-size:14px;min-height:100vh}
 header.top{height:64px;padding:0 32px;padding-right:150px;display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-.brand{display:flex;align-items:center;gap:12px}.brand b{font-size:16px}.brand::before{content:'';display:inline-block;width:24px;height:24px;border-radius:6px;background:var(--gold);flex:none}.brand span{font-size:13px;color:var(--sub)}
+.brand{display:flex;align-items:center;gap:12px}.brand b{font-size:18px}.brand span{font-size:13px;color:var(--sub)}
 .steps{display:flex;gap:8px;font-size:13px}
 .steps span{padding:6px 12px;border-radius:999px;color:#9AA0AC}
-.steps span.on{background:var(--sidebar);color:#fff;font-weight:700}.steps span.done{background:var(--blue-bg);color:var(--blue-d)}
+.steps span.on{background:var(--ink);color:#fff;font-weight:500}.steps span.done{background:var(--blue-bg);color:var(--blue-d)}
 button{font:inherit;cursor:pointer}
-.btn{height:36px;padding:0 16px;border:1px solid var(--gold);border-radius:8px;background:var(--gold);color:#14171e;font-weight:700;font-size:12px;line-height:1.5;transition:background .15s,border-color .15s}.btn:hover:not(:disabled){background:#b79568}
-.btn:disabled{background:#efeeea;border-color:#efeeea;color:#777a80;font-weight:400;cursor:not-allowed}
-.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line);font-weight:500}.btn.ghost:hover:not(:disabled){background:#faf9f6;border-color:#bda889}
+.btn{height:40px;padding:0 18px;border:0;border-radius:8px;background:var(--ink);color:#fff;font-weight:500}
+.btn:disabled{background:#B9BEC8;cursor:not-allowed}
+.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
 .msg{margin:16px 32px 0;padding:10px 14px;border-radius:8px;background:var(--warn-bg);color:var(--warn-ink);font-size:13px}
 /* 1 시작 */
 .start{padding:32px;display:grid;grid-template-columns:1.1fr 1fr;gap:24px;max-width:1180px;margin:0 auto}
@@ -36,18 +34,19 @@ button{font:inherit;cursor:pointer}
 .srv{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--sub);justify-content:center;margin:0 0 24px}
 .srv input{width:220px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;font:inherit}
 /* 2 구성 확인 */
-.work{display:grid;grid-template-columns:minmax(300px,1fr) 1.05fr 320px;gap:20px;padding:24px 32px;align-items:start}
+.work{display:grid;grid-template-columns:minmax(380px,1.2fr) 1fr 320px;gap:20px;padding:24px 32px;align-items:start}
 @media(max-width:1100px){.work{grid-template-columns:1fr}}
 .panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px}
 .panel .cap{font-size:13px;color:var(--sub)}
 .pages{display:flex;flex-direction:column;gap:12px;max-height:calc(100vh - 170px);overflow:auto}
 .page{position:relative;border:1px solid var(--line2);border-radius:8px;overflow:hidden;background:#fff}
 .page img{display:block;width:100%}
-.box{position:absolute;border:2px solid var(--blue);border-radius:4px;cursor:pointer;background:rgba(169,135,91,.08)}
-.box.rev{border-color:var(--warn);background:rgba(217,164,65,.25)}
+.box{position:absolute;border:1.5px solid var(--blue);border-radius:3px;cursor:pointer;background:rgba(47,91,216,.04)}
+.box.rev{border-color:var(--warn);background:rgba(255,214,0,.2)}
 .box.res{border-color:var(--ok);background:rgba(31,122,77,.06)}
-.box.sel{outline:3px solid var(--ink)}
-.box i{position:absolute;left:-2px;top:-17px;font-style:normal;font-size:11px;font-weight:700;background:var(--ink);color:#fff;border-radius:4px;padding:0 5px;line-height:16px}
+.box.sel{outline:2px solid var(--ink)}
+.box i{position:absolute;left:-24px;top:0;font-style:normal;font-size:11px;font-weight:700;background:var(--ink);color:#fff;border-radius:50%;width:18px;height:18px;line-height:18px;text-align:center;padding:0}
+.work>:first-child{position:sticky;top:76px}
 .mid{display:flex;flex-direction:column;gap:9px;max-height:calc(100vh - 140px);overflow:auto}
 .legend{display:flex;gap:6px;font-size:12px;flex-wrap:wrap}
 .legend span{padding:4px 10px;border-radius:6px}
@@ -63,6 +62,7 @@ button{font:inherit;cursor:pointer}
 .edit label.l{font-size:12px;color:var(--sub);display:block;margin-bottom:4px}
 .edit select,.edit input[type=text]{width:100%;height:38px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit;background:#fff}
 .hint{font-size:12px;color:var(--sub);background:#FBFBFC;border:1px solid var(--line2);border-radius:8px;padding:8px 10px;line-height:1.5}
+.okbox{font-size:12px;color:var(--ok);background:var(--ok-bg);border-radius:8px;padding:8px 10px}.acts{display:flex;gap:8px}.mmbox{font-size:12px;background:#fff;border:1px solid var(--warn);border-radius:8px;padding:8px 10px;line-height:1.6;color:var(--ink)}.mmbox b{display:block;margin-bottom:2px;color:var(--warn-ink)}.guessbox{font-size:12px;background:var(--blue-bg);color:var(--blue-d);border-radius:8px;padding:8px 10px;line-height:1.5}.dropbar{font-size:12px;display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px dashed var(--line);border-radius:8px;padding:6px 10px;margin-bottom:8px;color:var(--sub)}
 .reason{font-size:12px;background:var(--warn-chip);color:var(--warn-ink);border-radius:8px;padding:8px 10px;line-height:1.5}
 .opts{display:flex;flex-direction:column;gap:8px}
 .opts label{display:flex;gap:8px;align-items:flex-start;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer}
@@ -79,11 +79,11 @@ button{font:inherit;cursor:pointer}
 .mbtn.none{background:#FBFBFC;color:#9AA0AC}.mbtn.prov small{color:var(--warn-ink)}.mbtn.on{outline:3px solid var(--ink)}
 .mbtn.def small{color:var(--ok);font-weight:700}
 .tbl{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff}
-.tr{display:grid;grid-template-columns:1.2fr 1.3fr 1fr 1.1fr .9fr;gap:8px;padding:10px 14px;border-top:1px solid var(--line2);align-items:center;font-size:13px;text-align:left;width:100%;background:#fff;border-left:0;border-right:0;border-bottom:0}
+.tr{display:grid;grid-template-columns:1.2fr 1.3fr 1fr 1.1fr;gap:8px;padding:10px 14px;border-top:1px solid var(--line2);align-items:center;font-size:13px;text-align:left;width:100%;background:#fff;border-left:0;border-right:0;border-bottom:0}
 .tr.th{background:#FBFBFC;color:var(--sub);font-size:12px;border-top:0}
 .tr.sel{outline:3px solid var(--ink);outline-offset:-3px}
 .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
-.tag.ok{background:var(--ok-bg);color:var(--ok)}.tag.prov{background:var(--warn-chip);color:var(--warn-ink)}.tag.none{background:var(--red-bg);color:var(--red)}.tag.dash{color:var(--sub)}
+.tag.ok{background:#E3F4EA;color:var(--ok)}.tag.prov{background:var(--warn-chip);color:var(--warn-ink)}.tag.none{background:#FBE3E3;color:#9B2C2C}.tag.dash{color:var(--sub)}
 .pctl{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:#FBFBFC;border-top:1px solid var(--line2);padding:10px 14px;font-size:13px}
 .pctl button{height:32px;padding:0 12px;border:1px solid var(--line);background:#fff;border-radius:8px}.pctl button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 .pctl input{width:70px;height:32px;border:1px solid var(--line);border-radius:8px;padding:0 8px}
@@ -122,12 +122,21 @@ button{font:inherit;cursor:pointer}
 .ff-gothic{font-family:'Noto Sans KR',sans-serif}.ff-serif{font-family:'Noto Serif KR','Noto Sans KR',serif}
 .rb table{border-collapse:collapse;margin-top:4px}.rb td,.rb th{border:1px solid var(--line);padding:4px 12px;font-size:inherit}.rb td.num{text-align:right}
 .rb td.miss{background:var(--warn-chip);color:var(--warn-ink)}
+.ii{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:6px;border:1px solid var(--blue);border-radius:50%;color:var(--blue-d);background:#fff;font:italic 700 10px/1 Georgia,serif;cursor:help;vertical-align:middle;position:relative}
+.ii:hover,.ii.open{background:var(--blue);color:#fff}
+.iipop{position:fixed;z-index:60;max-width:320px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.14);padding:10px 12px;font:400 12px/1.55 'Noto Sans KR',sans-serif;color:var(--ink);font-style:normal}
+.iipop b{display:block;margin-bottom:3px}.iipop ul{margin:4px 0 0;padding-left:16px}
+#doc.exporting .ii,.rb.exporting .ii,#doc.exporting .cbtn,.rb.exporting .cbtn{display:none!important}
 .mv{background:var(--warn-chip);color:var(--warn-ink);border-radius:4px;padding:0 3px}
 .empty5{border:1.5px dashed var(--gray);border-radius:8px;padding:12px;color:var(--sub);font-size:13px}
 .dropped{font-size:12px;color:#9AA0AC;text-decoration:line-through;padding:2px 8px}
 .gd .row{display:flex;justify-content:space-between;gap:12px}.gd .sub{margin-left:18px;font-size:.9em;color:var(--sub)}
-.aip{gap:10px}.aibox{border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.55;background:#FBFBFC}
-.aibox.me{background:var(--blue-bg);border-color:transparent}
+.aip{gap:10px;position:sticky;top:76px;height:calc(100vh - 110px);display:flex;flex-direction:column;min-height:0}
+#aimsgs{flex:1;min-height:0;overflow-y:auto;padding:2px 2px 6px;scroll-behavior:smooth}
+#aimsgs:empty::before{content:'질문이나 요청을 입력하면 여기에 대화가 쌓입니다.';color:var(--sub);font-size:12px;margin:auto;text-align:center;padding:24px 8px}
+.aibox{border:1px solid var(--line);border-radius:14px 14px 14px 4px;padding:10px 12px;font-size:13px;line-height:1.55;background:#FBFBFC;align-self:flex-start;max-width:96%}
+.aibox.me{background:var(--blue);color:#fff;border-color:transparent;border-radius:14px 14px 4px 14px;align-self:flex-end;max-width:85%}
+.aiin{flex:none;padding-top:8px;border-top:1px solid var(--line2)}
 .aiin{display:flex;gap:8px}.aiin input{flex:1;height:40px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit}
 .aiin button{width:40px;height:40px;border:0;border-radius:8px;background:var(--ink);color:#fff;font-size:18px}
 .chips{display:flex;gap:6px;flex-wrap:wrap}.chips button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 10px;font-size:12px}
@@ -138,7 +147,7 @@ button{font:inherit;cursor:pointer}
 .rb{margin:0 4px;padding:8px 10px 8px 34px;position:relative;min-width:140px;min-height:44px;max-width:100%;box-sizing:border-box}
 .rb .rbody{min-width:0}
 .rb[data-sized]{overflow:auto}
-.rz{position:absolute;right:2px;bottom:2px;width:16px;height:16px;cursor:nwse-resize;display:none;z-index:5;touch-action:none;background:linear-gradient(135deg,transparent 50%,var(--gold) 50%,var(--gold) 58%,transparent 58%,transparent 72%,var(--gold) 72%,var(--gold) 80%,transparent 80%)}.rb:hover .rz,.rb.sel .rz{display:block}
+.rz{position:absolute;right:2px;bottom:2px;width:16px;height:16px;cursor:nwse-resize;display:none;z-index:5;touch-action:none;background:linear-gradient(135deg,transparent 50%,var(--blue) 50%,var(--blue) 58%,transparent 58%,transparent 72%,var(--blue) 72%,var(--blue) 80%,transparent 80%)}.rb:hover .rz,.rb.sel .rz{display:block}
 .rb .hd{position:absolute;left:4px;top:6px;width:24px;height:28px;display:none;align-items:center;justify-content:center;cursor:grab;color:var(--sub);font-size:14px;letter-spacing:-3px;background:#fff;border:1px solid var(--line);border-radius:6px;user-select:none;z-index:2}
 .rb:hover .hd,.rb.sel .hd{display:flex}
 .rb .bt{position:absolute;right:6px;top:4px;display:none;gap:4px;z-index:2}
@@ -148,10 +157,10 @@ button{font:inherit;cursor:pointer}
 .rb.set{border-color:var(--ink)}
 .rb.tgt{border:2px dashed var(--blue)}
 .rb.dragging{opacity:.4}
-.rb.drop-above::before,.rb.drop-below::after{content:"";position:absolute;background:var(--gold);border-radius:2px;z-index:3}
+.rb.drop-above::before,.rb.drop-below::after{content:"";position:absolute;background:var(--blue);border-radius:2px;z-index:3}
 .rb.drop-above::before{left:0;right:0;top:0;height:3px}.rb.drop-below::after{left:0;right:0;bottom:0;height:3px}
 .rb.side.drop-above::before{left:0;top:0;bottom:0;right:auto;width:3px;height:auto}.rb.side.drop-below::after{right:0;top:0;bottom:0;left:auto;width:3px;height:auto}
-.plus{position:absolute;display:none;width:24px;height:24px;border-radius:50%;border:1px solid var(--gold);background:#fff;color:var(--gold-ink);font-size:16px;line-height:1;cursor:pointer;z-index:4;padding:0}
+.plus{position:absolute;display:none;width:24px;height:24px;border-radius:50%;border:1px solid var(--blue);background:#fff;color:var(--blue-d);font-size:16px;line-height:1;cursor:pointer;z-index:4;padding:0}
 .rb:hover .plus,.rb.sel .plus{display:block}
 .rb .plus.pb{left:50%;bottom:2px;transform:translateX(-50%)}.rb .plus.pt{left:50%;top:2px;transform:translateX(-50%)}
 .addmenu{position:absolute;z-index:40;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 20px rgba(20,23,30,.12);padding:6px;display:flex;flex-direction:column;min-width:150px}
@@ -161,15 +170,21 @@ button{font:inherit;cursor:pointer}
 .frow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px}.frow select{height:32px;border:1px solid var(--line);border-radius:8px;padding:0 6px}
 .arow{display:flex;gap:6px}.arow select{flex:1;height:32px;border:1px solid var(--line);border-radius:8px;padding:0 6px}
 .dl{display:flex;flex-direction:column;gap:4px}.dli{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:13px;background:#fff}
-.dli.over{border-color:var(--gold);background:var(--blue-bg)}.dli .lh{cursor:grab;color:var(--sub);letter-spacing:-3px}.dli button{border:0;background:transparent;font-size:16px;color:var(--sub)}
+.dli.over{border-color:var(--blue);background:var(--blue-bg)}.dli .lh{cursor:grab;color:var(--sub);letter-spacing:-3px}.dli button{border:0;background:transparent;font-size:16px;color:var(--sub)}
 .fbar input[type=color]{width:34px;height:34px;border:1px solid var(--line);border-radius:8px;padding:2px;background:#fff}
-.fbar .tb.on{background:var(--sidebar);color:#fff}
-.ed{outline:none;min-height:1em;border-radius:4px;white-space:pre-wrap}.ed:hover{background:rgba(169,135,91,.08)}.ed:focus{background:#fffdf7;box-shadow:0 0 0 2px var(--gold)}
-.numlock{background:var(--blue-bg);color:var(--gold-ink);border-radius:4px;padding:0 3px;cursor:not-allowed;user-select:none}
+.fbar .tb.on{background:var(--ink);color:#fff}
+.ed{outline:none;min-height:1em;border-radius:4px;white-space:pre-wrap}.ed:hover{background:rgba(47,91,216,.08)}.ed:focus{background:#f7f9ff;box-shadow:0 0 0 2px var(--blue)}
+.numlock{background:rgba(47,91,216,.14);color:var(--blue-d);font-weight:600;border-radius:4px;padding:0 3px;cursor:not-allowed;user-select:none}
+.dv{background:rgba(47,91,216,.13);color:var(--blue-d);font-weight:600;border-radius:3px;padding:0 3px}
+.rb td.dv{background:rgba(47,91,216,.10);border-radius:0;padding:4px 12px}.rb td.dv.long{font-weight:400}
+.ncard .nv{color:var(--blue-d)}
+.hl-legend{display:flex;gap:14px;align-items:center;font-size:12px;color:var(--sub);margin:0 0 8px;flex-wrap:wrap}.hl-legend .sw{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-3px;margin-right:4px}
+#doc.hl-off .dv,#doc.hl-off .numlock{background:transparent!important;color:inherit!important;font-weight:inherit!important}
+.exporting .dv,.exporting .numlock,#doc.exporting .dv,#doc.exporting .numlock{background:transparent!important;color:inherit!important;font-weight:inherit!important}
 .bul::before{content:"• "}
 .barrow{display:flex;align-items:center;gap:8px;margin:3px 0;font-size:.9em}.barrow .bn{width:96px;flex:none}.barrow .bar{height:14px;border-radius:3px}
 .chartsvg{max-width:100%}
-.ncards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}.ncard{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff}.ncard .nv{font-size:1.8em;font-weight:700;color:var(--sidebar);margin:4px 0}.ncard .nv.miss{color:var(--warn-ink);font-size:1em}.ncard .nd{font-size:.85em;color:var(--sub)}
+.ncards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}.ncard{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff}.ncard .nv{font-size:1.8em;font-weight:700;color:var(--ink);margin:4px 0}.ncard .nv.miss{color:var(--warn-ink);font-size:1em}.ncard .nd{font-size:.85em;color:var(--sub)}
 .scopebox{max-height:140px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:13px;display:flex;flex-direction:column;gap:3px}
 .rb.exporting{overflow:visible}.rb.exporting .hd,.rb.exporting .bt,.rb.exporting .plus{display:none!important}#doc.exporting .hd,#doc.exporting .bt,#doc.exporting .plus{display:none!important}
 .mchart{border:1px dashed var(--gray);border-radius:8px;padding:8px;background:#fff;margin-top:6px;max-height:260px;overflow:auto}
@@ -207,9 +222,7 @@ button{font:inherit;cursor:pointer}
         <small>글자 PDF 권장 (스캔본은 확인할 곳이 늘어남)</small>
         <input type="file" id="file" accept="application/pdf,image/png,image/jpeg" hidden>
       </label>
-      <label class="chk"><input type="checkbox" id="useai" checked>AI 로 구성 읽기 — 처음 보는 양식에 필요 (OpenAI 호출·하루 상한 적용, 키 없으면 코드 규칙)</label>
-      <label class="chk"><input type="checkbox" id="rawimg">글자가 없는 그림(스캔본·캡처 PNG/JPG)도 AI 로 읽기 — 숫자를 가릴 수 없어 <b>숫자가 그대로 전송됩니다</b></label>
-      <label class="chk dis"><input type="checkbox" checked disabled>숫자 가리기 — 항상 적용(추출 결과에 숫자 값이 없음)</label>
+      <label class="chk"><input type="checkbox" id="noai">AI 끄기 <span class="cap">(데모용 · 체크하면 OpenAI 를 쓰지 않고 코드 규칙으로만 읽습니다. 글자가 있는 PDF 는 숫자를 가려서 보내고, PNG/JPG 그림은 숫자를 가릴 수 없어 그대로 전송됩니다)</span></label>
       <div><button class="btn" id="go" disabled>구성 추출</button></div>
     </div>
     <div class="card">
@@ -230,7 +243,7 @@ button{font:inherit;cursor:pointer}
     <div style="display:flex;gap:8px"><button class="btn ghost" id="back">← 다시 올리기</button><button class="btn" id="confirm">구성 확정 → 데이터 선택</button></div>
   </header>
   <div class="work">
-    <div class="panel"><div class="cap">원본 PDF (숫자는 추출하지 않음 · 박스를 누르면 오른쪽에서 고칠 수 있음)</div><div class="pages" id="pages"></div></div>
+    <div class="panel"><div class="cap">원본 PDF · 박스를 누르면 오른쪽에서 고칩니다</div><div class="pages" id="pages"></div></div>
     <div class="mid">
       <div class="legend"><span style="background:var(--warn-chip);color:var(--warn-ink)">노란색 = 시스템 검사에서 확인 필요</span><span style="background:var(--blue-bg);color:var(--blue-d)">블록을 눌러 오른쪽에서 고치기</span></div>
       <div id="list" style="display:flex;flex-direction:column;gap:9px"></div>
@@ -280,7 +293,7 @@ button{font:inherit;cursor:pointer}
 <section id="s5" hidden>
   <header class="top" style="position:static;border-top:1px solid var(--line)">
     <div class="brand"><b>보고서</b><span id="sum5"></span></div>
-    <div style="display:flex;gap:8px"><button class="btn ghost" id="back5">← 소명 분류</button><button class="btn ghost" id="undo5">되돌리기</button><button class="btn" id="sent5">보고 문장 생성(AI)</button><button class="btn ghost" id="expng" type="button">전체 PNG</button><button class="btn ghost" id="expdf" type="button">전체 PDF</button><button class="btn ghost" id="print5">인쇄</button><button class="btn ghost" id="save5">틀 저장</button></div>
+    <div style="display:flex;gap:8px"><button class="btn ghost" id="back5">← 소명 분류</button><button class="btn ghost" id="undo5">되돌리기</button><button class="btn" id="sent5" title="계산된 숫자를 바탕으로 AI 가 보고용 요약 문장 3~5개를 써서 보고서에 한 블록으로 넣습니다(숫자는 코드 계산값만 사용)">요약 문장 넣기(AI)</button><button class="btn ghost" id="expng" type="button">전체 PNG</button><button class="btn ghost" id="expdf" type="button">전체 PDF</button><button class="btn ghost" id="print5">인쇄</button><button class="btn ghost" id="save5">틀 저장</button></div>
   </header>
   <div class="fbar" id="fbar">
     <span id="fsel" style="font-weight:700">선택: 없음</span>
@@ -311,8 +324,20 @@ const $ = id => document.getElementById(id);
 const h = (tag, attrs, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs || {})) { if (k === 'class') e.className = v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (k === 'value') e.value = v; else if (v !== false && v != null) e.setAttribute(k, v); } for (const c of kids.flat()) if (c != null) e.append(c.nodeType ? c : document.createTextNode(String(c))); return e; };
 const CIRC = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
 const KIND_LABEL = {title: '제목', paragraph: '문장', table: '표', list: '계층 목록', footnote: '각주', chart: '차트', numbercard: '숫자 카드'};
+const REASON_HELP = {
+  kind_ambiguous: '블록 종류(표·문장·목록 등)를 규칙과 모델이 확신하지 못했습니다. 종류를 골라 주세요.',
+  table_alignment: '표의 열이 어느 머리칸 아래인지 위치만으로 확정하기 어렵습니다(합쳐진 칸 등).',
+  footnote_link: '각주(※)가 가리키는 표·문장을 모델과 위치 추측이 서로 다르게 짚었거나 찾지 못했습니다.',
+  ai_rule_mismatch: '그림을 읽은 모델과 PDF 글자 규칙이 서로 다른 결과를 냈습니다. 둘 중 맞는 쪽을 확인하세요.',
+  vlm_uncertain: '모델이 이 블록을 읽으며 스스로 “애매하다”고 표시했습니다(글씨가 작거나 겹침 등).',
+  text_mismatch: '모델이 그림에서 읽은 글자가 PDF 안에 들어 있는 글자(글자 PDF 일 때만 있음)에서 찾아지지 않습니다. 오독이거나 PDF 글자와 표기가 달라서 생깁니다. 그림만 있는 PDF 는 PDF 글자가 없어 이 대조 자체를 하지 않습니다.',
+  metric_unknown: '행·항목 이름이 조회 DB 지표 사전(매출·영업비용·영업이익 등)에 없습니다. 3·5단계에서 데이터로 채울 수 없습니다.',
+  scope_unknown: '조직·범위 이름이 DB 조직 목록에 없습니다.',
+  date_semantics: '‘전월’·‘26.11월’ 같은 날짜·비교 표현이 기준 월 기준으로 무엇을 뜻하는지 확정하지 못했습니다.',
+  vlm_missed: '모델 결과에는 없는데 PDF 글자 규칙으로는 뽑힌 제목·문장·각주를 코드가 채워 넣었습니다. 모델이 건너뛴 글자일 수 있어 실제로 필요한 블록인지 확인하세요.',
+  table_shape: '같은 페이지에서 모델이 읽은 표와 PDF 글자로 규칙이 뽑은 표를 칸 글자가 겹치는 정도로 짝지은 뒤 행·열 개수를 비교했습니다. 개수가 다르면 줄이 빠진 쪽을 의심합니다(모델이 줄을 빠뜨렸으면 규칙 표를 쓰고, 반대면 모델 표를 두고 확인을 요청).'};
 const REASON = {kind_ambiguous: '종류 애매', table_alignment: '표 열 정렬 불확실', footnote_link: '각주 연결 불명', ai_rule_mismatch: 'AI·규칙 판단 다름', vlm_uncertain: '모델이 애매하다고 함', text_mismatch: 'PDF 글자와 대조 실패', metric_unknown: '지표 사전에 없음', scope_unknown: '범위가 조직에 없음', date_semantics: '날짜 해석', vlm_missed: 'VLM 이 놓쳐 규칙으로 채움', table_shape: '표 모양이 PDF 글자와 다름'};
-const MISS = [['drop', '빼기', '보고서에서 완전히 제거'], ['show_empty', '데이터 없음으로 두기', '자리는 두고 "데이터 없음" 표시'], ['keep', '그대로 두기', '원본 양식 모양 그대로']];
+const MISS = [['guess', 'AI 가 추측', '표가 무엇인지 AI 가 DB 지표에 맞춰 추측합니다(추측은 보고서에서 ⓘ 로 표시)'], ['drop', '빼기', '보고서에서 이 블록을 뺍니다']];
 const mk = t => String(t || '').replace(/\{수치\}/g, '███');
 let R = null, B = [], SEL = null, FILE = null;
 
@@ -328,8 +353,8 @@ $('file').addEventListener('change', e => pick(e.target.files[0]));
 $('drop').addEventListener('drop', e => pick(e.dataTransfer.files[0]));
 $('go').addEventListener('click', async () => {
   if (!FILE) return;
-  $('go').disabled = true; $('go').textContent = $('useai').checked ? 'AI 로 읽는 중…' : '추출 중…'; warn('');
-  const fd = new FormData(); fd.append('file', FILE); fd.append('ai', $('useai').checked ? 'true' : 'false'); fd.append('raw_image', $('rawimg').checked ? 'true' : 'false');
+  $('go').disabled = true; $('go').textContent = !$('noai').checked ? 'AI 로 읽는 중…' : '추출 중…'; warn('');
+  const fd = new FormData(); fd.append('file', FILE); fd.append('ai', $('noai').checked ? 'false' : 'true'); fd.append('raw_image', !$('noai').checked && FILE && /^image\//.test(FILE.type || '') ? 'true' : 'false');
   try {
     const res = await fetch($('srv').value.replace(/\/$/, '') + '/v1/dev/pdf-structure', {method: 'POST', body: fd});
     if (res.status === 404) throw new Error('서버가 개발 플래그 없이 켜져 있습니다. AI_PDF_DEV=1 로 다시 켜세요.');
@@ -346,8 +371,8 @@ $('back').addEventListener('click', () => { $('s2').hidden = true; $('s1').hidde
 // ----- 2 구성 확인 -----
 function load(j) {
   R = j;
-  B = j.blocks.map((b, i) => ({...b, no: i, kind_now: b.kind, missing: 'show_empty', resolved: b.needs_review.length === 0, metric: '', link_now: b.link ? b.link.to : ''}));
-  SEL = null; $('s1').hidden = true; $('s2').hidden = false; steps(2); render();
+  B = j.blocks.map((b, i) => ({...b, no: i, kind_now: b.kind, missing: 'guess', resolved: b.needs_review.length === 0, metric: '', link_now: b.link ? b.link.to : ''}));
+  SEL = null; DROPPED = []; $('s1').hidden = true; $('s2').hidden = false; steps(2); render();
   const first = B.find(b => !b.resolved); if (first) select(first.id, true);
   const v = j.vlm || {}, cv = v.coverage;
   $('vlm').textContent = `읽은 방식: ${v.mode === 'vlm' ? `VLM(그림 읽기${v.model ? ' · ' + v.model : ''}) 주역 + 코드 대조` : v.mode === 'ai' ? 'AI(줄 묶기) + 코드 검사' : '코드 규칙'} — ${v.note || ''}` +
@@ -389,7 +414,7 @@ function render() {
     return w;
   }));
   // 가운데: 블록 목록
-  $('list').replaceChildren(...B.map(b => {
+  $('list').replaceChildren(...(DROPPED.length ? [h('div', {class: 'dropbar'}, `뺀 블록 ${DROPPED.length}개`, h('button', {type: 'button', class: 'btn ghost', style: 'height:26px;padding:0 10px', onclick: undoDrop}, '되돌리기'))] : []), ...B.map(b => {
     const rev = !b.resolved;
     const flag = b.needs_review.length ? b.needs_review.map(f => REASON[f.code] || f.code).join(' · ') : '';
     const st = rev ? h('span', {class: 'st rev'}, '확인 필요 · ' + flag) : h('span', {class: 'st ok'}, '확인됨');
@@ -404,25 +429,47 @@ function select(id, scrollList) {
   const el = document.querySelector((scrollList ? '.blk' : '.box') + `[data-id="${id}"]`);
   if (el) el.scrollIntoView({block: 'center', behavior: 'smooth'});
 }
+let DROPPED = [];
+function dropBlock(b) {
+  const i = B.indexOf(b); if (i < 0) return;
+  DROPPED.push({b, i}); B.splice(i, 1); B.forEach((x, k) => { x.no = k; }); SEL = null; render();
+}
+function undoDrop() {
+  const d = DROPPED.pop(); if (!d) return;
+  B.splice(Math.min(d.i, B.length), 0, d.b); B.forEach((x, k) => { x.no = k; }); SEL = d.b.id; render();
+}
+function blockText(b) { return b.text || (b.items ? b.items.map(i => i.text).join(' ') : '') || (b.table ? b.table.rows.map(r => r.map(c => c.text).join(' ')).join(' ') : ''); }
+// 노란 표시가 가리키는 '틀린 부분'(모델이 읽은 것과 PDF 글자가 다른 곳)을 글로 만든다. 2단계 패널과 5단계 참고(ⓘ)에서 같이 쓴다.
+function mismatchLines(b) {
+  const out = [];
+  (b.needs_review || []).forEach(f => {
+    const d = f.detail; if (!d) return;
+    if (f.code === 'text_mismatch' && d.words && d.words.length) out.push('PDF 글자에 없는 부분: ' + d.words.map(w => '“' + w + '”').join(', '));
+    if (f.code === 'table_shape') {
+      out.push(`줄 수: 모델이 읽은 표 ${d.model_rows}줄 · PDF 글자 표 ${d.pdf_rows}줄`);
+      if (d.missing_in_model && d.missing_in_model.length) out.push('PDF 에는 있는데 모델이 못 읽은 줄: ' + d.missing_in_model.map(w => '“' + w + '”').join(', '));
+      if (d.extra_in_model && d.extra_in_model.length) out.push('모델에만 있는 줄: ' + d.extra_in_model.map(w => '“' + w + '”').join(', '));
+    }
+  });
+  return out;
+}
 function renderEdit() {
   const b = B.find(x => x.id === SEL), p = $('edit');
   if (!b) { p.replaceChildren(h('div', {class: 'cap'}, '왼쪽에서 블록을 고르세요.')); return; }
+  const yellow = b.needs_review.length > 0;
   const parts = [h('div', {class: 't'}, h('b', null, '이 블록 고치기'), h('span', null, title(b)))];
-  if (b.needs_review.length) parts.push(h('div', {class: 'reason'}, ...b.needs_review.map(f => h('div', null, '· ' + (REASON[f.code] || f.code) + ': ' + f.reason))));
-  const sel = h('select', {onchange: e => { b.kind_now = e.target.value; render(); }}, ...Object.entries(KIND_LABEL).map(([k, v]) => h('option', {value: k, selected: k === b.kind_now}, v)));
-  parts.push(h('div', null, h('label', {class: 'l'}, '종류'), sel));
+  parts.push(yellow ? h('div', {class: 'reason'}, ...b.needs_review.map(f => h('div', null, '· ' + (REASON[f.code] || f.code) + ': ' + f.reason, REASON_HELP[f.code] ? infoIcon([REASON_HELP[f.code]], null, false) : null)))
+                    : h('div', {class: 'okbox'}, '노란 표시 없음 — 확인할 것이 없습니다.'));
+  parts.push(h('div', null, h('label', {class: 'l'}, '종류'), h('select', {onchange: e => { b.kind_now = e.target.value; render(); }}, ...Object.entries(KIND_LABEL).map(([k, v]) => h('option', {value: k, selected: k === b.kind_now}, v)))));
   if (b.kind === 'footnote') {
     const opts = [h('option', {value: ''}, '연결 없음'), ...B.filter(x => x.id !== b.id && x.page === b.page).map(x => h('option', {value: x.id, selected: x.id === b.link_now}, title(x)))];
-    parts.push(h('div', null, h('label', {class: 'l'}, '각주가 붙은 블록'), h('select', {onchange: e => { b.link_now = e.target.value; render(); }}, ...opts), h('div', {class: 'hint', style: 'margin-top:6px'}, b.attached_list ? '이 각주 뒤에 딸린 목록이 있습니다: ' + title(B.find(x => x.id === b.attached_list) || b) : '본문에 같은 번호 기호가 없으면 위치로만 추측합니다.')));
+    parts.push(h('div', null, h('label', {class: 'l'}, '각주가 붙은 블록'), h('select', {onchange: e => { b.link_now = e.target.value; render(); }}, ...opts)));
   }
-  if (['table', 'list', 'footnote'].includes(b.kind_now) || b.kind_now === 'paragraph') {
-    const labels = b.table ? b.table.rows.slice(b.table.header_rows).map(r => r[0] && r[0].type === 'text' ? r[0].text : '').filter(Boolean) : [];
-    parts.push(h('div', null, h('label', {class: 'l'}, '지표 짝짓기'), h('input', {type: 'text', placeholder: '지표 이름 (지표 사전은 다음 단계)', value: b.metric, oninput: e => { b.metric = e.target.value; }}),
-      h('div', {class: 'hint', style: 'margin-top:6px'}, labels.length ? '행 이름: ' + labels.join(', ') + ' — 지표 사전 연결은 데이터 선택 단계에서 합니다.' : '지표 사전 연결은 데이터 선택 단계에서 합니다.')));
-  }
-  parts.push(h('div', null, h('label', {class: 'l'}, '우리 데이터로 못 채우는 블록'), h('div', {class: 'opts'}, ...MISS.map(([v, t, d]) => h('label', null, h('input', {type: 'radio', name: 'miss', checked: b.missing === v, onchange: () => { b.missing = v; }}), h('span', null, h('b', null, t), h('br'), h('small', null, d)))))));
-  parts.push(h('button', {type: 'button', class: 'btn', onclick: () => { b.resolved = !b.resolved; render(); }}, b.resolved ? '확인 취소' : '확인했음'));
-  parts.push(h('div', {class: 'hint'}, '여기서 고친 내용은 저장되지 않습니다(데모).'));
+  const ml = mismatchLines(b);
+  if (ml.length) parts.push(h('div', {class: 'mmbox'}, h('b', null, '틀린 부분'), ...ml.map(t => h('div', null, '· ' + t))));
+  if (yellow) parts.push(h('div', {class: 'hint'}, '글자·표는 5단계(보고서 만들기)에서 직접 고칠 수 있고, 위 “틀린 부분”이 그때도 참고로 보입니다.'));
+  parts.push(h('div', {class: 'acts'}, h('button', {type: 'button', class: 'btn ghost', onclick: () => dropBlock(b)}, '빼기')));
+  parts.push(h('button', {type: 'button', class: 'btn ghost', onclick: () => { b.resolved = !b.resolved; render(); }}, b.resolved ? '확인 취소' : '확인했음'));
   p.replaceChildren(...parts);
 }
 
@@ -457,6 +504,10 @@ function blockInfo(b) {
 }
 const ym = m => `${m.year}.${String(m.month).padStart(2, '0')}`;
 function tag(state) { const c = state === '확정' || state === '마감' ? 'ok' : state === '잠정' ? 'prov' : state === '데이터 없음' ? 'none' : 'dash'; return h('span', {class: 'tag ' + c}, state); }
+const isTrend = b => b.kind_now === 'chart';
+const defaultMonths = () => [...Array(BASE.month)].map((_, k) => k + 1);
+const trendText = b => { const m = b.months && b.months.length ? b.months : defaultMonths(); return m.length > 4 ? `${m[0]}월 ~ ${m[m.length - 1]}월 (${m.length}개)` : m.map(x => x + '월').join(', '); };
+const scopeText = b => (b.scopeSel && b.scopeSel.length ? b.scopeSel.map(c => (D.orgs.find(o => o.code === c) || {}).name || c).join(', ') : '전사');
 function periodText(b, row) {
   const p = b.period;
   if (p.rule === 'base') return '공통 · ' + (row.months[0] ? ym(row.months[0]) : '');
@@ -472,9 +523,9 @@ async function render3() {
   $('mgrid').replaceChildren(...[...Array(12)].map((_, i) => {
     const m = have[YEAR + '-' + (i + 1)];
     const cls = 'mbtn ' + (!m ? 'none' : m.state === '잠정' ? 'prov' : '') + (m && D.default.year === YEAR && D.default.month === i + 1 ? ' def' : '') + (BASE.year === YEAR && BASE.month === i + 1 ? ' on' : '');
-    return h('button', {type: 'button', class: cls, disabled: !m, onclick: () => { BASE = {year: YEAR, month: i + 1}; render3(); }}, `${i + 1}월`, h('small', null, !m ? '데이터 없음' : m.state + (cls.includes(' def') ? ' · 기본' : '')));
+    return h('button', {type: 'button', class: cls, disabled: !m, onclick: () => { BASE = {year: YEAR, month: i + 1}; render3(); }}, `${i + 1}월`, h('small', null, !m ? '데이터 없음' : (cls.includes(' def') ? '기본' : '')));
   }));
-  $('mhint').textContent = '기준 월을 바꾸면 "공통 따라감" 블록이 모두 다시 계산됩니다. 잠정 월을 고르면 보고서에 \'잠정\' 표시가 붙습니다.';
+  $('mhint').textContent = '기준 월을 바꾸면 모든 블록이 그 월 기준으로 다시 계산됩니다.';
   // 블록 표
   let R3;
   try {
@@ -482,35 +533,46 @@ async function render3() {
     R3 = await r.json();
     if (!r.ok) throw new Error(R3.detail || r.status);
   } catch (e) { warn(e.message); return; }
-  const miss = {drop: '빼기', show_empty: '데이터 없음으로 표시', keep: '그대로 두기'};
-  const rows = [h('div', {class: 'tr th'}, ...['양식 블록', '기간', '범위', '비교 기준', '상태'].map(t => h('span', null, t)))];
+  const miss = {drop: '빼기', guess: 'AI 가 추측', show_empty: 'AI 가 추측', keep: 'AI 가 추측'};
+  const rows = [h('div', {class: 'tr th'}, ...['양식 블록', '기간', '범위', '비교 기준'].map(t => h('span', null, t)))];
   R3.blocks.forEach((row, i) => {
     const b = B[i], dash = row.kind === 'title' || row.kind === 'footnote';
-    const st = row.state === '데이터 없음' ? h('span', null, tag('데이터 없음'), h('div', {class: 'cap'}, '→ ' + miss[b.missing])) : tag(row.state);
     rows.push(h('button', {type: 'button', class: 'tr' + (SEL3 === b.id ? ' sel' : ''), onclick: () => { SEL3 = SEL3 === b.id ? null : b.id; render3(); }},
-      h('b', null, title(b)), h('span', null, dash ? '—' : periodText(b, row)), h('span', {class: dash ? 'cap' : ''}, row.scope), h('span', {class: 'cap'}, row.compare.length ? row.compare.join(' · ') : '—'), st));
-    if (SEL3 === b.id && !dash) {
-      const set = (o) => { b.period = o; render3(); };
-      const p = b.period;
-      rows.push(h('div', {class: 'pctl'}, h('span', {class: 'cap'}, '기간 정하는 법'),
-        h('button', {type: 'button', class: p.rule === 'base' ? 'on' : '', onclick: () => set({rule: 'base'})}, '공통 따라감'),
-        h('button', {type: 'button', class: p.rule === 'base_offset' ? 'on' : '', onclick: () => set({rule: 'base_offset', offset: p.offset || 1})}, '기준 월 ± n'),
-        p.rule === 'base_offset' ? h('input', {type: 'number', value: p.offset, onchange: e => { const v = parseInt(e.target.value); if (v) set({rule: 'base_offset', offset: v}); }}) : null,
-        h('button', {type: 'button', class: p.rule === 'fixed' ? 'on' : '', onclick: () => set({rule: 'fixed', year: BASE.year, month: BASE.month})}, '고정 월'),
-        p.rule === 'fixed' ? h('span', null, h('input', {type: 'number', value: p.year, onchange: e => set({...p, year: parseInt(e.target.value)})}), ' 년 ', h('input', {type: 'number', min: 1, max: 12, value: p.month, onchange: e => set({...p, month: parseInt(e.target.value)})}), ' 월') : null,
-        h('button', {type: 'button', class: p.rule === 'recent_n' ? 'on' : '', onclick: () => set({rule: 'recent_n', n: p.n || 12})}, '최근 N개월'),
-        p.rule === 'recent_n' ? h('input', {type: 'number', min: 1, value: p.n, onchange: e => { const v = parseInt(e.target.value); if (v > 0) set({rule: 'recent_n', n: v}); }}) : null,
-        row.reason ? h('span', {class: 'cap'}, '· ' + row.reason) : null));
+      h('b', null, title(b)), h('span', null, dash ? '—' : isTrend(b) ? trendText(b) : (b.period && b.period.rule === 'fixed' ? `${b.period.year}.${String(b.period.month).padStart(2, '0')} (직접 고름)` : '기준 월 따름'), row.state === '데이터 없음' && !dash ? [' ', tag('데이터 없음'), infoIcon([row.reason || '선택한 기간·행에 해당하는 데이터가 없습니다'], null, false)] : null), h('span', {class: dash ? 'cap' : ''}, b.scopeSel && b.scopeSel.length ? scopeText(b) : (isTrend(b) ? '전사' : row.scope)), h('span', {class: 'cap'}, row.compare.length ? row.compare.join(' · ') : '—')));
+    b.orgRows = /^조직별/.test(row.scope);
+    if (SEL3 === b.id && !dash) {                                    // 블록마다 월·범위를 고른다
+      const trend = isTrend(b), scope = b.scopeSel || [];
+      const fixedM = b.period && b.period.rule === 'fixed' ? b.period.month : null;
+      const sel = new Set(trend ? (b.months && b.months.length ? b.months : defaultMonths()) : (fixedM ? [fixedM] : []));
+      const setM = m => { b.period = {rule: 'fixed', year: BASE.year, month: m}; render3(); };
+      const togM = m => { const n = new Set(sel); n.has(m) ? n.delete(m) : n.add(m); b.months = [...n].sort((a, c) => a - c); render3(); };
+      const setO = c => { const n = new Set(scope); if (b.orgRows) { n.has(c) ? n.delete(c) : n.add(c); b.scopeSel = [...n]; } else b.scopeSel = n.has(c) ? [] : [c]; render3(); };
+      rows.push(h('div', {class: 'pctl'}, h('span', {class: 'cap'}, trend ? '표시할 월(여러 개)' : '월'),
+        ...(trend ? [] : [h('button', {type: 'button', class: fixedM ? '' : 'on', onclick: () => { b.period = {rule: 'base'}; render3(); }}, '기준 월 따름')]),
+        ...[...Array(12)].map((_, k) => h('button', {type: 'button', class: sel.has(k + 1) ? 'on' : '', onclick: () => trend ? togM(k + 1) : setM(k + 1)}, `${k + 1}월`))),
+        h('div', {class: 'pctl'}, h('span', {class: 'cap'}, b.orgRows ? '보일 조직(여러 개)' : '범위'), h('button', {type: 'button', class: scope.length ? '' : 'on', onclick: () => { b.scopeSel = []; render3(); }}, b.orgRows ? '전체' : '전사'),
+          ...D.orgs.map(o => h('button', {type: 'button', class: scope.includes(o.code) ? 'on' : '', onclick: () => setO(o.code)}, o.name)),
+          row.reason ? h('span', {class: 'cap'}, '· ' + row.reason) : null));
     }
   });
   $('tbl').replaceChildren(...rows);
-  const nProv = R3.provisional, nNone = R3.blocks.filter(r => r.state === '데이터 없음').length;
+  const nProv = false, nNone = R3.blocks.filter(r => r.state === '데이터 없음').length;
   $('sum3').textContent = `${R.filename || ''} · 블록 ${B.length}개 · 기준 ${BASE.year}.${String(BASE.month).padStart(2, '0')}`;
-  $('dfoot').textContent = (nProv ? "잠정 월이 포함되어 보고서에 '잠정'이 표시됩니다. " : '') + (nNone ? `데이터 없음 ${nNone}개 블록은 2단계에서 고른 방식(빼기/데이터 없음/그대로)으로 처리합니다. ` : '') + '이 화면은 어느 데이터로 채울지만 정하고 숫자는 아직 채우지 않습니다.';
+  $('sum3').append(infoIcon(['기간: 모든 블록은 위 기준 월을 따릅니다. 월별 추이 차트만 표시할 월을 직접 고릅니다.', '범위: 표는 행이 곧 범위입니다(행에 조직 이름이 있으면 조직별, 없으면 전사). 차트는 전사 또는 조직을 직접 고릅니다.', '비교 기준: 표의 열 이름(계획·전월·전년·추정)에서 읽습니다.', '데이터 없음: 행 이름이 지표 사전·조직 목록에 없거나 선택한 월에 DB 데이터가 없습니다.'], null, false));
+  $('dfoot').textContent = (nProv ? "잠정 월이 포함되어 보고서에 '잠정'이 표시됩니다. " : '') + (nNone ? `데이터 없음 ${nNone}개 블록은 2단계에서 고른 방식(빼기 / AI 추측)으로 처리합니다. ` : '') + '이 화면은 어느 데이터로 채울지만 정하고 숫자는 아직 채우지 않습니다.';
 }
 
 // ----- 4 소명 분류 -----
-let G = null, GI = 0, ASSIGN = {};
+let G = null, GI = 0, ASSIGN = {}, WANT = null;
+function wantBasis() {   // 3단계 블록 조건에서 Gap 의 비교 기준을 읽는다: 'Gap 구성' 목록 주변 글자에 계획/전월 말이 있는가
+  for (const b of B) {
+    if (b.kind_now !== 'list' || !isGapList(b)) continue;
+    const ctx = [(bById(b.footnote_of) || {}).text, (prevBlock(b) || {}).text, b.text].join(' ');
+    if (/계획/.test(ctx)) return 'PLAN';
+    if (/전월|직전|이전/.test(ctx)) return 'PREVIOUS';
+  }
+  return null;
+}
 const BINS = [['1', '월정액 추정 Gap'], ['3', '이연 효과'], ['4', '일시적 효과']];
 const eok = w => { const v = Math.round(w / 1e7) / 10; return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1) + '억'; };
 const cls = w => w > 0 ? 'pos' : w < 0 ? 'neg' : '';
@@ -522,6 +584,8 @@ $('next3').addEventListener('click', async () => {
     if (!r.ok) throw new Error(G.detail || r.status);
   } catch (e) { warn(e instanceof TypeError ? 'ai 서버에 연결하지 못했습니다.' : e.message); return; }
   GI = 0; ASSIGN = {};
+  WANT = wantBasis();
+  if (WANT) { const wi = G.groups.findIndex(x => x.basis === WANT); if (wi >= 0) GI = wi; }          // 3단계의 Gap 분해 블록이 말하는 비교 기준에 맞는 묶음을 먼저 고른다
   if (PRESET && PRESET.gkey) {                                   // 저장한 틀: 같은 비교 기준 묶음과 분류를 되살린다(현재 데이터에 있는 카드만)
     const gi = G.groups.findIndex(x => `${x.scenario}|${x.basis}` === PRESET.gkey);
     if (gi >= 0) { GI = gi; const ids = new Set(G.groups[gi].cards.map(c => c.gap_id)); ASSIGN = Object.fromEntries(Object.entries(PRESET.assign || {}).filter(([k]) => ids.has(k))); }
@@ -542,8 +606,9 @@ function render4() {
   const g = G.groups[GI];
   const sel = $('gsel');
   sel.hidden = G.groups.length < 2;
-  sel.replaceChildren(...G.groups.map((x, i) => h('option', {value: i, selected: i === GI}, `${x.basis_label} · ${x.cards.length}건`)));
+  sel.replaceChildren(...G.groups.map((x, i) => h('option', {value: i, selected: i === GI}, `${x.basis_label} · ${x.cards.length}건${WANT ? (x.basis === WANT ? ' · 3단계 조건과 일치' : ' · 3단계 조건과 다름') : ''}`)));
   $('sum4').textContent = `영업이익 Gap · ${BASE.year}.${String(BASE.month).padStart(2, '0')} ${g.basis_label} · ${G.state} ${G.version}`;
+  if (WANT && g.basis !== WANT) $('sum4').textContent += ` · ⚠ 3단계 Gap 분해 블록은 ‘${WANT === 'PLAN' ? '계획' : '직전'}’ 대비인데 다른 비교 기준 묶음을 보고 있습니다`;
   const byId = Object.fromEntries(g.cards.map(c => [c.gap_id, c]));
   const binOf = c => ASSIGN[c.gap_id] || '5';
   // 왼쪽: 아직 안 넣은 카드(분류 가능한 카드만)
@@ -606,9 +671,31 @@ $('back5').addEventListener('click', () => { $('s5').hidden = true; $('s4').hidd
 $('print5').addEventListener('click', () => window.print());
 $('expng').addEventListener('click', () => exportAll('png')); $('expdf').addEventListener('click', () => exportAll('pdf'));
 $('undo5').addEventListener('click', () => undo5());
+async function causeToggle(id) {
+  warn('');
+  if (CAUSE_ON[id]) { CAUSE_ON[id] = false; render5(); return; }
+  const rows = (FILL[id] || {}).rows || [], hd = (rows[0] || []).map(c => String(c.text || '')), texts = [];
+  hd.forEach((t, j) => { if (j > 0 && isCauseHead(t)) rows.slice(1).forEach(r => { const x = r[j] && r[j].text; if (x && !r[j].missing && x.length > 48) texts.push(x); }); });
+  if (!texts.length) { warn('줄일 만큼 긴 “주요 원인” 칸이 없습니다.'); return; }
+  try {
+    const r = await fetch(SRV() + '/v1/dev/report-data/cause-summary', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({texts})});
+    const d = await r.json(); if (!r.ok) throw new Error(d.detail || r.status);
+    d.items.filter(i => i.short).forEach(i => { CAUSE[i.orig] = i.short; });
+    CAUSE_ON[id] = texts.some(t => CAUSE[t]);
+    warn(d.status.message + (d.usage.calls ? ` · AI 호출 1회 · 입력 ${d.usage.input_tokens} / 출력 ${d.usage.output_tokens} 토큰` : d.usage.cached ? ' · 캐시' : ''));
+  } catch (e) { warn(e instanceof TypeError ? 'ai 서버에 연결하지 못했습니다.' : e.message); }
+  render5();
+}
+const hasCause = f => { const rows = (f && f.rows) || [], hd = (rows[0] || []).map(c => String(c.text || '')); return hd.some((t, j) => j > 0 && isCauseHead(t)) && rows.slice(1).some(r => r.some((c, j) => j > 0 && isCauseHead(hd[j]) && !c.missing && String(c.text || '').length > 48 || (CAUSE[c.text] && j > 0))); };
 
 const bById = id => B.find(b => b.id === id);
-const isGapList = b => b && b.kind_now === 'list' && b.footnote_of && /Gap/.test((bById(b.footnote_of) || {}).text || '');
+const GAPKEY = /월정액|정액|계약\s*추정|이연|일시|정정|과추정|기타/;
+const topHits = b => (b.items || []).filter(i => GAPKEY.test(String(i.text))).length;
+const prevBlock = b => { const i = B.findIndex(x => x.id === b.id); return i > 0 ? B[i - 1] : null; };
+const isGapList = b => b && b.kind_now === 'list' && (
+  (b.footnote_of && /Gap/.test((bById(b.footnote_of) || {}).text || '')) ||                     // 각주가 이 목록을 가리키고 Gap 이 적힘
+  (() => { const p = prevBlock(b); return !!p && /Gap/.test(p.text || '') && /구성|분해/.test(p.text || ''); })() ||   // 바로 앞 블록이 'Gap … 구성'
+  topHits(b) >= 3);                                                                              // 글자가 조금 틀리게 읽혀 연결이 끊겨도 항목 이름이 Gap 분류 같으면
 const stateOf = () => DRAFT || ST5;
 const extraOf = (id, st) => ((st || stateOf()).extras || []).find(e => e.id === id);
 function kindOf(id, st) {
@@ -651,10 +738,12 @@ function fillBlocks(state) {
       return;
     }
     const k = b.kind_now;
-    if (k === 'table' && b.table) out.push({id, kind: 'table', rows: b.table.rows, header_rows: b.table.header_rows, period: b.period, extra_cols: (state.cols || {})[id] || [], spec: tsp, unit});
+    if (k === 'table' && b.table) out.push({id, kind: 'table', rows: b.table.rows, header_rows: b.table.header_rows, period: b.period, extra_cols: (state.cols || {})[id] || [], spec: tsp, unit, guess: b.missing === 'guess' ? (GUESS[id] || {}) : {}});
     else if (['title', 'paragraph', 'footnote'].includes(k) && b.text != null) out.push({id, kind: k, text: tx[id] != null ? tx[id] : b.text, period: b.period});
-    else if (k === 'chart') { const o = optsOf(id, state); out.push({id, kind: 'chart', metric: o.metric, limit: o.limit, chart_type: o.chart_type, scope: o.scope, months_n: o.months_n, period: b.period, unit}); }
+    else if (k === 'chart') { const o = optsOf(id, state); out.push({id, kind: 'chart', metric: o.metric, limit: o.limit, chart_type: o.chart_type, scope: (o.scope && o.scope.length) ? o.scope : (b.scopeSel && b.scopeSel.length ? b.scopeSel : o.scope), months_n: o.months_n, months: b.months, period: b.period, unit}); }
     else if (k === 'numbercard') out.push({id, kind: 'numbercard', cards: (state.opts || {})[id] && state.opts[id].cards || b.cards, period: b.period, unit});
+    const last = out[out.length - 1];                                  // 블록에서 고른 범위: 조직 행 표는 보일 조직, 그 밖은 값을 계산할 조직 하나
+    if (last && last.id === id && b.scopeSel && b.scopeSel.length && last.kind !== 'chart') { if (b.orgRows) last.scope_orgs = b.scopeSel; else last.scope_org = b.scopeSel[0]; }
   });
   return out;
 }
@@ -707,13 +796,46 @@ function editableText(id, f, srcText) {
   });
   return el;
 }
+
+const OPT_NOTE = {guess: '2단계에서 ‘AI 가 추측’을 골랐습니다. 행 이름이 DB 지표 사전에 바로 맞지 않아 AI 가 어느 지표인지 추측했고, 추측한 행에는 ⓘ 가 붙습니다. 뜻을 못 정한 행은 데이터 없음으로 둡니다.', drop: '2단계에서 ‘빼기’를 골랐습니다.'};
+function slotsIn(items) { return (items || []).some(i => /\{수치\}|\[값\]/.test(String(i.text)) || slotsIn(i.children)); }
+function b0(id) { return bById(id); }
+function infoIcon(why, optKey, empty) {
+  const lines = (why || []).slice();
+  const note = optKey && OPT_NOTE[optKey] ? OPT_NOTE[optKey] : null;
+  const ic = h('span', {class: 'ii', tabindex: '0', role: 'button', 'aria-label': '왜 이런 결과인지 보기', title: lines.concat(note ? [note] : []).join(' / ')}, 'i');
+  const show = e => {
+    e.stopPropagation();
+    document.querySelectorAll('.iipop').forEach(x => x.remove());
+    const r = ic.getBoundingClientRect();
+    const pop = h('div', {class: 'iipop'}, h('b', null, '왜 이렇게 보이나요?'), h('ul', null, ...lines.map(t => h('li', null, t))), note ? h('div', {style: 'margin-top:6px;color:var(--sub)'}, note) : null,
+      h('div', {style: 'margin-top:6px;color:var(--sub)'}, '원본 PDF 의 숫자는 쓰지 않습니다. 모든 숫자는 조회 DB 에서 코드가 계산합니다.'));
+    document.body.append(pop);
+    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - 336)) + 'px'; pop.style.top = Math.min(r.bottom + 6, innerHeight - pop.offsetHeight - 8) + 'px';
+    const off = ev => { if (!pop.contains(ev.target)) { pop.remove(); document.removeEventListener('click', off, true); } };
+    setTimeout(() => document.addEventListener('click', off, true), 0);
+  };
+  ic.addEventListener('click', show); ic.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') show(e); });
+  return ic;
+}
 function withMissing(t) { const parts = String(t).split('[값]'); const out = []; parts.forEach((p, i) => { if (i) out.push(h('span', {class: 'mv'}, '[값]')); out.push(p); }); return out; }
+let CAUSE_ON = {}, CAUSE = {}, GUESS = {};
+const isCauseHead = t => /원인|소명/.test(String(t || ''));
 function tableEl(rows, hr, id) {
   const ov = ((stateOf().cellText || {})[id]) || {};
+  const heads = (rows[0] || []).map(c => String(c.text || ''));
   const cell = (c, i, j) => {
     const isNum = j > 0 && i >= hr, t = ov[c.text] != null ? ov[c.text] : c.text;
-    const attrs = {class: (isNum ? 'num' : '') + (c.missing || c.text === '데이터 없음' ? ' miss' : '')};
+    const attrs = {class: (isNum ? 'num' : '') + (c.missing || c.text === '데이터 없음' ? ' miss' : (isNum && c.text && c.text !== '—' && c.text !== '███' ? ' dv' + (String(c.text).length > 24 ? ' long' : '') : ''))};
     const td = h(i < hr ? 'th' : 'td', attrs);
+    if (j === 0 && i >= hr && c.guess) {                                                    // AI 가 행 이름을 지표로 추측한 행
+      td.append(c.text, infoIcon(['AI 추측: 행 이름 ‘' + c.text + '’ 을(를) DB 지표 ‘' + c.guess + '’ 으로 추측해 그 지표의 값을 채웠습니다.', '맞지 않으면 이 행을 표 설정(⚙)에서 고치거나 빼세요. 숫자 자체는 항상 DB 에서 코드가 계산합니다.'], null, false));
+      return td;
+    }
+    if (id && CAUSE_ON[id] && i >= hr && j > 0 && isCauseHead(heads[j]) && CAUSE[c.text]) {      // AI 가 줄인 원인(숫자·코드는 서버가 원문과 대조해 통과한 것만): 원문은 ⓘ 로
+      td.append(CAUSE[c.text], infoIcon(['원문: ' + c.text, 'AI 가 줄인 문장입니다. 숫자·코드가 원문에 모두 있는지 코드가 대조해 통과한 줄만 바꿉니다.'], null, false));
+      return td;
+    }
     if (!isNum && !c.missing && c.text !== '데이터 없음' && !DRAFT && id) {                    // 글자 칸만 고칠 수 있다(숫자 칸은 코드 계산이라 고칠 수 없음)
       const ed = h('span', {class: 'ed', contenteditable: 'true', spellcheck: 'false'}, t);
       ed.addEventListener('click', e => e.stopPropagation());
@@ -730,8 +852,8 @@ function gapList() {
   const st = stateOf(), g = G.groups[ST5.gi], A = st.assign;
   const binOf = c => A[c.gap_id] || '5';
   const sum = k => g.cards.filter(c => binOf(c) === k).reduce((a, c) => a + c.diff_won, 0);
-  const line = (k, name, w, cards) => h('div', null, h('div', {class: 'row'}, h('b', null, `${k} ${name}`), h('b', null, eok(w))),
-    ...cards.map(c => h('div', {class: 'sub'}, `· ${c.org_name} · ${c.items[0] || ''} ${eok(c.diff_won)}`)));
+  const line = (k, name, w, cards) => h('div', null, h('div', {class: 'row'}, h('b', null, `${k} ${name}`), h('b', {class: 'dv'}, eok(w))),
+    ...cards.map(c => h('div', {class: 'sub'}, `· ${c.org_name} · ${c.items[0] || ''} `, h('span', {class: 'dv'}, eok(c.diff_won)))));
   const of = k => g.cards.filter(c => binOf(c) === k);
   const total = sum('1') + sum('3') + sum('4') + sum('5');
   return h('div', {class: 'gd'}, line('1', '월정액 추정 Gap', sum('1'), of('1')), line('2', '일시적/비경상 요인 (3+4 자동)', sum('3') + sum('4'), []),
@@ -741,7 +863,7 @@ function gapList() {
 // ---- 차트(SVG): 막대 · 선 · 도넛 · 워터폴. 값은 서버가 DB 에서 계산한 행 그대로
 const SVGNS = 'http://www.w3.org/2000/svg';
 const sv = (tag, attrs, ...kids) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v); kids.flat().forEach(c => c != null && e.append(c.nodeType ? c : document.createTextNode(c))); return e; };
-const PAL = ['#a9875b', '#216943', '#5f636b', '#b83c35', '#8b641d', '#14171e', '#bda889', '#75552f'];
+const PAL = ['#2F5BD8', '#216943', '#5f636b', '#b83c35', '#8b641d', '#14171e', '#7C9BE8', '#1E3F9E'];
 function chartEl(rows, o, unit) {
   const type = o.chart_type || 'bar', metric = o.metric || '영업이익';
   if (!rows || !rows.length) return h('div', {class: 'empty5'}, '차트 — 데이터 없음');
@@ -749,13 +871,13 @@ function chartEl(rows, o, unit) {
   const vals = rows.map(r => r.won), W = 520, Hh = 220;
   if (type === 'bar') {
     const max = Math.max(...vals.map(Math.abs), 1);
-    return h('div', null, cap, ...rows.map(r => h('div', {class: 'barrow'}, h('span', {class: 'bn'}, r.name), h('div', {class: 'bar', style: `width:${Math.max(2, Math.abs(r.won) / max * 60)}%;background:${r.won < 0 ? 'var(--red)' : 'var(--gold)'}`}), h('b', null, r.text))));
+    return h('div', null, cap, ...rows.map(r => h('div', {class: 'barrow'}, h('span', {class: 'bn'}, r.name), h('div', {class: 'bar', style: `width:${Math.max(2, Math.abs(r.won) / max * 60)}%;background:${r.won < 0 ? 'var(--red)' : 'var(--blue)'}`}), h('b', null, r.text))));
   }
   if (type === 'line') {
     const mx = Math.max(...vals), mn = Math.min(...vals, 0), sp = (mx - mn) || 1, px = i => 40 + i * ((W - 60) / Math.max(1, rows.length - 1)), py = v => 20 + (Hh - 50) * (1 - (v - mn) / sp);
-    return h('div', null, cap, sv('svg', {viewBox: `0 0 ${W} ${Hh}`, width: '100%', class: 'chartsvg'}, sv('line', {x1: 40, y1: py(0), x2: W - 20, y2: py(0), stroke: '#e7e4de'}),
-      sv('polyline', {points: rows.map((r, i) => `${px(i)},${py(r.won)}`).join(' '), fill: 'none', stroke: '#a9875b', 'stroke-width': 2.5}),
-      ...rows.map((r, i) => [sv('circle', {cx: px(i), cy: py(r.won), r: 3.5, fill: '#a9875b'}), sv('text', {x: px(i), y: Hh - 8, 'text-anchor': 'middle', 'font-size': 10, fill: '#5f636b'}, r.name), sv('text', {x: px(i), y: py(r.won) - 8, 'text-anchor': 'middle', 'font-size': 10, fill: '#16181d'}, r.text)]).flat()));
+    return h('div', null, cap, sv('svg', {viewBox: `0 0 ${W} ${Hh}`, width: '100%', class: 'chartsvg'}, sv('line', {x1: 40, y1: py(0), x2: W - 20, y2: py(0), stroke: '#E3E6EB'}),
+      sv('polyline', {points: rows.map((r, i) => `${px(i)},${py(r.won)}`).join(' '), fill: 'none', stroke: '#2F5BD8', 'stroke-width': 2.5}),
+      ...rows.map((r, i) => [sv('circle', {cx: px(i), cy: py(r.won), r: 3.5, fill: '#2F5BD8'}), sv('text', {x: px(i), y: Hh - 8, 'text-anchor': 'middle', 'font-size': 10, fill: '#5f636b'}, r.name), sv('text', {x: px(i), y: py(r.won) - 8, 'text-anchor': 'middle', 'font-size': 10, fill: '#16181d'}, r.text)]).flat()));
   }
   if (type === 'donut') {
     const pos = rows.filter(r => r.won > 0), tot = pos.reduce((a, r) => a + r.won, 0) || 1, R0 = 70, C = 2 * Math.PI * R0; let off = 0;
@@ -797,8 +919,7 @@ function contentEl(id, kind, f, prev, s) {
   } else if (kind === 'table' || kind === 'spec_table' || kind === 'breakdown') {
     const miss = b ? b.missing : 'show_empty', rows = f.rows || (b && b.table ? b.table.rows.map(r => r.map(c => c.type === 'number' ? {text: '███'} : {text: c.text})) : []);
     const hr = b && b.table && !(stateOf().tspecs || {})[id] ? b.table.header_rows : 1;
-    if (f.empty && miss === 'drop' && b) el = h('span', {class: 'dropped'}, `${title(b)} — 데이터 없음 · 빼기`);
-    else if (f.empty && miss === 'show_empty' && b) el = h('div', {class: 'empty5'}, `${title(b)} · 데이터 없음 (자리 유지)`);
+    if (f.empty && b) el = h('div', {class: 'empty5'}, `${title(b)} · 데이터 없음`);
     else if (!rows.length) el = h('div', {class: 'empty5'}, '표 — 행이 없습니다(⚙ 에서 행을 추가하세요)');
     else el = tableEl(rows, hr, id);
   } else if (kind === 'list') {
@@ -813,9 +934,13 @@ function render5() {
   const st = stateOf(), prev = !!DRAFT;
   const baseTxt = `${BASE.year}.${String(BASE.month).padStart(2, '0')}`;
   const removed = st.removed || [];
-  const visible = st.order.filter(id => prev || !removed.includes(id));
-  $('sum5').textContent = `기준 월 ${baseTxt} · ${FILL.__state || ''} · 블록 ${st.order.filter(id => !removed.includes(id)).length}개`;
-  $('provbar').replaceChildren(...(FILL.__prov ? [h('div', {class: 'prov'}, '잠정 — 공식 master 가 아닌 잠정 값입니다')] : []));
+  const dropped = id => { const bb = bById(id), ff = FILL[id]; return !!(bb && bb.missing === 'drop' && ff && ff.empty); };      // ‘빼기’를 고른 블록이 못 채워지면 보고서에서 뺀다
+  const visible = st.order.filter(id => prev || (!removed.includes(id) && !dropped(id)));
+  $('sum5').textContent = `기준 월 ${baseTxt} · 블록 ${visible.length}개`;
+  const hlOff = !!window.__hlOff;
+  $('provbar').replaceChildren(h('div', {class: 'hl-legend'}, h('span', null, h('i', {class: 'sw', style: 'background:rgba(47,91,216,.18)'}), '파란색 = 우리 데이터(DB)로 채운 값'), h('span', null, h('i', {class: 'sw', style: 'background:var(--warn-chip)'}), '노란색 = 채우지 못한 자리'),
+    h('label', {style: 'cursor:pointer'}, h('input', {type: 'checkbox', checked: !hlOff, onchange: e => { window.__hlOff = !e.target.checked; $('doc').classList.toggle('hl-off', window.__hlOff); }}), ' 강조 보기')));
+  $('doc').classList.toggle('hl-off', hlOff);
   const els = [];
   visible.forEach((id, vi) => {
     const f = FILL[id] || {}, rm = removed.includes(id);
@@ -841,7 +966,12 @@ function render5() {
     }
     if (isNew) wrap.append(h('span', {class: 'pv'}, '새 블록 미리보기'));
     if (changed || posChanged || rm) wrap.append(h('span', {class: 'pv', style: 'background:var(--warn)'}, rm ? '빼기 미리보기' : '변경 미리보기'));
-    wrap.append(h('div', {class: 'rbody'}, contentEl(id, kind, f, prev, s)));
+    const bodyEl = h('div', {class: 'rbody'}, contentEl(id, kind, f, prev, s));
+    if (!prev && b0(id) && mismatchLines(b0(id)).length) bodyEl.append(infoIcon(['2단계에서 표시한 틀린 부분(참고):'].concat(mismatchLines(b0(id))).concat(['위 내용을 보고 이 블록의 글자·표를 직접 고치세요(글자는 눌러서, 표는 ⚙ 에서).']), null, false));
+    if (!prev && f && (f.missing || f.empty) && f.why && f.why.length) bodyEl.append(infoIcon(f.why, (kind === 'table' || kind === 'spec_table') && b0(id) ? b0(id).missing : null, f.empty));
+    if (!prev && kind === 'list' && b0(id) && !(isGapList(b0(id)) && G) && slotsIn(b0(id).items)) bodyEl.append(infoIcon(['목록 문장 속 숫자 자리라 3단계에서 데이터를 고르는 대상이 아니고, 문장만 보고 어느 지표·조직·비교 월의 값인지 정할 수 없어 [값]으로 둡니다.', '목록의 금액을 채우려면 + 메뉴의 “Gap 분해” 블록을 쓰거나, 문장을 직접 고쳐 쓰세요(숫자 조각은 고칠 수 없음).'], null, false));
+    if (!prev && (kind === 'table' || kind === 'spec_table') && hasCause(f)) bodyEl.append(h('div', {class: 'cbtn'}, h('button', {type: 'button', class: 'btn ghost', style: 'height:26px;padding:0 10px;font-size:12px;margin-top:6px', title: '긴 소명 원문을 한 줄로 줄입니다(AI, 숫자·코드는 원문과 대조 검증)', onclick: e => { e.stopPropagation(); causeToggle(id); }}, CAUSE_ON[id] ? '원문으로 되돌리기' : '원인 한 줄 요약')));
+    wrap.append(bodyEl);
     if (lay.h) wrap.setAttribute('data-sized', '1');
     if (!prev) {                                                   // 오른쪽 아래 모서리를 끌어 크기 조절(너비는 % 로 저장 → 두 블록이 한 줄에 나란히 놓임)
       const rz = h('div', {class: 'rz', title: '끌어서 크기 조절', 'aria-label': '크기 조절'});
@@ -1110,7 +1240,7 @@ function parseReq(q0) {
 function renderAi() {
   const box = $('aimsgs'); if (!box._init) { box._init = 1; }
 }
-function aiLog(el) { $('aimsgs').append(el); $('aimsgs').lastChild.scrollIntoView({block: 'nearest'}); }
+function aiLog(el) { const bx = $('aimsgs'); bx.append(el); requestAnimationFrame(() => { bx.scrollTop = bx.scrollHeight; }); }
 function chatBlocks() {
   const st = DRAFT || ST5, out = [];
   st.order.filter(id => !(st.removed || []).includes(id)).forEach(id => {
@@ -1259,13 +1389,13 @@ const lsSet = v => { try { localStorage.setItem(LS, JSON.stringify(v)); return t
 // 틀 목록용 썸네일: 숫자가 들어가지 않도록 블록 종류·배치만 그린 뼈대 그림
 function skeleton(st) {
   const W = 240, c = document.createElement('canvas'), pad = 8, kindH = {title: 22, paragraph: 28, footnote: 18, table: 54, list: 56, chart: 70, numbercard: 44, divider: 6, gapdecomp: 56, explist: 50, spec_table: 54, breakdown: 54, query: 40, aisent: 40};
-  const COL = {title: '#16181d', paragraph: '#d9cdb9', footnote: '#e7e4de', table: '#a9875b', spec_table: '#a9875b', breakdown: '#a9875b', list: '#bda889', chart: '#75552f', numbercard: '#8b641d', divider: '#5f636b', gapdecomp: '#bda889', explist: '#a9875b', query: '#d9cdb9', aisent: '#d9cdb9'};
+  const COL = {title: '#16181d', paragraph: '#C9D3EC', footnote: '#E3E6EB', table: '#2F5BD8', spec_table: '#2F5BD8', breakdown: '#2F5BD8', list: '#7C9BE8', chart: '#1E3F9E', numbercard: '#8b641d', divider: '#5f636b', gapdecomp: '#7C9BE8', explist: '#2F5BD8', query: '#C9D3EC', aisent: '#C9D3EC'};
   const items = st.order.filter(id => !(st.removed || []).includes(id)).map(id => { const k = id === 'ai-sent' ? 'aisent' : kindOf(id, st), lay = (st.layout || {})[id] || {}; return {k, w: (lay.w || 100) / 100, h: Math.max(6, Math.round((lay.h || kindH[k] || 30) * 0.7))}; });
   let x = pad, y = pad, rowH = 0; const pos = [];
   items.forEach(it => { const w = Math.round((W - 2 * pad) * it.w); if (x + w > W - pad + 1 && x > pad) { x = pad; y += rowH + 4; rowH = 0; } pos.push({...it, x, y, w}); x += w + 4; rowH = Math.max(rowH, it.h); });
   const Hh = Math.max(60, y + rowH + pad); c.width = W; c.height = Hh;
   const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, Hh);
-  pos.forEach(p => { g.fillStyle = COL[p.k] || '#d9cdb9'; g.globalAlpha = p.k === 'title' ? .9 : .55; g.fillRect(p.x, p.y, Math.max(4, p.w - 4), p.h); g.globalAlpha = 1; });
+  pos.forEach(p => { g.fillStyle = COL[p.k] || '#C9D3EC'; g.globalAlpha = p.k === 'title' ? .9 : .55; g.fillRect(p.x, p.y, Math.max(4, p.w - 4), p.h); g.globalAlpha = 1; });
   return c.toDataURL('image/png');
 }
 $('save5').addEventListener('click', () => {

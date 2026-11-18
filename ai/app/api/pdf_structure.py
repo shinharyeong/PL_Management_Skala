@@ -104,6 +104,41 @@ async def report_sentences(req: _SentReq):
     return await run_in_threadpool(data_select.generate_sentences, req.base, req.assign, req.gi, req.force)
 
 
+class _CauseReq(BaseModel):
+    texts: list[str] = Field(default_factory=list)
+
+
+@router.post("/report-data/cause-summary")
+async def report_cause_summary(req: _CauseReq):
+    """5단계 '주요 원인' 칸을 한 줄로 줄인다. AI 는 문장만 줄이고 숫자·코드는 코드가 원문과 대조해 검증한다(실패한 줄은 원문 유지)."""
+    from ..pdf_structure import cause_summary
+    return await run_in_threadpool(cause_summary.summarize, req.texts)
+
+
+class _GuessReq(BaseModel):
+    labels: list[str] = Field(default_factory=list)
+
+
+@router.post("/report-data/guess")
+async def report_guess(req: _GuessReq):
+    """[현재 화면에서는 쓰지 않음 — 나중을 위해 남김] 읽지 못한 표의 행 이름이 어느 DB 지표인지 AI 가 추측한다(추측만, 값은 DB 에서 코드가 계산). 지표 사전에 있는 지표만 돌려준다."""
+    from ..pdf_structure import row_guess
+    return await run_in_threadpool(row_guess.guess, req.labels)
+
+
+class _BlockGuessReq(BaseModel):
+    action: str
+    block: dict = Field(default_factory=dict)
+    candidates: list[dict] = Field(default_factory=list)
+
+
+@router.post("/report-data/guess-block")
+async def report_guess_block(req: _BlockGuessReq):
+    """[현재 화면에서는 쓰지 않음 — 나중을 위해 남김] 2단계 노란 블록 AI 추측(link=각주가 붙은 블록, kind=블록 종류, metric=행 이름의 지표). 허용 목록 밖의 답은 버린다."""
+    from ..pdf_structure import block_guess
+    return await run_in_threadpool(block_guess.guess_block, req.action, req.block, req.candidates)
+
+
 class _SetReq(BaseModel):
     name: str
 

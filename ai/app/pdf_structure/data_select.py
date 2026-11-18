@@ -125,7 +125,7 @@ def gaps(year: int, month: int) -> dict:
                 ex = con.execute("SELECT explanation_id, item, kind, status, answer FROM explanation WHERE version=? AND gap_id=? ORDER BY explanation_id", (ver, r["gap_id"])).fetchall()
                 accepted = [e for e in ex if e["status"] == "수락" and e["answer"]]
                 cards.append({"gap_id": r["gap_id"], "org_code": r["org_code"], "org_name": r["org_name"], "diff_won": r["diff_won"],
-                              "summary": " / ".join(e["answer"] for e in accepted) if accepted else None,
+                              "summary": " / ".join(dict.fromkeys(e["answer"] for e in accepted)) if accepted else None,  # 같은 소명 문장은 한 번만
                               "items": [e["item"] for e in ex], "explained": bool(accepted), "explanation_count": len(ex),
                               "carried_over": r["status"] == "CARRIED_OVER_ELIGIBLE", "status": r["status"]})
             groups.append({"scenario": k["scenario"], "basis": k["basis"], "basis_label": BASIS_LABEL.get(k["basis"], k["basis"]), "total_won": total, "cards": cards})
@@ -145,6 +145,8 @@ _DATE = re.compile(r"'?(\d{2})\.(\d{1,2})월")
 import contextvars
 
 UNIT = contextvars.ContextVar("report_unit", default="억원")
+SCOPE_ORG = contextvars.ContextVar("report_scope_org", default=None)
+SCOPE_ORGS = contextvars.ContextVar("report_scope_orgs", default=[])
 UNIT_DIV = {"억원": Decimal(10) ** 8, "백만원": Decimal(10) ** 6}
 
 
@@ -221,6 +223,9 @@ def fill_report(base: dict, blocks: list[dict], orig: tuple[int, int] | None = N
         for b in blocks:
             kind = b.get("kind")
             res = {"id": b["id"], "kind": kind, "missing": False}
+            codes = {o["code"] for o in orgs}
+            SCOPE_ORG.set(b.get("scope_org") if b.get("scope_org") in codes else None)                                  # 블록에서 고른 범위: 지표 행의 값을 이 조직으로
+            SCOPE_ORGS.set([c for c in (b.get("scope_orgs") or []) if c in codes])                                       # 조직 행을 이 조직들로만
             UNIT.set(b.get("unit") if b.get("unit") in UNIT_DIV else "억원")
             # 기간 규칙(첫 월)
             by, bm = y, m
@@ -243,13 +248,13 @@ def fill_report(base: dict, blocks: list[dict], orig: tuple[int, int] | None = N
                         txt, res["missing"] = txt.replace("{수치}", "[값]"), True
                 res["text"] = txt
             elif kind == "table" and b.get("spec"):
-                res["rows"], res["missing"] = fill_spec_table(con, info, bmeta, b["spec"], cause)
+                res["rows"], res["missing"] = fill_spec_table(con, info, bmeta, b["spec"], cause, b.get("guess"))
                 res["spec"] = b["spec"]
             elif kind == "spec_table":
-                res["rows"], res["missing"] = fill_spec_table(con, info, bmeta, b.get("spec") or {"rows": [], "cols": []}, cause)
+                res["rows"], res["missing"] = fill_spec_table(con, info, bmeta, b.get("spec") or {"rows": [], "cols": []}, cause, b.get("guess"))
                 res["spec"] = b.get("spec")
             elif kind == "chart":
-                res["rows"], res["missing"] = _chart(con, info, bmeta, b.get("metric") or "영업이익", b.get("limit") or 10, b.get("chart_type") or "bar", b.get("scope"), b.get("months_n"))
+                res["rows"], res["missing"] = _chart(con, info, bmeta, b.get("metric") or "영업이익", b.get("limit") or 10, b.get("chart_type") or "bar", b.get("scope"), b.get("months_n"), b.get("months"))
                 res["chart_type"] = b.get("chart_type") or "bar"
             elif kind == "numbercard":
                 res["cards"], res["missing"] = _numbercards(con, info, bmeta, b.get("cards") or [], metrics)
@@ -273,11 +278,61 @@ def fill_report(base: dict, blocks: list[dict], orig: tuple[int, int] | None = N
                 res["unit"] = UNIT.get()
             if res["missing"] and kind in ("table", "spec_table"):
                 res["empty"] = len(res["rows"]) > 1 and all(c.get("missing") for r in res["rows"][int(b.get("header_rows") or 1):] for c in r[1:])
+            if res["missing"]:
+                res["why"] = _why(kind, res, b, metrics, orgs)
             out["blocks"].append(res)
         out["provisional"] = out["state"] == "잠정"
         return out
     finally:
         con.close()
+
+
+def _why(kind, res, b, metrics, orgs) -> list[str]:
+    """'왜 못 채웠는가'를 코드가 만든다(5단계 ⓘ 표시용). 값은 만들지 않고 이유 글만 만든다."""
+    out: list[str] = []
+    mlist = ", ".join(sorted(metrics))
+    if kind in ("paragraph", "footnote"):
+        txt = str(b.get("text") or "")
+        if not _metric_in(txt, metrics):
+            out.append(f"문장에서 지표 이름({mlist})을 찾지 못해 어느 DB 값을 넣을지 정할 수 없는 자리입니다" + (" (Gap 합계 문장만 자동으로 계산합니다)" if kind == "footnote" else ""))
+        else:
+            out.append("비교 말(계획·전월·전년·추정)에 해당하는 값이 DB 에 없거나, 숫자 자리가 비교 말보다 많아 어느 값인지 정할 수 없는 자리입니다")
+    elif kind in ("table", "spec_table", "breakdown", "metric_table"):
+        rows = res.get("rows") or []
+        hr = int(b.get("header_rows") or 1) if kind == "table" else 1
+        heads = [str(c.get("text") or "") for c in (rows[0] if rows else [])]
+        no_row, no_cmp, no_cause = [], set(), False
+        for r in rows[hr:]:
+            cells = r[1:]
+            if cells and all(c.get("missing") and c.get("text") in ("[값]", "데이터 없음") for c in cells) and (r[0].get("text") not in ("", None)):
+                lab = str(r[0].get("text"))
+                if not _metric_in(lab, metrics) and not match_org(lab, orgs) and all(c.get("text") in ("[값]", "데이터 없음") for c in cells):
+                    no_row.append(lab)
+                    continue
+            for j, c in enumerate(cells, 1):
+                if c.get("missing"):
+                    if c.get("text") == "—":
+                        no_cause = True
+                    elif c.get("text") in ("데이터 없음", "[값]") and j < len(heads):
+                        no_cmp.add(heads[j])
+        if no_row:
+            out.append(f"행 이름 ‘{'’, ‘'.join(no_row[:4])}’ 이(가) 지표 사전({mlist})·조직 목록에 없어 어느 값인지 정할 수 없습니다")
+        if no_cmp:
+            out.append(f"열 ‘{'’, ‘'.join(sorted(no_cmp)[:4])}’ 의 기준(계획·직전 월·전년 동월 등) 값이 조회 DB 에 없습니다")
+        if no_cause:
+            out.append("‘주요 원인’ 칸은 수락된 소명이 있는 조직만 채워집니다(소명이 없거나 검토 중)")
+    elif kind == "chart":
+        out.append("선택한 지표·기간·범위에 해당하는 값이 조회 DB 에 없습니다")
+    elif kind == "numbercard":
+        for c in res.get("cards") or []:
+            if c.get("missing"):
+                m = _metric_in(str(c.get("label") or ""), [k for k in metrics if k in METRIC_COL])
+                out.append(f"카드 ‘{c.get('label')}’ 에서 지표를 찾지 못했습니다" if m is None else f"카드 ‘{c.get('label')}’ 의 값이 조회 DB 에 없습니다")
+    elif kind == "explist":
+        out.append("이 기준 월의 Gap·소명이 조회 DB 에 없습니다")
+    elif kind == "query":
+        out.append(str(res.get("text") or "")[:120])
+    return out or ["조회 DB 에서 계산할 수 없는 값이 있습니다"]
 
 
 def _fill_sentence(con, info, base, txt, metrics):
@@ -286,7 +341,7 @@ def _fill_sentence(con, info, base, txt, metrics):
     slots = txt.count("{수치}")
     if not metric:
         return txt.replace("{수치}", "[값]"), True
-    b = _bases(con, info, base["year"], base["month"], METRIC_COL[metric], None)
+    b = _bases(con, info, base["year"], base["month"], METRIC_COL[metric], SCOPE_ORG.get())
     words = [_cname(w) for w in _KEYWORD.findall(txt)]
     vals, missing = [], False
     for i in range(slots):
@@ -322,9 +377,14 @@ def _fill_table(con, info, base, b, metrics, orgs, cause, orig):
             continue
         label = str(row[0].get("text") or "") if row and row[0]["type"] == "text" else ""
         org = match_org(label, orgs)
+        if org and SCOPE_ORGS.get() and org not in SCOPE_ORGS.get():                       # 범위로 고른 조직이 아닌 조직 행은 뺀다
+            continue
         metric = _metric_in(label, metrics) or ("영업이익" if org else None)
-        bs = _bases(con, info, base["year"], base["month"], METRIC_COL[metric], org) if metric else None
-        cells = [{"text": label}]
+        gm = None
+        if metric is None and (b.get("guess") or {}).get(label) in METRIC_COL:           # AI 가 추측한 지표(5단계 ⓘ 로 추측임을 표시)
+            metric = gm = b["guess"][label]
+        bs = _bases(con, info, base["year"], base["month"], METRIC_COL[metric], org or SCOPE_ORG.get()) if metric else None
+        cells = [{"text": label, **({"guess": gm} if gm else {})}]
         for j in range(1, len(row)):
             c = row[j]
             h = heads[j] if j < len(heads) else ""
@@ -520,6 +580,101 @@ def q_gap_orgs(base):
             "table": _tbl(["조직", "Gap(억원)", "소명"], [[c["org_name"], eok(c["diff_won"], diff=True), "수락됨" if c["explained"] else ("검토 중/없음")] for c in sorted(gr["cards"], key=lambda c: -abs(c["diff_won"]))])}
 
 
+GAP_KIND_LABEL = {("OP_GAP", "PLAN"): "계획 대비 영업이익 Gap", ("OP_GAP", "PREVIOUS"): "직전 제출 대비 영업이익 Gap", ("AMOUNT_REVISION", "PREVIOUS"): "직전 제출 대비 금액 변경"}
+
+
+def _gap_label(gt, basis):
+    return GAP_KIND_LABEL.get((gt, basis)) or f"{gt} · {basis}"
+
+
+def q_gap_count(base):
+    """Gap 전체 건수와 종류별(유형·비교 기준) 건수. 모두 DB 의 gap 표를 코드가 센다."""
+    info = months()
+    ver = _best_version(info, base["year"], base["month"])
+    con = _con()
+    try:
+        rows = con.execute("SELECT gap_type, basis, COUNT(*) n FROM gap WHERE version=? GROUP BY gap_type, basis ORDER BY n DESC, gap_type, basis", (ver,)).fetchall() if ver else []
+        if not rows:
+            return {"text": "Gap 데이터가 없습니다(조회 DB 에 gap 이 적재되지 않았습니다)."}
+        total = sum(r["n"] for r in rows)
+        parts = ", ".join(f"{_gap_label(r['gap_type'], r['basis'])} {r['n']}건" for r in rows)
+        return {"text": f"소명 대상 Gap은 모두 {total}건입니다({parts}).",
+                "table": _tbl(["종류", "건수"], [[_gap_label(r["gap_type"], r["basis"]), str(r["n"])] for r in rows] + [["합계", str(total)]])}
+    finally:
+        con.close()
+
+
+def q_org_gap_count(base, limit=None):
+    info = months()
+    ver = _best_version(info, base["year"], base["month"])
+    con = _con()
+    try:
+        rows = con.execute("SELECT org_code, org_name, COUNT(*) n FROM gap WHERE version=? GROUP BY org_code, org_name ORDER BY n DESC, org_code" + (" LIMIT ?" if limit else ""), (ver,) + ((int(limit),) if limit else ())).fetchall() if ver else []
+        if not rows:
+            return {"text": "Gap 데이터가 없습니다."}
+        tot = con.execute("SELECT COUNT(*) FROM gap WHERE version=?", (ver,)).fetchone()[0]
+        return {"text": f"조직별 Gap 건수입니다(전체 {tot}건, 건수 많은 순, 같으면 조직 코드 순).",
+                "table": _tbl(["순위", "조직", "Gap 건수"], [[str(i), r["org_name"], str(r["n"])] for i, r in enumerate(rows, 1)])}
+    finally:
+        con.close()
+
+
+def q_explanation_count(base):
+    info = months()
+    ver = _best_version(info, base["year"], base["month"])
+    con = _con()
+    try:
+        rows = con.execute("SELECT COALESCE(status,'상태 없음') st, COUNT(*) n FROM explanation WHERE version=? GROUP BY st ORDER BY n DESC", (ver,)).fetchall() if ver else []
+        if not rows:
+            return {"text": "소명 데이터가 없습니다."}
+        total = sum(r["n"] for r in rows)
+        ng = con.execute("SELECT COUNT(*) FROM gap WHERE version=?", (ver,)).fetchone()[0]
+        return {"text": f"소명은 모두 {total}건입니다(" + ", ".join(f"{r['st']} {r['n']}건" for r in rows) + f"). Gap {ng}건 중 소명이 연결된 항목은 {ng - len(_unlinked(con, ver))}건입니다.",
+                "table": _tbl(["상태", "건수"], [[r["st"], str(r["n"])] for r in rows] + [["합계", str(total)]])}
+    finally:
+        con.close()
+
+
+def _unlinked(con, ver):
+    return con.execute("SELECT gap_id FROM gap WHERE version=? AND gap_id NOT IN (SELECT gap_id FROM explanation WHERE version=? AND gap_id IS NOT NULL)", (ver, ver)).fetchall()
+
+
+def q_cost_top(base, limit=None, org=None, metric="영업비용"):
+    """비용(또는 매출) 상위 소분류 항목. 조직을 주면 그 조직만."""
+    info = months()
+    ver = _best_version(info, base["year"], base["month"])
+    con = _con()
+    try:
+        n = int(limit) if limit else 10
+        sql = "SELECT COALESCE(NULLIF(cat2,''), NULLIF(cat1,''), item) nm, SUM(amount_won) s FROM fact WHERE version=? AND kind=? AND year=? AND month=? AND scenario IN ('ACTUAL','ESTIMATE')" + (" AND org_code=?" if org else "") + " GROUP BY nm ORDER BY s DESC LIMIT ?"
+        rows = con.execute(sql, (ver, metric, base["year"], base["month"]) + ((org,) if org else ()) + (n,)).fetchall() if ver else []
+        if not rows:
+            return {"text": f"{base['year']}년 {base['month']}월 {metric} 항목: 데이터 없음."}
+        who = next((o["name"] for o in info["orgs"] if o["code"] == org), None) or "전사"
+        return {"text": f"{base['year']}년 {base['month']}월 {who} {metric} 상위 {len(rows)}개 항목입니다(소분류 기준, 억원).",
+                "table": _tbl(["순위", "항목", "금액(억원)"], [[str(i), r["nm"], eok(r["s"])] for i, r in enumerate(rows, 1)])}
+    finally:
+        con.close()
+
+
+def q_monthly(base, metric, org=None):
+    """한 지표의 월별 추이(실적 1~현재월, 이후는 추정). 기준 연도의 DB 값만 쓴다."""
+    info = months()
+    con = _con()
+    try:
+        col = METRIC_COL[metric]
+        vers = [m["version"] for m in info["months"] if m["year"] == base["year"]]
+        ver = _best_version(info, base["year"], base["month"])
+        rows = con.execute(f"SELECT month, scenario, SUM({col}) s FROM v_op WHERE version=? AND year=? AND scenario IN ('ACTUAL','ESTIMATE')" + (" AND org_code=?" if org else "") + " GROUP BY month, scenario ORDER BY month", (ver, base["year"]) + ((org,) if org else ())).fetchall() if ver else []
+        if not rows:
+            return {"text": f"{base['year']}년 {metric} 월별 추이: 데이터 없음."}
+        who = next((o["name"] for o in info["orgs"] if o["code"] == org), None) or "전사"
+        return {"text": f"{base['year']}년 {who} {metric} 월별 추이입니다(억원, 추정은 표시).",
+                "table": _tbl(["월", f"{metric}(억원)", "구분"], [[f"{r['month']}월", eok(r["s"]), "추정" if r["scenario"] == "ESTIMATE" else "실적"] for r in rows])}
+    finally:
+        con.close()
+
+
 def q_org_explanation(base, org_code):
     info = months()
     ver = _best_version(info, base["year"], base["month"])
@@ -602,7 +757,7 @@ def _col_label(c, base):
     return str(c.get("label") or "열")
 
 
-def fill_spec_table(con, info, base, spec, cause):
+def fill_spec_table(con, info, base, spec, cause, guess=None):
     """스펙대로 표를 그린다. 칸 값은 전부 조회 DB 에서 코드가 계산한 값이고, 계산할 수 없으면 '데이터 없음'."""
     orgs = info["orgs"]
     cols = [c for c in (spec.get("cols") or []) if c.get("t") in COL_KINDS]
@@ -612,10 +767,15 @@ def fill_spec_table(con, info, base, spec, cause):
     for r in spec.get("rows") or []:
         t = r.get("t")
         org = r.get("code") if t == "org" and any(o["code"] == r.get("code") for o in orgs) else None
+        if org and SCOPE_ORGS.get() and org not in SCOPE_ORGS.get():
+            continue
         metric = r.get("metric") if t == "metric" and r.get("metric") in METRIC_COL else ("영업이익" if org else None)
         label = (next((o["name"] for o in orgs if o["code"] == org), "") if org else (r.get("metric") if t == "metric" else r.get("label"))) or "—"
-        bs = _bases(con, info, y, m, METRIC_COL[metric], org) if metric else None
-        cells = [{"text": str(label)}]
+        gm = None
+        if metric is None and (guess or {}).get(r.get("label")) in METRIC_COL:           # AI 가 추측한 지표
+            metric = gm = guess[r.get("label")]
+        bs = _bases(con, info, y, m, METRIC_COL[metric], org or SCOPE_ORG.get()) if metric else None
+        cells = [{"text": str(label), **({"guess": gm} if gm else {})}]
         for c in cols:
             ct = c["t"]
             txt, miss = "데이터 없음", True
@@ -637,7 +797,7 @@ def fill_spec_table(con, info, base, spec, cause):
     return out, miss_any
 
 
-def _chart(con, info, base, metric, limit, ctype="bar", scope=None, months_n=None):
+def _chart(con, info, base, metric, limit, ctype="bar", scope=None, months_n=None, months=None):
     """차트용 값. bar·donut=조직별(상위 N, scope=조직 코드 목록이면 그 조직만), line=월별 추이(최근 N개월), waterfall=계획→조직별 증감→실적. 값은 모두 DB 합계(코드 계산)."""
     ver = _best_version(info, base["year"], base["month"])
     if ver is None or metric not in METRIC_COL:
@@ -645,8 +805,10 @@ def _chart(con, info, base, metric, limit, ctype="bar", scope=None, months_n=Non
     col = METRIC_COL[metric]
     if ctype == "line":
         n = int(months_n or 12)
+        sel = [int(x) for x in (months or []) if isinstance(x, int) and 1 <= x <= 12]
         rs = con.execute(f"SELECT month, SUM({col}) s FROM v_op WHERE version=? AND year=? AND scenario='ACTUAL' AND month<=?" + (" AND org_code IN (%s)" % ",".join("?" * len(scope)) if scope else "") + " GROUP BY month ORDER BY month",
-                         (ver, base["year"], base["month"]) + tuple(scope or ())).fetchall()[-n:]
+                         (ver, base["year"], 12 if sel else base["month"]) + tuple(scope or ())).fetchall()
+        rs = [r for r in rs if r["month"] in sel] if sel else rs[-n:]                # 사용자가 고른 월이 있으면 그 월만, 없으면 최근 N개월
         return [{"name": f"{r['month']}월", "won": r["s"], "text": eok(r["s"])} for r in rs], not rs
     if ctype == "waterfall":
         q = f"SELECT org_name, SUM(CASE WHEN scenario='ACTUAL' THEN {col} ELSE 0 END) a, SUM(CASE WHEN scenario='PLAN' THEN {col} ELSE 0 END) p FROM v_op WHERE version=? AND year=? AND month=? GROUP BY org_code, org_name"
@@ -679,7 +841,7 @@ def _numbercards(con, info, base, cards, metrics):
             miss = True
             out.append(item)
             continue
-        v = _bases(con, info, base["year"], base["month"], METRIC_COL[metric], None)
+        v = _bases(con, info, base["year"], base["month"], METRIC_COL[metric], SCOPE_ORG.get())
         cur = v["현재"]
         if cur is None:
             item["missing"] = True
@@ -724,4 +886,14 @@ def query_exec(q: dict, base: dict) -> dict:
         return q_org_explanation(b, q["org"])
     if t == "unexplained":
         return q_unexplained(b)
+    if t == "gap_count":
+        return q_gap_count(b)
+    if t == "org_gap_count":
+        return q_org_gap_count(b, q.get("limit"))
+    if t == "explanation_count":
+        return q_explanation_count(b)
+    if t == "cost_top":
+        return q_cost_top(b, q.get("limit"), q.get("org"), metric if metric in ("매출", "영업비용") else "영업비용")
+    if t == "monthly":
+        return q_monthly(b, metric, q.get("org"))
     return {"text": "데이터 없음"}
