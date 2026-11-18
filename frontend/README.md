@@ -1,5 +1,9 @@
 # 손익관리 프런트엔드
 
+## 최신 피그마 프론트 프로토타입
+
+2026-11-18 디자인 체험본은 `npm run dev:prototype`으로 실행한 뒤 `/prototype.html`에서 확인한다. 기존 서버 연결용 앱과 분리한 로컬 예시이며, 체험 계정·지원 범위·검증 결과는 [PROTOTYPE.md](PROTOTYPE.md)를 따른다. 아래 설명은 가져온 기존 API 연결용 앱의 기록이다.
+
 Vue 3.5 · Vite 8 · Vue Router · Pinia로 Figma의 조직 담당자 v3와 경영기획팀 6개 화면을 구현한다. Tailwind 및 별도 UI 라이브러리는 사용하지 않는다.
 
 ## 체험 흐름
