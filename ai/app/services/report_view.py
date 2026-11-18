@@ -299,3 +299,63 @@ def report_safe(d: dict) -> dict:
                 if x["verdict"] != "ACCEPTED":
                     x["answer"] = None
     return d
+
+
+# ---------------------------------------------------------------------------------------------
+# 프론트 보고서 화면(PlannerReports.vue)용 요약. 숫자는 보고서 데이터의 값을 그대로 쓰고 서식(콤마·부호)만 입힌다.
+def _num(eok: str | None) -> str:
+    if eok is None:
+        return "-"
+    neg = eok.startswith("-")
+    a = eok.lstrip("-")
+    head, _, frac = a.partition(".")
+    out = f"{int(head):,}" + (f".{frac}" if frac else "")
+    return ("−" if neg else "") + out
+
+
+def _delta(d: dict | None) -> tuple[str, str]:
+    """(▲18.5, +11.6%) 형태. 값이 없으면 ('-', '-')."""
+    if not d or d.get("diff_eok") is None:
+        return "-", "-"
+    diff = d["diff_eok"]
+    arrow = d.get("direction") or ("▼" if diff.startswith("-") else "▲")
+    pct = d.get("percent")
+    p = "-" if pct is None else ("−" if pct.startswith("-") else "+") + _num(pct.lstrip("-")) + "%"
+    return f"{arrow}{_num(diff.lstrip('-'))}", p
+
+
+def screen_payload(data: dict, state: str = "final") -> dict:
+    """보고서 화면에 필요한 값만 추린다(원천·수식 설명은 뺀다). 주별 매출 증감률은 만들지 않는다(weekly=None)."""
+    r, km, m = data["report"][state], data["keyMessages"][state], data["master"][state]
+    st = r["summary_table"]
+    rows = []
+    for x in st["rows"]:
+        d1, p1 = _delta(x.get("vs_last_month"))
+        d2, p2 = _delta(x.get("vs_last_year"))
+        rows.append([x["metric"], _num(x["last_year_same_month"]["value_eok"]), _num(x["last_month"]["value_eok"]), _num(x["this_month"]["value_eok"]), d1, p1, d2, p2])
+    b = r["op_bridge"]
+    steps = [{"label": s["label"], "value": (_num(s["value_eok"]) if s["type"] == "total" else ("+" if not s["delta_eok"].startswith("-") else "−") + _num(s["delta_eok"].lstrip("-"))),
+              "eok": float(s["value_eok"] if s["type"] == "total" else s["delta_eok"]), "type": s["type"]} for s in b["steps"]]
+    sign = "−" if b["total_delta_eok"].startswith("-") else "+"
+    plan, latest = steps[0], steps[-1]
+    caption = f"연간 계획 {plan['value']} → 최신 추정 {latest['value']} ({sign}{_num(b['total_delta_eok'].lstrip('-'))}, {sign}{_num(b['total_delta_percent'].lstrip('-'))}%) · {b['unit']}"
+    ex = r["explanation_inline"]
+    acc = [i for i in ex["items"] if i.get("status") == "수락" and i.get("text") and i.get("included_in_scope")]
+    acc.sort(key=lambda i: -abs(int(i["observed_diff_won"])))
+    reason = None
+    if acc:
+        i = acc[0]
+        arrow = "▼" if int(i["observed_diff_won"]) < 0 else "▲"
+        reason = {"title": f"{arrow} {i['item']} 소명 · [{i['org_name']}]", "cause": i["text"]}
+    label = r["data_status"]
+    return {
+        "state": state, "data_status": label, "master_version": m.get("version") or r.get("master_version"), "base_month": r["base_month"],
+        "unit": r["unit"], "scope": f"전사({r['scope']['orgs']}개 조직)", "approval_label": m.get("approval_label"),
+        "banner": None if label == "확정" else f"{label} {m.get('approval_label') or ''} · 공식 master 생성 전 · 미수락 소명 {ex['pending_count']}건은 “검토중”으로 표기".strip(),
+        "summary": {"caption": st["subtitle"], "rows": rows}, "bridge": {"caption": caption, "steps": steps},
+        "message": [s["text"] for s in km["sentences"]], "reason": reason, "weekly": None,
+        "gap_counts": {k: data["gapCounts"].get(k) for k in ("gaps_total", "item_revision_gaps", "op_gaps", "gaps_without_explanation", "explanation_keys")},
+        "explanations": [{"org_name": x["org_name"], "item": x["item"], "ym": x["ym"], "gclass": x["gclass"], "diff_eok": x["diff_eok"], "basis": x["diff_basis"],
+                          "status": (x["st_final"] or ["-"])[0], "dfr": (x["dfr"] or [None])[0], "answer": x["latest_answer"], "resub": x["resub"]}
+                         for x in data["records"]],
+    }

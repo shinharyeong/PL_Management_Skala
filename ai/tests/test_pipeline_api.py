@@ -54,7 +54,7 @@ def stub_execute(monkeypatch):
     """무거운 파싱·계산은 모의로 바꾸고 호출 인자만 확인한다."""
     calls = []
 
-    def fake(run_id, upload_report, s, data_dir, out_dir, ai, timings=None):
+    def fake(run_id, upload_report, s, data_dir, out_dir, ai, timings=None, progress=None):
         calls.append({"ai": ai, "data_dir": data_dir, "xlsx": len(list((data_dir / "01_excel").rglob("*.xlsx")))})
         ok = {"status": "OK", "message": "모의"}
         return {"parse": ok, "gaps": ok, "master": ok, "report": ok}
@@ -117,14 +117,15 @@ def test_disallowed_files_are_rejected(no_parse, isolated):
     assert not list(root.rglob("evil.exe")) and not list(root.rglob("notes.txt"))
 
 
-def test_fake_xlsx_and_bad_names_are_rejected(no_parse):
+def test_fake_xlsx_is_rejected_but_nonstandard_names_go_to_generic_mode(no_parse):
     extra = [("01_excel/annual_plan/10_사업부10/F99_2026-PLAN.xlsx", b"not a zip"), ("01_excel/baseline_2026_10/10_사업부10/hello.xlsx", fake_xlsx()),
              ("F10_2026-11.xlsx", fake_xlsx()), ("01_excel/annual_plan/10_사업부10/F10_2026-11.xlsx", fake_xlsx())]
-    v = {x["name"]: x["code"] for x in post(make_files(extra=extra)).json()["stages"]["upload"]["violations"]}
-    assert v["01_excel/annual_plan/10_사업부10/F99_2026-PLAN.xlsx"] == "NOT_XLSX"
-    assert v["01_excel/baseline_2026_10/10_사업부10/hello.xlsx"] == "BAD_FILENAME"
-    assert v["F10_2026-11.xlsx"] == "NO_FOLDER"
-    assert v["01_excel/annual_plan/10_사업부10/F10_2026-11.xlsx"] == "NAME_FOLDER_MISMATCH"
+    up = post(make_files(extra=extra)).json()["stages"]["upload"]
+    v = {x["name"]: x["code"] for x in up["violations"]}
+    assert v["01_excel/annual_plan/10_사업부10/F99_2026-PLAN.xlsx"] == "NOT_XLSX"           # 엑셀이 아닌 파일은 여전히 거부
+    roles = {f["name"]: f["role"] for f in up["files"]}
+    assert roles["01_excel/baseline_2026_10/10_사업부10/hello.xlsx"] == "GENERIC" and roles["F10_2026-11.xlsx"] == "GENERIC"       # 표준 규칙 밖은 일반 모드
+    assert roles["01_excel/annual_plan/10_사업부10/F10_2026-11.xlsx"] == "GENERIC" and up["mode"] == "generic"
 
 
 def test_zip_slip_is_blocked(no_parse, isolated):
@@ -202,3 +203,16 @@ def test_pipeline_failure_is_reported_per_stage(monkeypatch):
 def test_excel_lock_file_is_ignored_not_rejected(stub_execute):
     body = post(make_files(extra=[("01_excel/annual_plan/10_사업부10/~$F10_2026-PLAN.xlsx", b"x")])).json()
     assert body["stages"]["upload"]["violations"] == [] and body["stages"]["upload"]["status"] in ("OK", "WARN")
+
+
+def test_zip_member_names_without_utf8_flag_are_decoded(no_parse):
+    """맥 zip 처럼 UTF-8 표시가 없는 압축 파일의 한글 이름을 바르게 읽는다(이름 바이트를 직접 바꿔 표시 없는 zip 을 만든다)."""
+    name = "01_excel/annual_plan/01_사업부1/F10_2026-PLAN.xlsx"
+    raw = name.encode("utf-8")
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, "w") as z:
+        z.writestr(zipfile.ZipInfo("x" * len(raw)), fake_xlsx())
+    data = b.getvalue().replace(b"x" * len(raw), raw)
+    assert zipfile.ZipFile(io.BytesIO(data)).infolist()[0].flag_bits & 0x800 == 0
+    up = post([("bundle.zip", data)]).json()["stages"]["upload"]
+    assert any(f["name"] == f"bundle.zip!{name}" and f["role"] == "PLAN" and f["ok"] for f in up["files"])

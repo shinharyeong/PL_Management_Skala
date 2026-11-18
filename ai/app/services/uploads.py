@@ -19,6 +19,7 @@ from pathlib import Path
 FOLDER_ROLE = {"annual_plan": "PLAN", "baseline_2026_10": "BASELINE", "submission_2026_11": "SUBMISSION", "revisions": "REVISION"}
 NAME_RE = re.compile(r"^(F\d+)_(\d{4})-(PLAN|\d{2})\.xlsx$")
 ORGDIR_RE = re.compile(r"^\d+_")
+ORG_FILE_RE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{1,3}\d{2,4}(?![A-Za-z0-9])")   # 일반 모드: 파일 이름의 조직코드
 SCENARIO_RE = re.compile(r"^\d{2}_.+\.json$")
 ALLOWED_EXT = (".xlsx", ".json")
 CONTAINER_EXT = ".zip"          # 압축 묶음은 풀어서 같은 규칙으로 검사한다(안의 zip 은 거부)
@@ -57,6 +58,25 @@ def _norm(name: str) -> tuple[list[str] | None, str | None]:
     return parts, None
 
 
+def _strict_xlsx(e: Entry, parts: list[str], base: str) -> str | None:
+    """표준 규칙(역할 폴더·{조직코드}_YYYY-MM.xlsx·조직 폴더)을 지키면 e 를 채우고 None, 아니면 벗어난 이유."""
+    m = NAME_RE.match(base)
+    if not m:
+        return "파일 이름이 {조직코드}_YYYY-MM.xlsx 형식이 아님"
+    idx = next((i for i, p in enumerate(parts[:-1]) if p in FOLDER_ROLE), None)
+    if idx is None:
+        return "역할 폴더가 경로에 없음"
+    folder, rest = parts[idx], parts[idx + 1:]
+    if len(rest) < 2 or not ORGDIR_RE.match(rest[0]):
+        return "조직 폴더가 경로에 없음"
+    want = {"annual_plan": "PLAN", "baseline_2026_10": "10", "submission_2026_11": "11", "revisions": "11"}[folder]
+    if m.group(3) != want:
+        return "파일 이름의 연월이 폴더와 맞지 않음"
+    e.org_code, e.folder, e.role = m.group(1), folder, FOLDER_ROLE[folder]
+    e.stored = "/".join(["01_excel", folder, *rest])
+    return None
+
+
 def classify(name: str, data: bytes, *, from_zip: bool = False) -> Entry:
     e = Entry(name=name, size=len(data), data=data)
     parts, err = _norm(name)
@@ -89,30 +109,16 @@ def classify(name: str, data: bytes, *, from_zip: bool = False) -> Entry:
         except zipfile.BadZipFile:
             e.ok, e.code, e.message = False, "NOT_XLSX", "엑셀 파일 구조가 아닙니다."
             return e
-        m = NAME_RE.match(base)
-        if not m:
-            e.ok, e.code, e.message = False, "BAD_FILENAME", "파일 이름은 {조직코드}_YYYY-MM.xlsx 또는 {조직코드}_YYYY-PLAN.xlsx 형식이어야 합니다."
-            return e
-        e.org_code = m.group(1)
-        idx = next((i for i, p in enumerate(parts[:-1]) if p in FOLDER_ROLE), None)
-        if idx is None:
-            e.ok, e.code, e.message = False, "NO_FOLDER", "역할 폴더(annual_plan / baseline_2026_10 / submission_2026_11 / revisions)가 경로에 없어 역할을 알 수 없습니다."
-            return e
-        folder, rest = parts[idx], parts[idx + 1:]
-        e.folder, e.role = folder, FOLDER_ROLE[folder]
-        if len(rest) < 2 or not ORGDIR_RE.match(rest[0]):
-            e.ok, e.code, e.message = False, "NO_ORG_FOLDER", "조직 폴더(예: 01_사업부1/)가 경로에 없습니다."
-            return e
-        kind = m.group(3)
-        want = {"annual_plan": "PLAN", "baseline_2026_10": "10", "submission_2026_11": "11", "revisions": "11"}[folder]
-        if kind != want:
-            e.ok, e.code, e.message = False, "NAME_FOLDER_MISMATCH", f"파일 이름의 '{m.group(2)}-{kind}'과 폴더 '{folder}'가 맞지 않습니다."
-            return e
-        e.stored = "/".join(["01_excel", folder, *rest])
+        strict = _strict_xlsx(e, parts, base)
+        if strict is not None:                # 표준 규칙(역할 폴더·파일 이름)이 아니면 일반 모드로 읽는다(거부하지 않음)
+            mo = ORG_FILE_RE.search(unicodedata.normalize("NFC", base))
+            e.role, e.org_code, e.folder, e.ok, e.code = "GENERIC", (mo.group(0) if mo else None), None, True, None
+            e.message = f"표준 이름·폴더 규칙이 아니라 일반 모드로 읽습니다({strict})."
+            e.stored = "/".join(["01_excel", "_generic", *parts])
         return e
     # .json
     low = base.lower()
-    if low == "explanations.json":
+    if low == "explanations.json" or "explan" in low or "소명" in low:
         e.role, e.stored = "EXPLANATIONS", "02_scenarios/explanations.json"
     elif low == "approval_snapshots.json":
         e.role, e.stored = "APPROVALS", "02_scenarios/approval_snapshots.json"
@@ -126,6 +132,16 @@ def classify(name: str, data: bytes, *, from_zip: bool = False) -> Entry:
         except Exception:
             e.ok, e.code, e.message = False, "BAD_JSON", "JSON 형식이 올바르지 않습니다."
     return e
+
+
+def _zip_name(info: zipfile.ZipInfo) -> str:
+    """압축 파일 안의 이름을 바르게 읽는다. UTF-8 표시가 없는 zip(맥 zip·일부 윈도우 도구)은 파이썬이 cp437 로 잘못 읽으므로 UTF-8 로 다시 해석한다."""
+    if info.flag_bits & 0x800:
+        return info.filename
+    try:
+        return info.filename.encode("cp437").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return info.filename
 
 
 def expand(files: list[tuple[str, bytes]], s) -> tuple[list[Entry], list[dict]]:
@@ -168,8 +184,9 @@ def expand(files: list[tuple[str, bytes]], s) -> tuple[list[Entry], list[dict]]:
                 request_issues.append({"code": "TOO_MANY_FILES", "message": f"압축 파일 안의 파일이 너무 많습니다(상한 {s.upload_max_files}개)."})
                 continue
             for info in members:
-                inner = f"{name}!{info.filename}"
-                parts, err = _norm(info.filename)
+                inner = f"{name}!{_zip_name(info)}"
+                member = _zip_name(info)
+                parts, err = _norm(member)
                 if err:  # zip slip: 이름이 상위 경로로 나가거나 절대경로
                     add(Entry(name=inner, kind="zip-member", ok=False, code="ZIP_SLIP" if err in ("PATH_TRAVERSAL", "PATH_NOT_ALLOWED") else err,
                               message="압축 파일 안의 경로가 안전하지 않아 받지 않았습니다(상위 폴더로 나가는 경로)."))
@@ -177,7 +194,7 @@ def expand(files: list[tuple[str, bytes]], s) -> tuple[list[Entry], list[dict]]:
                 if info.file_size > max_file or (info.compress_size and info.file_size > 1024 * 1024 and info.file_size / max(info.compress_size, 1) > ZIP_BOMB_RATIO):
                     add(Entry(name=inner, size=info.file_size, ok=False, code="TOO_LARGE", message=f"압축 해제 크기가 상한({s.upload_max_file_mb}MB)을 넘거나 비정상적으로 큽니다."))
                     continue
-                inner_e = classify(info.filename, zf.read(info), from_zip=True)
+                inner_e = classify(member, zf.read(info), from_zip=True)
                 inner_e.name = inner
                 add(inner_e)
         else:
@@ -185,9 +202,16 @@ def expand(files: list[tuple[str, bytes]], s) -> tuple[list[Entry], list[dict]]:
     return entries, request_issues
 
 
+def is_generic(entries: list[Entry]) -> bool:
+    """표준 규칙을 벗어난 엑셀이 하나라도 있으면 일반 모드로 처리한다."""
+    return any(e.ok and e.kind == "xlsx" and e.role == "GENERIC" for e in entries)
+
+
 def completeness(entries: list[Entry]) -> dict:
     """필수 파일 점검: 소명 JSON·승인 JSON 이 있어야 하고, 승인 목록의 조직마다 계획·baseline·최종 제출 파일이 있어야 한다."""
     ok = [e for e in entries if e.ok]
+    if is_generic(entries):
+        return {"expected_orgs": [], "missing": []}
     roles = {}
     for e in ok:
         roles.setdefault(e.role, []).append(e)
@@ -259,6 +283,11 @@ def summarize(entries: list[Entry], request_issues: list[dict], comp: dict) -> d
     else:
         status = "OK"
         message = f"엑셀 {xl}개({len(orgs)}개 조직)와 소명·승인 파일을 확인했습니다."
+    if status == "OK" and is_generic(entries):
+        has_exp = bool(by_role.get("EXPLANATIONS"))
+        return {"status": "WARN", "message": f"엑셀 {xl}개({len(orgs)}개 조직)를 일반 모드로 읽습니다." + ("" if has_exp else " 소명 JSON 이 없어 Gap 은 '소명 없음'으로 처리합니다."),
+                "files": files, "violations": violations, "missing": comp["missing"], "expected_orgs": comp["expected_orgs"], "mode": "generic",
+                "counts": {"received": len(entries), "accepted": sum(1 for e in entries if e.ok), "xlsx": xl, "orgs": len(orgs), "by_role": by_role}}
     extra = [e for e in entries if e.ok and e.role in ("IGNORED",)]
     if status == "OK" and extra:
         status, message = "WARN", message + f" 사용하지 않는 JSON {len(extra)}개는 무시합니다."

@@ -91,3 +91,32 @@ python -m pytest -q                    # 모의 호출만 사용(실제 네트�
 2. **계획·추정 값의 출처**: REP-01 은 ACTUAL 만 주므로 계획(PLAN)과 연간 최신 추정(ESTIMATE)을 어느 API·테이블에서 받을지.
 3. **Gap 규칙 확정**: 임계값(예: 5%, 10백만원은 예시), 문서 규칙(영업이익 중심)과 화면(항목 단위) 차이, 이연/실제 총액 변화 판정 기준(직전 추정=계획 전제, 현재는 코드 판정 + 팀 확인).
 4. 월별 시계열·누적 보기에 필요한 **월별 master 목록** 제공 여부.
+
+## 프론트 보고서 화면 연결 (GET /v1/report/latest)
+
+- 가장 최근에 끝난(전체 OK) 실행의 보고서를 화면용으로 추려 돌려줍니다. 완료된 실행이 없으면 404 이고, 프론트는 기존 예시 값을 그대로 보여 줍니다.
+- 응답: `run_id`, `data_status`(확정/잠정), `master_version`, `base_month`, `summary`(caption, rows), `bridge`(caption, steps), `message`(문장 목록), `reason`(대표 소명 1건), `banner`(잠정일 때만), `weekly`(항상 null — 주별 매출 증감률은 만들지 않음). `?state=provisional` 로 잠정 버전을 받을 수 있습니다.
+- 브라우저는 `/ai/v1/...` 로 부르고, 개발은 vite 프록시(`/ai` → localhost:8000), 배포는 nginx(`/ai/` → `ai:8000`)가 `/ai` 를 떼어 전달합니다. compose 에 ai 서비스(Dockerfile)는 아직 없습니다.
+
+## 업로드 → 보고서 → 챗봇 흐름 (화면 /planning/ai)
+
+1. 화면의 "엑셀 업로드 · 실행"에서 폴더나 파일(엑셀·소명 JSON·zip)을 골라 올립니다 → `POST /v1/pipeline/start`(run_id 즉시 반환).
+2. 화면이 `GET /v1/pipeline/runs/{run_id}/status` 를 1초마다 불러 단계(업로드·파싱·Gap·master·보고서)를 보여 줍니다.
+3. 끝나면 새 실행이 선택되어 보고서·소명 목록·챗봇이 그 실행을 씁니다. 실행 선택 드롭다운은 `GET /v1/pipeline/runs` 에서 채웁니다.
+
+**처리 방식 두 가지**
+- 표준 구조(`annual_plan`·`baseline_2026_10`·`submission_2026_11`·`revisions` 폴더 + `{조직코드}_YYYY-MM.xlsx` + 소명·승인 JSON): 문서 기준 전체 파이프라인(master·이연 판정 포함).
+- 그 밖의 모든 엑셀: **일반 모드**. 마감 연월·조직코드는 폴더·파일 이름에서, 시트·헤더 위치·단위(원/천원/만원/백만원/억원)는 파일에서 읽습니다. 못 읽은 파일·시트·칸(시트 없음, 연도 머리 없음, 숫자 아님, 빈 칸, 오류값, 중복, 마스터 파일)은 멈추지 않고 경고로 남기며 보고서와 화면에 표시합니다. 소명 JSON 이 없으면 Gap 은 "소명 없음"입니다. 공식 master 는 없고 마감월 조직 합계로 보고합니다.
+
+**챗봇 조회 DB** 는 마지막으로 적재·선택한 실행만 담습니다(다른 실행의 조직·버전이 섞이지 않음). 실행을 바꾸면 `POST /v1/chat/load {run_id}` 로 다시 적재합니다(일반 모드는 보관된 업로드 원본을 다시 읽음 — `AI_UPLOAD_KEEP=false` 면 불가).
+
+## 기동·종료
+```
+# ai 서버 (포트 8000)
+cd ai && python3 -B -m uvicorn app.main:app --port 8000
+# 팀 앱(DB·백엔드·프론트) — 루트 .env 필요(docs/development/local-environment.md)
+bash scripts/dev-up.sh        # 프론트 http://127.0.0.1:5173 (nginx 가 /ai/ 를 호스트의 8000 으로 전달)
+bash scripts/dev-down.sh
+# 프론트만 개발 서버: cd frontend && npx vite   (/api → 8080, /ai → 8000 프록시)
+```
+환경변수(`ai/.env.example`): `AI_DAILY_CALL_LIMIT`, `AI_UPLOAD_MAX_FILES`(기본 150), `AI_UPLOAD_MAX_TOTAL_MB`(기본 400), `AI_PARSE_WORKERS`, `CHAT_MEMORY`, `CHAT_TEST_LOG`. nginx 의 `/ai/` 업로드 상한은 300MB 입니다.
