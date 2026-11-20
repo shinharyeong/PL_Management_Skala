@@ -1,14 +1,14 @@
 # backend
 
 Spring Boot 3.4.1 · Java 21 · JDBC/Flyway · PostgreSQL 기반 제출 접수 백엔드다.
-전체 API 설계 35개 중 요청·업로드·실제 Python 파싱·최초 연간 PLAN 검증/적재·최종 제출·상태/금액/진단/원본 조회·승인/반려 18개 경로를 구현했다.
+V1~V11 마이그레이션과 서비스 API 92개 메서드·경로를 구현한다. 제출·파싱·검증·소명·승인·공식 마스터에 PRD v8.5의 설정·두 소명 정책·보고 작성을 연결했다. 운영 실행 검증 범위는 아래 문서를 따른다.
 
 - [전체 API 명세](../docs/development/api-contract.md)
 - [설정·실행·파서 연결·남은 작업](../docs/development/backend-integration.md)
 - [함수 명세](../docs/development/backend-function-reference.md)
 
 파싱 직후 초안은 validationState=NOT_RUN, canSubmit=false다. 담당자의 validation 명령은 원본 조직·연간 월·보고 분류·정확한 금액·합계 근거를 검증하고, 준비된 초안만 submit으로 PENDING·제출 회차를 부여한다. 기획자는 선택 적재행·보고 집계·진단·정확한 원본 셀을 조회한다. 파싱 후보는 amountUnit=KRW일 때만 원 단위이며 미확정 단위의 숫자는 후보로 보존한다.
-경영기획팀의 연간 제출 승인·반려와 검토자·시각·반려 사유 조회를 지원한다. 수정 소명·월간 Gap 비교/승인·연간 확정·공식 마스터 발행은 후속 구현이다.
+경영기획팀의 연간 제출 승인·반려와 검토자·시각·반려 사유 조회를 지원한다. 수정 소명·월간 Gap·연간 확정·공식 마스터 발행, 구조화 반려, 임의 비교 요청을 지원한다. 보고 자료는 미리보기 후 명시 적용으로 새 버전을 저장한다.
 
 ## 실행
 
@@ -37,13 +37,13 @@ cd backend
 mkdir -p build/tmp
 export GRADLE_USER_HOME="$PWD/.gradle-user-home"
 export JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=$PWD/build/tmp"
-./gradlew --no-daemon test
+./gradlew --no-daemon --project-cache-dir .gradle-user-home/project-cache test
 # DB·인증 환경변수와 사용자 등록을 준비한 뒤 별도 실행
 ./gradlew --no-daemon bootRun
 ```
 
 테스트는 H2 메모리 DB·합성 XLSX·실제 Python 프로세스를 사용한다.
-PostgreSQL·Data/·임시 XLSX 파일은 테스트에 사용하지 않는다.
+기본 테스트는 PostgreSQL·Data/를 사용하지 않는다. 실제 원본을 읽는 별도 opt-in 검사는 기본 실행에서 제외한다. 임시파일은 허용된 build/tmp로 제한한다.
 상태 확인: `GET http://localhost:8080/actuator/health`
 
 ## 구조
@@ -55,3 +55,5 @@ src/test/java/io/skala/backend/   # 테스트
 ```
 
 로컬 전용 설정(DB 비밀번호 등)은 `application-local.yml`에 두고 커밋하지 않습니다.
+
+보고 작성 환경·계약은 [report-authoring.md](../docs/development/report-authoring.md), 설정·소명 정책은 [prd-workflow-api.md](../docs/development/prd-workflow-api.md)를 따른다.

@@ -16,6 +16,7 @@ import PlannerReports from '@/components/PlannerReports.vue'
 import PlannerNotifications from '@/components/PlannerNotifications.vue'
 import AnnualMaster from '@/components/AnnualMaster.vue'
 import MonthlyMaster from '@/components/MonthlyMaster.vue'
+import PlannerSettings from '@/components/PlannerSettings.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -35,6 +36,7 @@ const router = createRouter({
     { path: '/planning/annual-plan/new', name: 'planning-annual-create', component: PlannerRequestCreate, meta: { title: '연간 계획 요청', plannerCanvas: true } },
     { path: '/planning/organizations', name: 'planning-organizations', component: PlannerOrganizations, meta: { title: '조직별 현황', plannerCanvas: true } },
     { path: '/planning/reports', name: 'planning-reports', component: PlannerReports, meta: { title: '보고서', plannerCanvas: true } },
+    { path: '/planning/settings', name: 'planning-settings', component: PlannerSettings, meta: { title: '설정', plannerCanvas: true } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })

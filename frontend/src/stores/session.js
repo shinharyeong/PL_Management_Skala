@@ -13,6 +13,8 @@ export const useSession = defineStore('session', function sessionStore() {
   const entering = ref(false)
   const entryError = ref('')
   const unreadCount = ref(0)
+  const profileConfirmed = ref(false)
+  const reviewWorkspaces = ref([])
   let lifetime = new AbortController()
 
   /** 진행 중인 요청을 취소하고 역할을 초기화한다.
@@ -27,6 +29,8 @@ export const useSession = defineStore('session', function sessionStore() {
     entering.value = false
     entryError.value = ''
     unreadCount.value = 0
+    profileConfirmed.value = false
+    reviewWorkspaces.value = []
   }
 
   /** 인증 헤더와 취소 신호를 적용하고 안전한 API 오류를 변환한다.
@@ -92,6 +96,46 @@ export const useSession = defineStore('session', function sessionStore() {
    */
   function accept(result) { clear(); token.value = result.token; actor.value = result.actor; organizations.value = result.organizations || [] }
 
+  /** 서버가 확인한 소속·역할 확인 결과를 반영한다.
+   * Args: profile 서버 프로필 확인 DTO. Returns: 없음. Raises: 없음. Side Effects: 세션 사용자와 확인 상태 갱신.
+   */
+  function confirmProfile(profile) { actor.value = profile.actor; profileConfirmed.value = profile.confirmed === true }
+
+  /** 확인 후 화면 이동 때 변경된 소속·역할을 다시 반영한다.
+   * Args: 없음. Returns: Promise<void>. Raises: 없음(인증 오류는 request가 처리).
+   * Side Effects: GET·프로필 갱신. 소속이 변경되어 확인이 취소되면 최초 확인 화면으로 되돌린다.
+   */
+  async function refreshProfile() {
+    if (!actor.value || !profileConfirmed.value) return
+    const credential = token.value
+    try { const profile = await request('/api/v1/auth/profile-confirmation'); if (credential === token.value) confirmProfile(profile) }
+    catch { return }
+  }
+
+  /** 선택 검토 항목을 요청·조직별 작업공간에 추가한다.
+   * Args: workspace 요청·조직·제출·항목 식별자. Returns: 작업공간 키. Raises: 없음. Side Effects: 메모리 목록 갱신.
+   */
+  function openReviewWorkspace(workspace) {
+    const key = `${workspace.requestId}:${workspace.organizationId}`
+    const previous = reviewWorkspaces.value.find(item => item.key === key)
+    const retained = previous?.submissionId === workspace.submissionId ? previous.reviewItemIds : []
+    const next = { ...workspace, key, reviewItemIds: [...new Set([...retained, ...workspace.reviewItemIds])] }
+    reviewWorkspaces.value = [...reviewWorkspaces.value.filter(item => item.key !== key), next]
+    return key
+  }
+
+  /** 작업공간 탭만 닫고 서버 검토 선정·소명 이력은 유지한다.
+   * Args: key 작업공간 키. Returns: 없음. Raises: 없음. Side Effects: 메모리 탐색 목록 제거.
+   */
+  function closeReviewWorkspace(key) { reviewWorkspaces.value = reviewWorkspaces.value.filter(item => item.key !== key) }
+
+  /** 소명을 요청한 항목을 작업공간에서 제거하고 빈 탭을 닫는다.
+   * Args: key 작업공간 키, ids 요청 성공한 검토 ID 목록. Returns: 없음. Raises: 없음. Side Effects: 메모리 탐색 목록 갱신.
+   */
+  function finishReviewWorkspace(key, ids) {
+    reviewWorkspaces.value = reviewWorkspaces.value.map(item => item.key === key ? { ...item, reviewItemIds: item.reviewItemIds.filter(id => !ids.includes(id)) } : item).filter(item => item.reviewItemIds.length)
+  }
+
   /** 실제 알림 수를 읽어 공통 메뉴에 반영한다.
    * Args: 없음. Returns: Promise<void>. Raises: 없음(알림 화면에서 오류 확인). Side Effects: GET·배지 갱신.
    */
@@ -106,5 +150,5 @@ export const useSession = defineStore('session', function sessionStore() {
    */
   async function logout() { await request('/api/v1/auth/session', { method: 'DELETE' }); clear() }
 
-  return { actor, token, organizations, entering, entryError, unreadCount, clear, request, enter, accept, refreshUnread, logout }
+  return { actor, token, organizations, entering, entryError, unreadCount, profileConfirmed, reviewWorkspaces, clear, request, enter, accept, confirmProfile, refreshProfile, openReviewWorkspace, closeReviewWorkspace, finishReviewWorkspace, refreshUnread, logout }
 })

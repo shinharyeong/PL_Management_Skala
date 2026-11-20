@@ -388,3 +388,17 @@ python3 -B scripts/verify-monthly.py --apply \
 - 월간 Data기본료 항목에서 PLAN-02·현재 ACTUAL·과거 PLAN-01의 세 버전을 선택해 조회했다. 최신 계획/실적은 명시 업무 키로 연결됐고, 구 더미의 다른 상세 ID는 별도 행으로 표시됐다. 동일 좌표를 근거로 다른 원천을 강제 연결하지 않았다.
 - 원본 나란히 보기에서 계획·실적 각각의 원문×배율=적재값 일치를 확인했다. 원천 단위·배율·수식 유무·저장 캐시를 확인했고 기존 원본을 재계산하지 않았다.
 - Vue 5개 주요 SFC script 문법과 최종 `git diff --check`를 통과했다. 이 점검은 파일 생성 없이 메모리·콘솔로 처리했다. 브라우저는 최신 1월 실제 금액이 표시된 기획자 홈에 두었으며 서비스는 실행 중이다.
+
+
+## 2026-11-18 PRD v8.5 개발 검증
+
+사용자가 backend/build/, backend/.gradle-user-home/, frontend/dist/, frontend/node_modules/.vite/의 빌드·테스트 산출물 생성을 허용했다. 그 전 검사는 메모리에서 수행했다. 원본 Data/와 기존 업무 PostgreSQL·Docker 볼륨은 변경하지 않았다. V9~V11은 소스와 격리 H2에 반영했으며 기존 실행환경에 적용한 것으로 간주하지 않는다.
+
+- 최종 Java 전체 테스트: **194개 중 192개 통과, opt-in 2개 제외, 실패 0개**. 전체 컴파일과 Spring HTTP/H2·기존 제출/마스터 회귀검사 포함. 새 보고 작성 6개, 설정·두 소명 정책·반려·임의 비교 요청 검사 포함.
+- 프런트: 잠금파일의 Vite 8.3.7로 **106개 모듈 production build 성공**. 테스트 의존성·설정·npm 캐시는 `.vite/validation`, `.vite/npm-cache`, `.vite/cache`에 격리하고 결과는 `dist/`에만 생성했다. 기존 package.json/package-lock.json은 변경하지 않았다.
+- Python 보고 작성: **6개 통과**, 모의 Responses와 실제 PyMuPDF로 합성 PDF의 숫자·메타데이터 제거, 스캔 미전송, 비마스킹 명시 선택, 내부 인증, 키 미설정, 숫자 본문 변경 거부, JSON 처리 확인. 외부 AI 호출과 실제 업무 PDF 전송은 없다. venv·캐시·임시는 backend/build/ai-validation 등 build 하위에 제한하고 bytecode·pytest cache는 비활성화했다.
+- 별도 127.0.0.1:18081 H2 메모리 서버와 14173 프런트 프록시에서 **HTTP 13개 성공**: 최초 확인, ALL_CHANGES 저장, 카탈로그, 자료 생성→NO_DATA 미리보기→적용→과거 버전 불변→복원, HTML 응답, AI 미설정 fallback, 조직 담당자 보고 API 403. 응답 파일은 메모리로만 검사했다. 마지막 틀 재사용 보완은 이후 전체 Java 회귀검사에서 검증했다.
+- 프런트 보조 메모리 검사: 조직별 승인 원천 정밀 합산, 부분 워터폴, 작업공간/프로필, 아카이브 전체 회차, 정책 미리보기의 오래된 응답 차단 등 38개 assertion 통과.
+- `git diff --check`와 변경 Markdown의 로컬 링크 검사를 수행했다. 사용자 실제 화면은 브라우저 연결 호스트 부재, native Chrome 제어 중 외부 화면 변경과 timeout으로 최종 시각 검증하지 못했다. 빌드/API 검증을 브라우저 전체 동선 검증으로 대체 표기하지 않는다.
+
+Java 검증은 `GRADLE_USER_HOME=$PWD/.gradle-user-home`, `JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=$PWD/build/tmp -XX:-UsePerfData`, `--offline --no-daemon --project-cache-dir .gradle-user-home/project-cache test`로 실행했다. 기본 sandbox의 Gradle 로컬 소켓 제한은 자동 승인된 escalation으로 해소했다. 금융 숫자와 원천 비교·소명분류 테스트는 합성 데이터만 사용했다.

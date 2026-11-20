@@ -7,6 +7,8 @@ import { draftStatus } from '../lib/request-workflow'
 import RequestEditor from './RequestEditor.vue'
 import AnnualPlanConfirmation from './AnnualPlanConfirmation.vue'
 import SubmissionReviews from './SubmissionReviews.vue'
+import SubmissionRejectionItems from './SubmissionRejectionItems.vue'
+import SubmissionExplanationPolicy from './SubmissionExplanationPolicy.vue'
 
 const route = useRoute()
 const session = useSession()
@@ -28,6 +30,7 @@ const expandedLoading = ref(false)
 const actionBusy = ref(false)
 const actionError = ref('')
 const rejectNote = ref('')
+const rejectionItems = ref([])
 const decision = ref('')
 const statusFilter = ref('ALL')
 let expansionGeneration = 0
@@ -43,7 +46,7 @@ async function expand(target) {
   const id = String(target.organization.id)
   if (actionBusy.value) return
   const current = ++expansionGeneration
-  expandedId.value = expandedId.value === id ? '' : id; expandedSubmission.value = null; expandedLoading.value = false; actionError.value = ''; decision.value = ''; rejectNote.value = ''
+  expandedId.value = expandedId.value === id ? '' : id; expandedSubmission.value = null; expandedLoading.value = false; actionError.value = ''; decision.value = ''; rejectNote.value = ''; rejectionItems.value = []
   if (!expandedId.value || !target.latestSubmittedSubmissionId) return
   expandedLoading.value = true
   try { const result = await session.request(`/api/v1/submissions/${target.latestSubmittedSubmissionId}`, { signal: detailController.signal }); if (current === expansionGeneration) expandedSubmission.value = result }
@@ -66,7 +69,7 @@ async function decideSubmission() {
   if (decision.value === 'APPROVE' && !expandedSubmission.value.readiness?.canApprove) return
   if (decision.value === 'REJECT' && !rejectNote.value.trim()) { actionError.value = '반려 사유를 입력해 주세요.'; return }
   const payload = { expectedStateToken: expandedSubmission.value.stateToken, action: decision.value }
-  if (decision.value === 'REJECT') payload.note = rejectNote.value.trim()
+  if (decision.value === 'REJECT') { payload.note = rejectNote.value.trim(); payload.rejectionItems = rejectionItems.value }
   const body = JSON.stringify(payload); if (!actionKeys.has(body)) actionKeys.set(body, crypto.randomUUID())
   actionBusy.value = true; actionError.value = ''
   try { await session.request(`/api/v1/submissions/${expandedSubmission.value.id}/decisions`, { method: 'POST', body, headers: { 'Idempotency-Key': actionKeys.get(body) }, signal: detailController.signal }); actionKeys.delete(body); await select(selectedId.value) }
@@ -263,7 +266,7 @@ onBeforeUnmount(dispose)
                 </td>
                 <td><button class="detail-link row-toggle" @click="expand(target)">{{ expandedId === String(target.organization.id) ? '접기' : '검토' }}</button></td>
               </tr>
-              <tr v-if="expandedId === String(target.organization.id)" class="expanded-detail"><td colspan="7"><p v-if="expandedLoading" role="status">제출본을 불러오는 중…</p><p v-if="actionError" class="alert error" role="alert">{{ actionError }}</p><template v-if="expandedSubmission"><div class="reply-header"><div><strong>{{ target.organization.name }} · {{ expandedSubmission.versionLabel }}</strong><p>{{ dateTime(expandedSubmission.submittedAt || expandedSubmission.uploadedAt) }} 제출</p></div><button class="button" :disabled="actionBusy" @click="downloadSource">⤓ {{ expandedSubmission.originalFilename }}</button></div><details class="reply-explanations"><summary>변경 항목 · 소명 회신 확인</summary><SubmissionReviews :submission="expandedSubmission" @changed="refreshSelected" /></details><div v-if="expandedSubmission.status === 'PENDING'" class="review-actions"><RouterLink :to="targetLink(target)" class="text-button">제출값 · 원본 근거 확인 →</RouterLink><div v-if="!decision" class="button-row"><button class="button" :disabled="actionBusy" @click="decision = 'REJECT'">반려 · 재제출 요청</button><button class="button primary" :disabled="actionBusy || !expandedSubmission.readiness?.canApprove" @click="decision = 'APPROVE'">제출 수락</button></div><form v-else @submit.prevent="decideSubmission"><label v-if="decision === 'REJECT'">반려 사유<textarea v-model="rejectNote" required maxlength="5000" placeholder="수정이 필요한 항목과 사유를 입력해 주세요."></textarea></label><p v-else>이 제출본을 수락하면 연간 마스터 발행 조건에 반영됩니다.</p><div class="button-row"><button type="button" class="button" :disabled="actionBusy" @click="decision = ''">취소</button><button class="button primary" :disabled="actionBusy">{{ actionBusy ? '처리 중…' : decision === 'APPROVE' ? '수락 확정' : '반려 확정' }}</button></div></form></div><p v-if="expandedSubmission.status === 'PENDING' && !expandedSubmission.readiness?.canApprove" class="progress-note">필수 소명 검토를 완료한 뒤 제출을 수락할 수 있습니다.</p></template><template v-else-if="!expandedLoading"><p>아직 최종 제출된 자료가 없습니다.</p><RouterLink v-if="target.latestDraftSubmissionId" :to="draftLink(target)" class="text-button">업로드 상태 · 오류 확인 →</RouterLink></template></td></tr></template>
+              <tr v-if="expandedId === String(target.organization.id)" class="expanded-detail"><td colspan="7"><p v-if="expandedLoading" role="status">제출본을 불러오는 중…</p><p v-if="actionError" class="alert error" role="alert">{{ actionError }}</p><template v-if="expandedSubmission"><div class="reply-header"><div><strong>{{ target.organization.name }} · {{ expandedSubmission.versionLabel }}</strong><p>{{ dateTime(expandedSubmission.submittedAt || expandedSubmission.uploadedAt) }} 제출</p></div><button class="button" :disabled="actionBusy" @click="downloadSource">⤓ {{ expandedSubmission.originalFilename }}</button></div><SubmissionExplanationPolicy :submission="expandedSubmission" /><details class="reply-explanations"><summary>변경 항목 · 소명 회신 확인</summary><SubmissionReviews :submission="expandedSubmission" @changed="refreshSelected" /></details><div v-if="expandedSubmission.status === 'PENDING'" class="review-actions"><RouterLink :to="targetLink(target)" class="text-button">제출값 · 원본 근거 확인 →</RouterLink><div v-if="!decision" class="button-row"><button class="button" :disabled="actionBusy" @click="decision = 'REJECT'">반려 · 재제출 요청</button><button class="button primary" :disabled="actionBusy || !expandedSubmission.readiness?.canApprove" @click="decision = 'APPROVE'">제출 수락</button></div><form v-else @submit.prevent="decideSubmission"><template v-if="decision === 'REJECT'"><label>반려 사유<textarea v-model="rejectNote" required maxlength="5000" placeholder="수정이 필요한 항목과 사유를 입력해 주세요."></textarea></label><SubmissionRejectionItems v-model="rejectionItems" :submission="expandedSubmission" editable :disabled="actionBusy" /></template><p v-else>이 제출본을 수락하면 연간 마스터 발행 조건에 반영됩니다.</p><div class="button-row"><button type="button" class="button" :disabled="actionBusy" @click="decision = ''">취소</button><button class="button primary" :disabled="actionBusy">{{ actionBusy ? '처리 중…' : decision === 'APPROVE' ? '수락 확정' : '반려 확정' }}</button></div></form></div><p v-if="expandedSubmission.status === 'PENDING' && !expandedSubmission.readiness?.canApprove" class="progress-note">필수 소명 검토를 완료한 뒤 제출을 수락할 수 있습니다.</p></template><template v-else-if="!expandedLoading"><p>아직 최종 제출된 자료가 없습니다.</p><RouterLink v-if="target.latestDraftSubmissionId" :to="draftLink(target)" class="text-button">업로드 상태 · 오류 확인 →</RouterLink></template></td></tr></template>
               <tr v-if="!visibleTargets.length"><td colspan="7" class="progress-empty">이 상태의 조직이 없습니다.</td></tr>
             </tbody>
             <tfoot>
@@ -288,7 +291,7 @@ onBeforeUnmount(dispose)
       <button v-if="nextCursor" class="more-link" type="button" :disabled="loading" @click="load(true)">이전 요청 더 불러오기</button>
     </section>
     <RequestEditor v-if="selected" :key="`${selected.id}:${selected.stateToken}`" :request="selected" @updated="refreshSelected" @refresh="refreshSelected" />
-    <details v-if="selected" class="annual-confirmation"><summary>연간 계획 확정 · Contingency</summary><AnnualPlanConfirmation :year="selected.year" :organizations="targetOrganizations" /></details>
+    <section v-if="selected" class="annual-confirmation"><h2>월간 요청을 위한 연간 계획 확정</h2><p class="notice">조직별 제출 수락으로 연간 마스터가 발행된 뒤, 아래에서 계획 원천과 Contingency를 확정해야 월간 요청을 시작할 수 있습니다. Contingency가 없으면 0을 입력해 확정하세요.</p><AnnualPlanConfirmation :key="`${selected.id}:${masterStatus?.latestMasterId || 'pending'}`" :year="selected.year" :organizations="targetOrganizations" /></section>
   </div>
 </template>
 

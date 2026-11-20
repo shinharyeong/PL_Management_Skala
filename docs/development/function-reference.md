@@ -6,6 +6,8 @@
 | --- | --- |
 | Vue 화면·공통 상태·조회·명령 | [프런트엔드 구현 안내](frontend-guide.md) |
 | Java API·업무 규칙·저장·인증·검증 | [백엔드 함수 명세](backend-function-reference.md) |
+| PRD 설정·반려·비교 요청·두 소명 정책 | [업무 확장 함수 명세](prd-workflow-api.md) |
+| 보고 작성·조회·버전·AI | [보고 작성 함수 명세](report-authoring.md) |
 | Python 원본 읽기·파싱·매핑·검증·적재 계약 | [파서 함수 명세](../../parser/docs/development/function-reference.md) |
 | 로컬 검증 스크립트·환경 | [실행 환경과 검증 기록](local-environment.md) |
 

@@ -64,7 +64,7 @@ class SubmissionRuleTests {
                 "db/migration/V2__validated_financial_submissions.sql"), new ClassPathResource(
                 "db/migration/V3__annual_plan_masters.sql"), new ClassPathResource(
                 "db/migration/V4__monthly_masters.sql"), new ClassPathResource(
-                "db/migration/V5__submission_reviews_and_gap_thresholds.sql"), new ClassPathResource("db/migration/V6__prd_review_workflow.sql")).execute(database);
+                "db/migration/V5__submission_reviews_and_gap_thresholds.sql"), new ClassPathResource("db/migration/V6__prd_review_workflow.sql"),new ClassPathResource("db/migration/V9__prd_workflow_settings.sql"),new ClassPathResource("db/migration/V11__review_requirement_policy.sql")).execute(database);
         jdbc = JdbcClient.create(database);
         jdbc.sql("""
                 INSERT INTO organization (id, code, name, active)
@@ -86,7 +86,7 @@ class SubmissionRuleTests {
         var comparisons = new ReviewComparisonService(jdbc, mapper);
         var reviews = new ReviewService(jdbc, commands, comparisons);
         service = new SubmissionService(jdbc, mapper, commands,
-                new SubmissionValidationService(jdbc, mapper, new FinancialValidationRules(mapper), comparisons, reviews));
+                new SubmissionValidationService(jdbc, mapper, new FinancialValidationRules(mapper), comparisons, reviews),new SubmissionRejectionService(jdbc,mapper));
         firstRequestId = createAnnualRequest(2030);
         secondRequestId = createAnnualRequest(2031);
     }
