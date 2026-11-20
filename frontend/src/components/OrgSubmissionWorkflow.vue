@@ -6,6 +6,8 @@ import { dateTime, errorText, query, requestTitle, saveBlob, submissionStatus } 
 import { formatMoney } from '../lib/decimal-display'
 import { issueLocation, issueNextAction } from '../lib/submission-guidance'
 import SubmissionReviews from './SubmissionReviews.vue'
+import SubmissionRejectionItems from './SubmissionRejectionItems.vue'
+import SubmissionExplanationPolicy from './SubmissionExplanationPolicy.vue'
 import SubmissionData from './SubmissionData.vue'
 
 const session = useSession()
@@ -244,6 +246,7 @@ onBeforeUnmount(dispose)
   <div v-if="error" class="alert error" role="alert">{{ error }} <button class="text-button" :disabled="loading || !!busy" @click="load">다시 확인</button></div><p v-if="message" class="alert success" role="status">{{ message }}</p>
   <p v-if="!submission && loading" class="panel empty" role="status">제출본을 불러오는 중…</p>
   <template v-if="submission">
+    <SubmissionExplanationPolicy :submission="submission" />
     <section v-if="step === 'validation'" class="panel validation-panel">
       <div class="section-heading"><h2>검증 결과</h2><span :class="['badge', { red: !parsing && !canExplain, green: canExplain }]">{{ parsing ? '파일 확인 중' : canExplain ? '검증 완료' : submission.parsing.status === 'FAILED' ? '처리 실패' : '확인 필요' }}</span></div>
       <div class="file-summary"><strong>{{ submission.originalFilename }}</strong><span class="muted">{{ parsing ? '엑셀을 읽고 있습니다.' : `${validationIssues.length}건의 안내${diagnosticCursor ? ' 이상' : ''}` }}</span></div>
@@ -255,7 +258,7 @@ onBeforeUnmount(dispose)
     </section>
 
     <template v-if="step === 'reasons'">
-      <div v-if="baseline" class="basis-strip"><strong>기준 버전</strong><span>{{ baseline.versionLabel }}</span><span class="badge">{{ baseline.status === 'REJECTED' ? '반려된 제출본' : baseline.month === submission.month ? '같은 달 이전 제출본' : '전월 승인 제출본' }}</span></div>
+      <SubmissionRejectionItems v-if="baseline?.status === 'REJECTED'" :submission="baseline" /><div v-if="baseline" class="basis-strip"><strong>기준 버전</strong><span>{{ baseline.versionLabel }}</span><span class="badge">{{ baseline.status === 'REJECTED' ? '반려된 제출본' : baseline.month === submission.month ? '같은 달 이전 제출본' : '전월 승인 제출본' }}</span></div>
       <SubmissionReviews :submission="submission" @changed="load"><template #footer><div class="workflow-footer"><RouterLink v-if="submission.status === 'DRAFT'" :to="reuploadLink" class="button">파일 다시 선택</RouterLink><RouterLink v-else to="/history" class="button">제출 이력 관리</RouterLink><button v-if="submission.status === 'DRAFT'" class="button primary" :disabled="!submission.readiness.canSubmit || loading || !!busy" @click="showConfirmation">제출 내용 확인</button><button v-else class="text-button" @click="step = 'detail'">제출본 정보 보기</button></div></template></SubmissionReviews>
     </template>
 
@@ -271,7 +274,7 @@ onBeforeUnmount(dispose)
     <div v-if="step === 'detail'" class="submission-detail-grid">
       <section class="panel"><div class="saved-submission"><h2>{{ submission.versionLabel || '제출 전 초안' }} <span :class="['badge', { green: submission.status === 'APPROVED', red: submission.status === 'REJECTED' }]">{{ submission.status === 'REJECTED' ? '재제출 요청' : submissionStatus(submission) }}</span></h2><p>{{ dateTime(submission.submittedAt || submission.uploadedAt) }} · {{ submission.originalFilename }}</p><p>비교 기준 버전 {{ baseline?.versionLabel || (submission.type === 'ANNUAL_PLAN' ? '없음' : '확정 연간 계획') }}</p></div>
         <div v-if="submission.rejectReason" class="notice warning"><strong>반려 사유</strong><p class="preserve-lines">{{ submission.rejectReason }}</p></div>
-        <p v-if="submission.status === 'REJECTED'" class="muted">반려 사유를 반영한 전체 엑셀 파일을 다시 올려 주세요. 이전 제출본과 소명 이력은 보존됩니다.</p>
+        <SubmissionRejectionItems :submission="submission" /><p v-if="submission.status === 'REJECTED'" class="muted">반려 사유를 반영한 전체 엑셀 파일을 다시 올려 주세요. 이전 제출본과 소명 이력은 보존됩니다.</p>
         <p v-else-if="submission.status === 'PENDING'" class="notice">{{ submission.readiness.unansweredCount > 0 ? `보완할 소명이 ${submission.readiness.unansweredCount}건 있습니다. 기존 버전에 소명을 추가합니다.` : '제출을 완료했습니다. 경영기획팀 검토 결과를 기다려 주세요.' }}</p>
         <div class="button-row"><button class="button" :disabled="!!busy" @click="download">원본 다운로드</button><RouterLink v-if="submission.status === 'REJECTED'" :to="reuploadLink" class="button primary">수정 엑셀 업로드</RouterLink><button class="button" @click="step = 'reasons'">{{ submission.status === 'PENDING' && submission.readiness.unansweredCount > 0 ? '소명 보완하기' : '변경 항목·소명 보기' }}</button></div>
         <details class="details-disclosure" @toggle="evidenceOpen = $event.target.open"><summary>제출 금액·원본 근거 확인</summary><SubmissionData v-if="evidenceOpen" :submission="submission" @open-cell="openSource" @open-guidance="openGuidance" /></details>

@@ -49,6 +49,8 @@ class SubmissionIntegrationTests {
     @BeforeEach
     void prepare() {
         jdbc.sql("UPDATE request_target SET confirmed_plan_submission_id=NULL").update();
+        jdbc.sql("DELETE FROM review_policy").update();
+        jdbc.sql("INSERT INTO review_policy(requirement_mode,applied_by,applied_at) VALUES ('GAP_ONLY',NULL,CURRENT_TIMESTAMP)").update();
         for (String table : new String[]{"review_workflow_event", "review_explanation", "gap_comparison", "review_item", "gap_threshold", "master_source", "master_version", "annual_master_source", "annual_master", "financial_value", "financial_line", "submission_validation", "account_item", "report_item", "idempotency_record", "parsing_job", "submission", "request_target",
                 "submission_request", "annual_plan", "app_user", "organization", "stored_object"}) {
             jdbc.sql("DELETE FROM " + table).update();
@@ -435,6 +437,48 @@ class SubmissionIntegrationTests {
         answerReview(reviewId,"담당자가 요청한 거래 근거를 확인했습니다.","reference-request-answer");
         reviewDecision(reviewId,"ACCEPT",null,"reference-request-accept").andExpect(status().isOk());
         decision(changed,"approve-no-gap",decisionBody(changed,"APPROVE",null)).andExpect(status().isOk());
+    }
+
+    /** 선택 정책의 초안 재검증·필수 답변·제출 이후 불변을 실제 HTTP 검증 경계에서 확인한다.
+     * Args: 없음. Returns: 없음. Raises: HTTP·JSON·검증 오류. Side Effects: 합성 H2의 정책·초안·소명만 변경한다.
+     */
+    @Test
+    void selectedRequirementModeRevalidatesDraftAndRemainsFixedAfterSubmission() throws Exception {
+        String request=createRequest(),baseline=pendingSubmission(request,"policy-baseline");
+        decision(baseline,"policy-baseline-reject",decisionBody(baseline,"REJECT","금액 변경 검증")).andExpect(status().isOk());
+        String changed=upload(request,"policy-changed-upload",workbook()).path("id").asText();seedAdapter(changed,false);
+        var parsed=adapter(changed);((com.fasterxml.jackson.databind.node.ObjectNode)parsed.path("submissionData").path("lines").get(0).path("values").get(1)).put("amount","100.123457");saveAdapter(changed,parsed);
+        var first=workflow(changed,"validation","policy-draft-initial");
+        assertThat(first.path("submission").path("readiness").path("requiredCount").asInt()).isZero();
+        assertThat(first.path("submission").path("comparisonContext").path("requirementMode").asText()).isEqualTo("GAP_ONLY");
+        applyRequirementPolicy("ALL_CHANGES","policy-require-all");
+        var stale=submissionView(changed);assertThat(stale.path("readiness").path("validationState").asText()).isEqualTo("STALE");
+        mvc.perform(post("/api/v1/submissions/"+changed+"/submit").header("Authorization",MANAGER).header("Idempotency-Key","policy-stale-submit")
+                .contentType("application/json").content(mapper.writeValueAsBytes(ApiData.object("expectedStateToken",stale.path("stateToken").asText()))))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("REVIEW_CONTEXT_CHANGED"));
+        var revalidated=workflow(changed,"validation","policy-draft-revalidate");
+        assertThat(revalidated.path("submission").path("comparisonContext").path("requirementMode").asText()).isEqualTo("ALL_CHANGES");
+        assertThat(revalidated.path("submission").path("readiness").path("canSubmit").asBoolean()).isFalse();
+        assertThat(revalidated.path("answerRequiredReviewItemIds").size()).isEqualTo(1);
+        String reviewId=revalidated.path("answerRequiredReviewItemIds").get(0).asText();
+        answerReview(reviewId,"전체 변경 소명 정책에 따라 변경 근거를 제출합니다.","policy-answer-change");
+        workflow(changed,"submit","policy-submit-change");
+        var fixedContext=submissionView(changed).path("comparisonContext");var fixedReview=reviewView(reviewId);
+        applyRequirementPolicy("GAP_ONLY","policy-return-gap");
+        assertThat(submissionView(changed).path("comparisonContext")).isEqualTo(fixedContext);
+        assertThat(reviewView(reviewId).path("required").asBoolean()).isTrue();
+        assertThat(reviewView(reviewId).path("requirementMode").asText()).isEqualTo("ALL_CHANGES");
+        assertThat(reviewView(reviewId).path("currentRound")).isEqualTo(fixedReview.path("currentRound"));
+        decision(changed,"policy-approval-unaccepted",decisionBody(changed,"APPROVE",null)).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("EXPLANATIONS_NOT_ACCEPTED"));
+        reviewDecision(reviewId,"ACCEPT",null,"policy-accept-change").andExpect(status().isOk());
+        decision(changed,"policy-approve-change",decisionBody(changed,"APPROVE",null)).andExpect(status().isOk());
+    }
+
+    /** 현재 정책 토큰으로 후보 모드를 적용한다. Args: mode 모드, key 멱등키. Returns: 없음. Raises: HTTP·JSON 오류. Side Effects: 합성 H2 정책 추가. */
+    private void applyRequirementPolicy(String mode,String key) throws Exception {
+        var current=mapper.readTree(mvc.perform(get("/api/v1/review-policy/current").header("Authorization",PLANNER)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        mvc.perform(post("/api/v1/review-policy").header("Authorization",PLANNER).header("Idempotency-Key",key).contentType("application/json")
+                .content(mapper.writeValueAsBytes(ApiData.object("expectedStateToken",current.path("stateToken").asText(),"requirementMode",mode)))).andExpect(status().isCreated());
     }
 
     /** 기획자 권한·판단 입력·최신 토큰·대기 상태를 HTTP 경계에서 강제한다.

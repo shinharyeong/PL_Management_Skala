@@ -48,16 +48,18 @@ public class SubmissionService {
     private final ObjectMapper mapper;
     private final CommandExecutor commands;
     private final SubmissionValidationService validation;
+    private final SubmissionRejectionService rejections;
 
     /** 주입된 DB·직렬화·멱등 경계를 연결한다.
-     * Args: jdbc DB 접근, mapper JSON 변환, commands 트랜잭션 명령, validation 검증·적재 조회.
+     * Args: jdbc DB 접근, mapper JSON 변환, commands 트랜잭션 명령, validation 검증·적재 조회, rejections 반려 항목 조회.
      * Returns: 없음. Raises: 없음. Side Effects: 없음.
      */
-    public SubmissionService(JdbcClient jdbc, ObjectMapper mapper, CommandExecutor commands, SubmissionValidationService validation) {
+    public SubmissionService(JdbcClient jdbc, ObjectMapper mapper, CommandExecutor commands, SubmissionValidationService validation, SubmissionRejectionService rejections) {
         this.jdbc = jdbc;
         this.mapper = mapper;
         this.commands = commands;
         this.validation = validation;
+        this.rejections = rejections;
     }
 
     /** 현재 행위자의 조직 조회 범위를 반환한다.
@@ -595,6 +597,7 @@ public class SubmissionService {
         dto.remove("pendingReviewCount");
         String parsingStatus = row.get("parsing_status").toString();
         dto.put("rejectReason", row.get("reject_reason"));
+        dto.put("rejectionItems", "REJECTED".equals(row.get("status")) ? rejections.items(((Number)row.get("id")).longValue()) : List.of());
         dto.put("parsing", object("jobId", row.get("job_id").toString(), "status", parsingStatus,
                 "attemptNo", row.get("attempt_no"), "parserVersion", row.get("parser_version"),
                 "contractVersion", row.get("contract_version"), "mappingVersion", row.get("mapping_version"),

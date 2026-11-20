@@ -4,18 +4,18 @@
 
 | 항목 | 내용 |
 | --- | --- |
-| 설계 버전 | 0.3 · 2026-11-17 |
-| 상태 | 논리 ERD v0.2 기반과 V1~V8 물리 구현·PRD v0.8 정책 연결. API 0.11-draft 56개 경로 구현. 실제 실행 검증은 [로컬 환경](local-environment.md)에서 별도 관리 |
+| 설계 버전 | 0.4 · 2026-11-18 |
+| 상태 | 논리 ERD v0.2 기반과 V1~V11 물리 구현·PRD v8.5 설정·소명·보고 연결. API 0.12-draft 92개 경로 구현. 실제 실행 검증은 [로컬 환경](local-environment.md)에서 별도 관리 |
 | 적용 대상 | 조직별 연간 계획·월간 실적/추정의 전체 제출, 금액 수정 소명, 손익 Gap, 승인, 월별 마스터 |
 | 관련 계약 | [DB 매핑](db-mapping.md), [현재 파서 출력 계약](../../parser/docs/development/output-contract.md) |
 | 관련 업무 문서 | [도메인 규칙](../domain-rules.md) |
 | 화면 참고 | [조직 담당자 v3](https://www.figma.com/design/ZW7ZlgvtY4phycygZqir3z?node-id=202-196), [경영기획팀](https://www.figma.com/design/ZW7ZlgvtY4phycygZqir3z?node-id=2-235) |
 
-합의한 업무 규칙과 논리 스키마는 이 문서, 파서 필드 연결은 [DB 매핑](db-mapping.md), 현재 파서의 반환값은 [출력 계약](../../parser/docs/development/output-contract.md)을 기준으로 한다. [도메인 규칙](../domain-rules.md)은 이 설계를 요약한다. 직선 SVG는 v0.2 기반 테이블·필드·핵심 관계를 표현한다. 현재 추가 필드와 테이블은 마지막 V6~V8 확장 절을 함께 본다.
+합의한 업무 규칙과 논리 스키마는 이 문서, 파서 필드 연결은 [DB 매핑](db-mapping.md), 현재 파서의 반환값은 [출력 계약](../../parser/docs/development/output-contract.md)을 기준으로 한다. [도메인 규칙](../domain-rules.md)은 이 설계를 요약한다. 직선 SVG는 v0.2 기반 테이블·필드·핵심 관계를 표현한다. 현재 추가 필드와 테이블은 마지막 V6~V11 확장 절을 함께 본다.
 
-이전 ERD는 Git 이력에서 확인한다. 아래 논리 ERD와 V3~V8의 물리 구현 차이는 문서 끝의 구현 확장 절에서 관리한다. 원본 데이터나 실행 산출물은 문서에 포함하지 않는다. 기존 파서의 기술 마스터 생성·평가와 서비스의 승인 마스터 발행은 서로 다른 기능이다.
+이전 ERD는 Git 이력에서 확인한다. 아래 논리 ERD와 V3~V11의 물리 구현 차이는 문서 끝의 구현 확장 절에서 관리한다. 원본 데이터나 실행 산출물은 문서에 포함하지 않는다. 기존 파서의 기술 마스터 생성·평가와 서비스의 승인 마스터 발행은 서로 다른 기능이다.
 
-`bigint`, `varchar`, `numeric`, `timestamptz`는 논리 타입 표기다. 현재 제품은 PostgreSQL이며 상세 금액은 NUMERIC(30,6)이다. 문자열 길이·집계 정밀도·인덱스와 논리 도식의 차이는 Flyway V1~V8 및 하단 구현 확장을 기준으로 한다. 금액은 원 단위 정밀 십진수이며 이진 부동소수점을 사용하지 않는다.
+`bigint`, `varchar`, `numeric`, `timestamptz`는 논리 타입 표기다. 현재 제품은 PostgreSQL이며 상세 금액은 NUMERIC(30,6)이다. 문자열 길이·집계 정밀도·인덱스와 논리 도식의 차이는 Flyway V1~V11 및 하단 구현 확장을 기준으로 한다. 금액은 원 단위 정밀 십진수이며 이진 부동소수점을 사용하지 않는다.
 
 ### 초안 대비 반영한 변경
 
@@ -550,3 +550,47 @@ flowchart LR
 ```
 
 이메일 인증 코드·로컬 세션은 local/demo 프로필의 만료되는 메모리 상태이며 DB 테이블이 아니다. 실제 이메일 전송이나 운영 SSO를 구현했다고 간주하지 않는다. 알림은 최초 제출에 포함된 소명을 개별 새 회신으로 중복 집계하지 않고, 별도 요청의 실제 회신만 REPLY로 구분한다.
+
+
+## PRD v8.5 물리 확장 — V9~V11
+
+과거 논리 SVG의 19개는 전체 물리 테이블 수가 아니다. 실제 추가 스키마는 [V9](../../backend/src/main/resources/db/migration/V9__prd_workflow_settings.sql), [V10](../../backend/src/main/resources/db/migration/V10__report_authoring.sql), [V11](../../backend/src/main/resources/db/migration/V11__review_requirement_policy.sql)와 다음 관계를 따른다.
+
+```mermaid
+erDiagram
+    app_user ||--o{ settings_audit_event : records
+    app_user ||--o{ request_message_template : edits
+    submission ||--o{ submission_rejection_item : preserves
+    review_item o|--o{ submission_rejection_item : locates
+    app_user ||--o{ report_template : creates
+    report_template ||--|{ report_template_version : versions
+    app_user ||--o{ report_material : creates
+    report_material ||--|{ report_material_version : versions
+    report_template o|--o{ report_material_version : derives
+    report_reason_version o|--o{ report_material_version : classifies
+    report_material ||--o{ report_authoring_proposal : previews
+    app_user ||--o{ report_authoring_proposal : owns
+    app_user ||--o{ report_metric : registers
+    app_user o|--o{ review_policy : selects
+```
+
+| 테이블·필드 | 제약·역할 |
+| --- | --- |
+| app_user.profile_confirmed_at / settings_revision | 최초·변경후 확인 시각, 낙관적 상태 토큰. 역할/소속 변경은 확인을 초기화 |
+| organization.settings_revision | 조직 변경 상태 토큰. 기존 request_target 집합 유지 |
+| request_message_template | 이름·ANNUAL_PLAN/MONTHLY_ACTUAL/EXPLANATION·문구·active·revision·수정자/시각. 삭제는 비활성 |
+| settings_audit_event | 대상종류/ID·행위·snapshot_json·행위자·시각. 과거 설정 보존 |
+| submission_rejection_item | submission FK·review_item nullable FK·ordinal·검증한 snapshot_json·반려자/시각. UNIQUE(submission_id,ordinal) |
+| review_explanation.request_comparison_json | 임의 비교로 명시 요청한 회차의 기준 제출·시나리오·월·금액·원천 고정. 자동 gap_comparison 불변 |
+| report_metric | 원지표 REVENUE/COST/OP 하나와 확인 SQL·이름·등록자. 등록 후 불변 |
+| report_template / report_template_version | 틀 헤더의 current_revision과 (template_id,revision) 복합 PK. blocks_json에 구성·기간규칙·SQL·서식 |
+| report_reason_version | version PK, items_json에 유형ID/부모/활성/키워드. 순환·부모없음·중복은 서비스에서 차단 |
+| report_material / report_material_version | 자료 헤더와 (material_id,revision) 복합 PK. 기준월·틀버전·분류버전·블록·정확한 결과/출처·CREATE/APPLY/UNDO·복원대상 보존 |
+| report_authoring_proposal | UUID·자료FK·기대revision·본인 actorFK·definition/results JSON·30분 만료·적용revision. 적용 버전 복합 FK |
+| review_policy | ALL_CHANGES/GAP_ONLY append-only 이력. 기본 GAP_ONLY. 사용자 설정시 적용자·시각 보존 |
+| review_item.requirement_mode | nullable 고정 모드. NULL 과거행은 기존 review_policy_version 규칙 유지. 신규 검증 문맥에도 reviewPolicyId/requirementMode 고정 |
+| settings_guard / report_authoring_guard / review_policy_guard | 각각 단일 행 잠금으로 관련 설정 명령·검증의 경합 직렬화 |
+
+신규 모드에서는 GAP_ONLY가 Gap 초과·명시 요청, ALL_CHANGES가 여기에 원천 금액 변경을 더한다. 제외가 우선하며, 연간 PLAN도 ALL_CHANGES의 변경 필수 규칙을 따른다. 기존 완료 제출의 필수 여부를 전역 현재 설정으로 다시 판정하지 않는다.
+
+보고 결과는 JSON에도 원단위 십진 문자열로 보존한다. 동일 SQL 필터를 현재/비교/소명 범위에 적용하고 AVG/MIN/MAX 등 비합산 지표에는 사유 금액 배분을 허용하지 않는다. 보고 정의 수정·분류 변경은 원본 제출·소명 본문·공식 마스터를 변경하지 않는다.

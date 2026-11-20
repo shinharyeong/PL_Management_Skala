@@ -51,6 +51,7 @@ def _path(value: str | None) -> Path | None:
 @dataclass
 class Settings:
     openai_api_key: str | None = field(default=None, repr=False)   # 값은 repr·로그에 나오지 않음
+    report_service_token: str | None = field(default=None, repr=False)
     key_source: str = "none"
     openai_model: str = "gpt-4o-mini"
     vlm_model: str = ""                          # 그림 읽기(VLM) 전용 모델. 비우면 openai_model
@@ -135,6 +136,7 @@ def get_settings() -> Settings:
     key, key_src = _read("OPENAI_API_KEY")
     s = Settings(
         openai_api_key=key, key_source=key_src if key else "none",
+        report_service_token=_read("REPORT_AI_TOKEN")[0],
         openai_model=_read("OPENAI_MODEL", "gpt-4o-mini")[0],
         vlm_model=_read("AI_VLM_MODEL", "")[0],
         ai_temperature=float(_read("AI_TEMPERATURE", "0.2")[0]),

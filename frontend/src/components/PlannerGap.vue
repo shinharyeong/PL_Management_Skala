@@ -1,6 +1,6 @@
 <script setup>
 import { onBeforeUnmount, onMounted, reactive, ref, computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useSession } from '../stores/session'
 import { dateTime, errorText, query, saveBlob } from '../lib/display'
 import { formatMoney } from '../lib/decimal-display'
@@ -9,8 +9,13 @@ import RequestEditor from './RequestEditor.vue'
 import GapReviewTable from './GapReviewTable.vue'
 import SubmissionVersionComparison from './SubmissionVersionComparison.vue'
 import { draftStatus } from '../lib/request-workflow'
+import MessageTemplateSelect from './MessageTemplateSelect.vue'
+import SubmissionRejectionItems from './SubmissionRejectionItems.vue'
+import ReviewPolicySettings from './ReviewPolicySettings.vue'
+import SubmissionExplanationPolicy from './SubmissionExplanationPolicy.vue'
 
 const route = useRoute()
+const router = useRouter()
 const session = useSession()
 const requests = ref([])
 const organizations = ref([])
@@ -34,6 +39,66 @@ let detailController = new AbortController()
 let generation = 0
 let listGeneration = 0
 const keys = new Map()
+const expandedReplyId = ref('')
+const replySubmission = ref(null)
+const replyLoading = ref(false)
+const replyDownloading = ref(false)
+const replyError = ref('')
+let replyController = new AbortController()
+let replyGeneration = 0
+
+/** 열린 조직 회신을 해제하고 늦은 응답을 차단한다.
+ * Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 회신 GET 취소·상태 초기화.
+ */
+function closeReply() { replyGeneration++; replyController.abort(); replyController = new AbortController(); expandedReplyId.value = ''; replySubmission.value = null; replyLoading.value = false; replyDownloading.value = false; replyError.value = '' }
+
+/** 조직행에서 실제 최종 제출본과 소명 회신을 펼친다.
+ * Args: item 요청 대상 조직 DTO. Returns: Promise<void>. Raises: 없음(회신 영역 표시).
+ * Side Effects: 이전 회신 조회 취소·제출 GET. 초안과 최종 회신을 구분한다.
+ */
+async function expandReply(item) {
+  const close = expandedReplyId.value === String(item.organization.id)
+  closeReply()
+  if (close) return
+  expandedReplyId.value = String(item.organization.id)
+  if (!item.latestSubmittedSubmissionId) return
+  await readReply(item.latestSubmittedSubmissionId)
+}
+
+/** 현재 펼친 회신의 최신 제출 토큰과 준비 상태를 읽는다.
+ * Args: submissionId 제출 ID. Returns: Promise<void>. Raises: 없음(회신 영역 표시).
+ * Side Effects: GET·회신 상태 갱신. 다른 조직을 펼친 뒤 도착한 응답은 버린다.
+ */
+async function readReply(submissionId) {
+  const current = ++replyGeneration
+  replyLoading.value = true; replyError.value = ''
+  try { const result = await session.request(`/api/v1/submissions/${submissionId}`, { signal: replyController.signal }); if (current === replyGeneration) replySubmission.value = result }
+  catch (cause) { if (current === replyGeneration && cause.name !== 'AbortError') replyError.value = errorText(cause) }
+  finally { if (current === replyGeneration) replyLoading.value = false }
+}
+
+/** 소명 검토 이후 펼친 제출의 토큰과 현재 Gap 목록을 함께 새로 읽는다.
+ * Args: 없음. Returns: Promise<void>. Raises: 없음(각 영역 표시).
+ * Side Effects: GET·회신/Gap/알림 갱신. 제출 승인에는 최신 토큰을 사용한다.
+ */
+async function refreshReply() {
+  const id = replySubmission.value?.id
+  if (!id) return
+  await Promise.allSettled([readReply(id), String(currentId.value) === String(id) ? loadComparison() : Promise.resolve(), session.refreshUnread()])
+}
+
+/** 펼친 최종 회신의 원본을 사용자의 클릭으로 내려받는다.
+ * Args: 없음. Returns: Promise<void>. Raises: 없음(회신 영역 표시).
+ * Side Effects: 원본 GET·브라우저 다운로드. 서버 파일은 수정하지 않는다.
+ */
+async function downloadReply() {
+  if (!replySubmission.value || replyDownloading.value) return
+  const current = replyGeneration; const item = replySubmission.value
+  replyDownloading.value = true; replyError.value = ''
+  try { const file = await session.request(`/api/v1/submissions/${item.id}/file`, { blob: true, signal: replyController.signal }); if (current === replyGeneration) saveBlob(file, item.originalFilename) }
+  catch (cause) { if (current === replyGeneration && cause.name !== 'AbortError') replyError.value = errorText(cause) }
+  finally { if (current === replyGeneration) replyDownloading.value = false }
+}
 
 /** 월간 요청 전체를 읽고 경로 또는 지정 연월에 해당하는 요청을 선택한다.
  * Args: 없음. Returns: Promise<void>. Raises: 없음(화면 표시). Side Effects: GET·목록 갱신·상세 조회.
@@ -63,6 +128,7 @@ async function loadRequests() {
  * Args: 없음. Returns: Promise<void>. Raises: 없음(화면 표시). Side Effects: GET·이전 상세 취소·구 응답 차단.
  */
 async function loadDetail() {
+  closeReply()
   detailController.abort(); detailController = new AbortController()
   const current = ++generation
   selected.value = null; publication.value = null; preview.value = null; detailLoading.value = true; error.value = ''
@@ -182,7 +248,7 @@ async function loadOrganizations() {
 /** 화면 이탈 시 조회·생성 응답을 중단한다.
  * Args: 없음. Returns: 없음. Raises: 없음. Side Effects: HTTP 취소·세대 무효화.
  */
-function dispose() { generation++; listGeneration++; controller.abort(); detailController.abort(); workspaceController.abort() }
+function dispose() { generation++; listGeneration++; replyGeneration++; controller.abort(); detailController.abort(); workspaceController.abort(); replyController.abort() }
 onMounted(initialize)
 onBeforeUnmount(dispose)
 
@@ -199,7 +265,7 @@ const catalog = ref([])
 const workspaceLoading = ref(false)
 const workspaceError = ref('')
 const unit = ref('THOUSAND')
-const activeTab = ref(route.query.reportItemId ? 'ALL' : 'NEEDS_REVIEW')
+const activeTab = ref(route.query.workspace ? 'SELECTED' : route.query.reportItemId ? 'ALL' : 'NEEDS_REVIEW')
 const search = ref('')
 const focusedReportItemId = ref(typeof route.query.reportItemId === 'string' ? route.query.reportItemId : '')
 const sort = ref('amount-desc')
@@ -224,8 +290,14 @@ const tabs = [
   { key: 'ACCEPTED', label: '소명 승인 완료' }, { key: 'EXCLUDED', label: '제외됨' }, { key: 'ALL', label: '전체 항목' },
 ]
 const target = computed(() => selected.value?.targets.find(item => item.organization.id === organizationId.value))
+/** 현재 경로의 선정 항목 작업공간을 찾는다. Args: 없음. Returns: 작업공간 또는 null. Raises: 없음. Side Effects: 없음. */
+const workspace = computed(function currentReviewWorkspace() { return session.reviewWorkspaces.find(item => item.key === route.query.workspace) || null })
 const visibleTargets = computed(() => selected.value?.targets.filter(item => item.selected !== false) || [])
 const selectedRows = computed(() => reviewRows.value.filter(item => selectedReviews.value.includes(item.id)))
+/** 선택한 비교 행을 기존 검토 ID 유무와 관계없이 찾는다. Args: 없음. Returns: 비교 행 목록. Raises: 없음. Side Effects: 없음. */
+const selectedComparisonRows = computed(function comparisonSelection() { return displayRows.value.filter(item => selectedReviews.value.includes(item.selectionId || item.review?.id)) })
+/** 고정 소명 기준과 다른 비교 선택이 포함됐는지 판정한다. Args: 없음. Returns: 명시 비교 요청 여부. Raises: 없음. Side Effects: 없음. */
+const customComparisonSelected = computed(function selectedCustomComparison() { return selectedComparisonRows.value.some(item => item.customComparison) })
 const nextSelectionAction = computed(() => selectedRows.value.every(item => ['NEEDS_REVIEW', 'SELECTED'].includes(item.workflowState)) && selectedRows.value.some(item => item.workflowState === 'NEEDS_REVIEW') ? 'SELECT' : 'REQUEST_EXPLANATION')
 const canAct = computed(() => currentSubmission.value?.status === 'PENDING' && String(currentSubmission.value?.requestId) === String(selected.value?.id))
 const displayRows = computed(() => {
@@ -237,11 +309,13 @@ const displayRows = computed(() => {
   return values.map(value => {
     const review = joined.get(value.reportItem.id)
     const fixed = review?.comparisons?.some(item => String(item.baselineSubmissionId) === baselineId.value && item.baselineScenario === baselineScenario())
-    return { ...value, review, workflowState: review?.workflowState || 'OPTIONAL', actionable: !!review && canAct.value && (fixed || !baselineId.value) }
+    const customComparison = !!baselineId.value && (!review || !fixed)
+    const baseline = versions.value.find(item => item.id === baselineId.value)
+    return { ...value, review, selectionId: customComparison ? `compare:${value.reportItem.id}` : review?.id, customComparison, workflowState: review?.workflowState || 'OPTIONAL', actionable: canAct.value && (customComparison ? baseline?.status !== 'DRAFT' && value.valueStatus === 'AVAILABLE' : !!review) }
   })
 })
 const tabCounts = computed(() => Object.fromEntries(tabs.map(tab => [tab.key, displayRows.value.filter(row => tab.key === 'ALL' || row.workflowState === tab.key).length])))
-const filteredRows = computed(() => displayRows.value.filter(row => (!focusedReportItemId.value || row.reportItem.id === focusedReportItemId.value) && (activeTab.value === 'ALL' || row.workflowState === activeTab.value) && (!search.value || row.reportItem.name.includes(search.value) || row.reportItem.code.includes(search.value))))
+const filteredRows = computed(() => displayRows.value.filter(row => (!workspace.value || workspace.value.reviewItemIds.includes(row.review?.id)) && (!focusedReportItemId.value || row.reportItem.id === focusedReportItemId.value) && (activeTab.value === 'ALL' || row.workflowState === activeTab.value) && (!search.value || row.reportItem.name.includes(search.value) || row.reportItem.code.includes(search.value))))
 const targetName = computed(() => target.value?.organization.name || '사업조직')
 
 /** 비교 필터의 현재 시나리오를 반환한다. Args: 없음. Returns: ACTUAL/ESTIMATE. Raises: 없음. Side Effects: 없음. */
@@ -272,7 +346,8 @@ async function loadWorkspace() {
     ])
     if (generation !== workspaceGeneration) return
     versions.value = history; planSources = plan.sources || []
-    currentId.value = target.value?.latestSubmittedSubmissionId || target.value?.latestDraftSubmissionId || ''
+    currentId.value = workspace.value?.submissionId || target.value?.latestSubmittedSubmissionId || target.value?.latestDraftSubmissionId || ''
+    if (workspace.value) { comparisonMonth.value = workspace.value.month; comparisonType.value = workspace.value.comparisonType }
     chooseBaseline()
     await loadComparison()
     if (generation + 1 !== workspaceGeneration) return
@@ -306,6 +381,7 @@ async function loadComparison() {
     ])
     if (generation !== workspaceGeneration) return
     currentSubmission.value = submission; reviewRows.value = reviews
+    if (workspace.value) selectedReviews.value = workspace.value.reviewItemIds.filter(id => reviews.some(item => item.id === id && item.workflowState === 'SELECTED'))
     if (baselineId.value) {
       const result = await session.request('/api/v1/submissions/' + currentId.value + '/comparison' + query({ baselineSubmissionId: baselineId.value, scenario: scenario(), baselineScenario: baselineScenario(), month: comparisonMonth.value }), { signal: workspaceController.signal })
       if (generation !== workspaceGeneration) return
@@ -336,13 +412,24 @@ function closeReview() { reviewDialog.value?.close(); detailOpen.value = false }
 function beginAction(next) { action.value = next; actionNote.value = ''; actionDue.value = ''; actionError.value = ''; actionDialog.value?.showModal() }
 /** 명시한 항목의 검토 동작을 원자적으로 요청한다. Args: 없음. Returns: Promise<void>. Raises: 없음(화면표시). Side Effects: POST·표 재조회. */
 async function submitAction() {
-  if (actionBusy.value || !selectedRows.value.length) return
+  if (actionBusy.value || (!selectedRows.value.length && !selectedComparisonRows.value.length)) return
+  if (selectedReviews.value.length > 100) { actionError.value = '한 번에 최대 100개 항목을 선택할 수 있습니다.'; return }
   actionBusy.value = true; actionError.value = ''
-  const body = JSON.stringify({ action: action.value, items: selectedRows.value.map(row => ({ reviewItemId: row.id, expectedStateToken: row.stateToken })), note: actionNote.value || null, dueAt: actionDue.value ? new Date(actionDue.value).toISOString() : null })
+  const custom = customComparisonSelected.value
+  const payload = custom ? { expectedStateToken: currentSubmission.value.stateToken, baselineSubmissionId: baselineId.value, baselineScenario: baselineScenario(), scenario: scenario(), month: Number(comparisonMonth.value), reportItemIds: selectedComparisonRows.value.map(item => item.reportItem.id), note: actionNote.value, dueAt: actionDue.value ? new Date(actionDue.value).toISOString() : null } : { action: action.value, items: selectedRows.value.map(row => ({ reviewItemId: row.id, expectedStateToken: row.stateToken })), note: actionNote.value || null, dueAt: actionDue.value ? new Date(actionDue.value).toISOString() : null }
+  const body = JSON.stringify(payload)
+  const path = custom ? `/api/v1/submissions/${currentId.value}/comparison/explanation-requests` : '/api/v1/review-items/actions'
   if (!keys.has(body)) keys.set(body, crypto.randomUUID())
   try {
-    await session.request('/api/v1/review-items/actions', { method: 'POST', body, headers: { 'Idempotency-Key': keys.get(body) }, signal: controller.signal })
+    await session.request(path, { method: 'POST', body, headers: { 'Idempotency-Key': keys.get(body) }, signal: controller.signal })
     keys.delete(body); actionDialog.value?.close(); message.value = action.value === 'EXCLUDE' ? '선택 항목을 제외했습니다.' : action.value === 'SELECT' ? '검토 대상을 선정했습니다.' : '선택 항목의 소명을 요청했습니다.'
+    const workspaceKey = `${selected.value.id}:${organizationId.value}`
+    if (action.value === 'SELECT') {
+      session.openReviewWorkspace({ requestId: selected.value.id, organizationId: organizationId.value, organizationName: targetName.value, submissionId: currentId.value, reviewItemIds: selectedRows.value.map(item => item.id), month: Number(comparisonMonth.value), comparisonType: comparisonType.value })
+      await router.push({ path: '/planning/gap', query: { requestId: selected.value.id, organizationId: organizationId.value, workspace: workspaceKey } }); return
+    }
+    session.finishReviewWorkspace(workspaceKey, selectedRows.value.map(item => item.id))
+    if (route.query.workspace && !session.reviewWorkspaces.some(item => item.key === route.query.workspace)) { await router.push({ path: '/planning/gap', query: { requestId: selected.value.id, organizationId: organizationId.value } }); return }
     activeTab.value = ({ EXCLUDE: 'EXCLUDED', SELECT: 'SELECTED', REQUEST_EXPLANATION: 'IN_PROGRESS' })[action.value]; await loadComparison(); await session.refreshUnread()
   } catch (cause) { if (cause.name !== 'AbortError') actionError.value = errorText(cause) }
   finally { actionBusy.value = false }
@@ -353,6 +440,11 @@ async function reviewed() { await loadComparison(); await session.refreshUnread(
 function versionLabel(item) { return (item.versionLabel || '신규 업로드 · 미확정') + ' · ' + ({ PLAN: '계획', ANNUAL_PLAN: '연간 계획', MONTHLY_ACTUAL: '실적·추정' }[item.type] || '') + ' · ' + statusLabel(item.status) }
 /** 요청 관리 모달을 연다. Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 모달 표시. */
 function openRequest() { requestDialog.value?.showModal() }
+
+/** 작업공간의 현재 선정 항목 전체에 소명을 요청할 입력창을 연다.
+ * Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 체크 선택·모달 변경; 요청은 확인 후 전송.
+ */
+function requestWorkspace() { selectedReviews.value = reviewRows.value.filter(item => workspace.value?.reviewItemIds.includes(item.id) && item.workflowState === 'SELECTED').map(item => item.id); if (selectedReviews.value.length) beginAction('REQUEST_EXPLANATION') }
 
 /** 현재 선택한 두 버전의 실제 비교표를 내려받는다.
  * Args: 없음. Returns: Promise<void>. Raises: 없음(화면 표시). Side Effects: GET·사용자가 요청한 파일 다운로드.
@@ -370,7 +462,7 @@ async function downloadComparison() {
 <template>
   <div class="gap-page">
     <header class="page-heading"><h1>월간 시트 관리</h1><div class="button-row"><button class="button" :disabled="!comparison || workspaceLoading" @click="downloadComparison">엑셀 다운로드</button><button class="button" @click="openRequest">요청·제출 현황</button><RouterLink v-if="publication?.latestMasterId" :to="'/planning/masters/' + publication.latestMasterId" class="button">마스터 확인</RouterLink></div></header>
-    <div class="sheet-selectors"><label>제출 요청<select v-model="selectedId" :disabled="loading" @change="loadDetail"><option v-if="!requests.length" value="">등록된 요청 없음</option><option v-for="item in requests" :key="item.id" :value="String(item.id)">{{ item.year }}년 {{ item.month }}월 실적·추정</option></select></label><label>기준 대상<select v-model="currentId" :disabled="workspaceLoading || !versions.length" @change="loadComparison"><option value="">조직 제출본 선택</option><option v-for="item in versions.filter(item => item.type === 'MONTHLY_ACTUAL')" :key="item.id" :value="item.id">{{ versionLabel(item) }}</option></select></label><label>비교 대상<select v-model="baselineId" :disabled="workspaceLoading || !versions.length" @change="loadComparison"><option value="">선택하세요</option><option v-for="item in versions" :key="item.id" :value="item.id">{{ versionLabel(item) }}</option></select></label></div>
+    <section v-if="workspace" class="panel workspace-heading"><div class="section-heading"><div><h2>{{ workspace.organizationName }} · 선택 항목 검토</h2><p class="muted">선정 {{ workspace.reviewItemIds.length }}항목입니다. 조회 월·비교 필터로 항목을 확인한 뒤 소명을 요청하세요. 요청한 항목은 이 작업공간에서 제거됩니다.</p></div><RouterLink :to="{ path: '/planning/gap', query: { requestId: selectedId, organizationId } }" class="text-button">전체 월간 시트</RouterLink></div><button class="button primary" :disabled="workspaceLoading || !canAct || !workspace.reviewItemIds.length" @click="requestWorkspace">이 사업부 선정 항목 전체 소명 요청</button></section><div class="sheet-selectors"><label>제출 요청<select v-model="selectedId" :disabled="loading || !!workspace" @change="loadDetail"><option v-if="!requests.length" value="">등록된 요청 없음</option><option v-for="item in requests" :key="item.id" :value="String(item.id)">{{ item.year }}년 {{ item.month }}월 실적·추정</option></select></label><label>기준 대상<select v-model="currentId" :disabled="workspaceLoading || !versions.length || !!workspace" @change="loadComparison"><option value="">조직 제출본 선택</option><option v-for="item in versions.filter(item => item.type === 'MONTHLY_ACTUAL')" :key="item.id" :value="item.id">{{ versionLabel(item) }}</option></select></label><label>비교 대상<select v-model="baselineId" :disabled="workspaceLoading || !versions.length || !!workspace" @change="loadComparison"><option value="">선택하세요</option><option v-for="item in versions" :key="item.id" :value="item.id">{{ versionLabel(item) }}</option></select></label></div>
     <div v-if="error" class="alert error" role="alert">{{ error }}</div><p v-if="message" class="alert success" role="status">{{ message }}</p>
     <section class="panel gap-criteria" aria-labelledby="criteria-title">
       <form class="criteria-controls" @submit.prevent="thresholdCommand(true)">
@@ -383,29 +475,32 @@ async function downloadComparison() {
       <div class="criteria-help"><span>켜진 기준을 모두 초과한 항목을 소명 대상으로 판단합니다.</span><button class="text-button" :disabled="!!thresholdBusy || !selected" @click="thresholdCommand(false)">영향 미리보기</button></div>
       <p v-if="thresholdError" class="alert error" role="alert">{{ thresholdError }}</p><p v-if="thresholdMessage" class="notice" role="status">{{ thresholdMessage }}</p><p v-if="preview" class="notice">평가 {{ preview.evaluatedItemCount }}항목 중 {{ preview.exceededItemCount }}항목 · {{ preview.exceededOrganizationCount }}조직이 기준을 초과합니다.</p>
     </section>
+    <ReviewPolicySettings :request-id="selected?.id || ''" @changed="loadComparison" />
     <ol class="review-pipeline" aria-label="검토 진행 단계"><li v-for="(stage, index) in tabs.slice(0,5)" :key="stage.key" :class="'stage-' + (index + 1)"><button @click="activeTab = stage.key"><b>{{ index + 1 }}</b><div><strong>{{ stage.label }}</strong><small>{{ ['차이 항목 확인', '검토 결과 확정', '조직 소명 수집', '보완 내용 재검토', '소명 및 확정'][index] }}</small></div></button></li></ol>
     <section class="panel review-board">
       <div class="review-tabs" role="tablist" aria-label="검토 상태"><button v-for="tab in tabs" :key="tab.key" role="tab" :aria-selected="activeTab === tab.key" :class="{ active: activeTab === tab.key }" @click="activeTab = tab.key">{{ tab.label }} <span>{{ tabCounts[tab.key] }}</span></button></div>
-      <div class="review-filters"><label>조직<select v-model="organizationId" :disabled="workspaceLoading" @change="loadWorkspace"><option v-if="!visibleTargets.length" value="">요청 대상 없음</option><option v-for="item in visibleTargets" :key="item.organization.id" :value="item.organization.id">{{ item.organization.name }}</option></select></label><label>단위<select v-model="unit"><option value="THOUSAND">천원</option><option value="HUNDRED_MILLION">억원</option><option value="KRW">원</option></select></label><label>조회 월<select v-model="comparisonMonth" :disabled="workspaceLoading" @change="loadComparison"><option v-for="month in 12" :key="month" :value="month">{{ month }}월</option></select></label><label class="search"><span class="visually-hidden">항목 검색</span><input v-model="search" type="search" placeholder="항목 검색" /></label><label>정렬<select v-model="sort"><option value="amount-desc">차액 큰 순</option><option value="amount-asc">차액 작은 순</option><option value="rate-desc">차이율 큰 순</option><option value="rate-asc">차이율 작은 순</option></select></label></div>
+      <div class="review-filters"><label>조직<select v-model="organizationId" :disabled="workspaceLoading || !!workspace" @change="loadWorkspace"><option v-if="!visibleTargets.length" value="">요청 대상 없음</option><option v-for="item in visibleTargets" :key="item.organization.id" :value="item.organization.id">{{ item.organization.name }}</option></select></label><label>단위<select v-model="unit"><option value="THOUSAND">천원</option><option value="HUNDRED_MILLION">억원</option><option value="KRW">원</option></select></label><label>조회 월<select v-model="comparisonMonth" :disabled="workspaceLoading" @change="loadComparison"><option v-for="month in 12" :key="month" :value="month">{{ month }}월</option></select></label><label class="search"><span class="visually-hidden">항목 검색</span><input v-model="search" type="search" placeholder="항목 검색" /></label><label>정렬<select v-model="sort"><option value="amount-desc">차액 큰 순</option><option value="amount-asc">차액 작은 순</option><option value="rate-desc">차이율 큰 순</option><option value="rate-asc">차이율 작은 순</option></select></label></div>
       <p v-if="focusedReportItemId" class="notice">홈에서 선택한 항목만 표시합니다.<span v-if="!route.query.organizationId"> 전사 합계의 조직별 값을 확인할 조직을 선택해 주세요.</span> <button class="text-button" @click="focusedReportItemId = ''">전체 항목 보기</button></p>
       <p v-if="workspaceError" class="alert error" role="alert">{{ workspaceError }} <button class="text-button" @click="loadComparison">다시 조회</button></p>
       <p v-if="loading || detailLoading || workspaceLoading" class="empty" role="status">제출 버전과 비교 항목을 불러오는 중…</p>
       <template v-else>
         <GapReviewTable :rows="filteredRows" :catalog="catalog" :unit="unit" :sort="sort" :selected="selectedReviews" :comparison-type="comparisonType" @toggle="toggleReview" @detail="openReview" @source="openSource" />
         <p class="review-count">{{ targetName }} · {{ filteredRows.length }}항목<span v-if="currentSubmission"> · {{ currentSubmission.versionLabel || '신규 업로드 · 미확정' }} · {{ statusLabel(currentSubmission.status) }}</span></p>
-        <div v-if="currentSubmission" class="review-context"><p>소명 요청·제외는 제출 당시 확정된 비교 기준으로 처리합니다. 다른 버전은 금액과 근거를 조회할 수 있습니다.</p><RouterLink :to="{ path: '/submissions/' + currentSubmission.id, query: { from: 'gap', requestId: selectedId, organizationId } }" class="text-button">{{ currentSubmission.status === 'PENDING' ? '제출 승인·반려 검토 →' : '제출 내역 확인 →' }}</RouterLink></div>
+        <SubmissionExplanationPolicy v-if="currentSubmission" :submission="currentSubmission" /><div v-if="currentSubmission" class="review-context"><p>다른 버전을 선택한 비교에서도 항목을 체크해 소명을 요청할 수 있습니다. 이번 요청의 비교 근거를 보존하며 제출 당시 자동 검증 기준은 유지됩니다.</p><RouterLink :to="{ path: '/submissions/' + currentSubmission.id, query: { from: 'gap', requestId: selectedId, organizationId } }" class="text-button">{{ currentSubmission.status === 'PENDING' ? '제출 승인·반려 검토 →' : '제출 내역 확인 →' }}</RouterLink></div>
       </template>
     </section>
-    <footer class="selection-bar"><strong>{{ selectedReviews.length }}건 선택</strong><div class="button-row"><button class="button clear-selection" :disabled="!selectedReviews.length" @click="selectedReviews = []">선택 해제</button><button class="button exclude-selection" :disabled="!selectedReviews.length || !canAct" @click="beginAction('EXCLUDE')">제외</button><button class="button primary" :disabled="!selectedReviews.length || !canAct" @click="beginAction(nextSelectionAction)">{{ nextSelectionAction === 'REQUEST_EXPLANATION' ? '일괄 소명 요청 →' : '선택 항목 검토하기 →' }}</button></div></footer>
+    <footer class="selection-bar"><strong>{{ selectedReviews.length }}건 선택</strong><div class="button-row"><button class="button clear-selection" :disabled="!selectedReviews.length" @click="selectedReviews = []">선택 해제</button><button class="button exclude-selection" :disabled="!selectedReviews.length || !canAct || customComparisonSelected" @click="beginAction('EXCLUDE')">제외</button><button class="button primary" :disabled="!selectedReviews.length || !canAct" @click="beginAction(customComparisonSelected ? 'REQUEST_EXPLANATION' : nextSelectionAction)">{{ customComparisonSelected ? '선택 비교 항목 소명 요청 →' : nextSelectionAction === 'REQUEST_EXPLANATION' ? '일괄 소명 요청 →' : '선택 항목 검토하기 →' }}</button></div></footer>
     <dialog ref="reviewDialog" class="request-dialog gap-detail-dialog" aria-label="Gap 상세 내역" @close="detailOpen = false"><div class="section-heading"><h2>Gap 상세 내역 · {{ targetName }}</h2><button class="dialog-close" aria-label="닫기" @click="closeReview">×</button></div><SubmissionReviews v-if="detailOpen && currentSubmission && activeReview" :key="activeReview" :submission="currentSubmission" :initial-review-id="activeReview" :detail-only="true" @changed="reviewed" /><SubmissionVersionComparison v-if="detailOpen && currentSubmission && activeSourceItem" :key="currentSubmission.id + '-' + activeSourceItem.id" :submission-id="currentSubmission.id" :report-item-id="activeSourceItem.id" :report-item-kind="activeSourceItem.kind" :year="selected.year" :month="Number(comparisonMonth)" :scenario="scenario()" :unit="unit" /></dialog>
-    <dialog ref="actionDialog" class="request-dialog" aria-labelledby="action-title"><form @submit.prevent="submitAction"><div class="section-heading"><h2 id="action-title">{{ action === 'EXCLUDE' ? '선택 항목 제외' : action === 'SELECT' ? '검토 대상 선정' : '소명 요청 보내기' }}</h2><button type="button" class="dialog-close" aria-label="닫기" :disabled="actionBusy" @click="actionDialog.close()">×</button></div><p class="muted">{{ targetName }} · 선택 {{ selectedRows.length }}항목</p><ul class="action-items"><li v-for="item in selectedRows" :key="item.id">{{ item.month }}월 · {{ item.reportItem.name }}</li></ul><p v-if="actionError" class="alert error" role="alert">{{ actionError }}</p><label v-if="action === 'REQUEST_EXPLANATION'">회신 기한<input v-model="actionDue" type="datetime-local" required :disabled="actionBusy" /></label><label>{{ action === 'EXCLUDE' ? '제외 사유' : action === 'SELECT' ? '검토 메모 (선택)' : '요청 메시지' }}<textarea v-model="actionNote" :required="action !== 'SELECT'" maxlength="4000" :disabled="actionBusy" rows="3" /></label><div class="button-row"><button type="button" class="button" :disabled="actionBusy" @click="actionDialog.close()">취소</button><button class="button primary" :disabled="actionBusy">{{ actionBusy ? '처리 중…' : action === 'REQUEST_EXPLANATION' ? '요청 보내기' : '확인' }}</button></div></form></dialog>
-    <dialog ref="requestDialog" class="request-dialog monthly-request-dialog" aria-labelledby="request-title"><div class="section-heading"><h2 id="request-title">월간 요청·제출 현황</h2><button class="dialog-close" aria-label="닫기" @click="requestDialog.close()">×</button></div><p class="muted">확정된 연간 계획에 맞춰 필요한 조직에 제출을 요청합니다.</p>
-      <p v-if="error" class="error" role="alert">{{ error }}</p><details class="create-month"><summary>새 월간 요청 보내기</summary><form @submit.prevent="createRequest"><div class="form-columns"><label>연도<input v-model="create.year" type="number" min="2000" max="9999" required :disabled="saving" /></label><label>마감 월<select v-model="create.month" :disabled="saving"><option v-for="value in 12" :key="value" :value="value">{{ value }}월</option></select></label></div><label>회신 기한<input v-model="create.dueAt" type="datetime-local" :disabled="saving" /></label><label>요청 메시지<textarea v-model="create.message" maxlength="5000" :disabled="saving" rows="3" /></label><p class="muted">전체 조직이 기본 선택됩니다. 이번에 요청할 조직만 남겨 주세요.</p><div class="organization-checks"><label v-for="item in organizations" :key="item.id"><input v-model="create.organizationIds" type="checkbox" :value="item.id" />{{ item.name }}</label></div><button class="button primary" :disabled="saving || !create.organizationIds.length">{{ saving ? '생성 중…' : create.organizationIds.length + '개 조직에 제출 요청 보내기' }}</button></form></details>
-      <template v-if="selected"><div class="request-summary"><strong>{{ selected.year }}년 {{ selected.month }}월 실적·추정</strong><span>제출 {{ selected.submittedCount }} / {{ selected.selectedTargetCount ?? selected.targetCount }} · 승인 {{ selected.approvedCount }}</span></div><RequestEditor :key="selected.id + ':' + selected.stateToken" :request="selected" @updated="loadDetail" @refresh="loadDetail" /><div class="table-scroll"><table><thead><tr><th>사업조직</th><th>상태</th><th>회신·검토</th></tr></thead><tbody><tr v-for="item in visibleTargets" :key="item.organization.id"><th>{{ item.organization.name }}<small>{{ item.organization.code }}</small></th><td>{{ statusLabel(item.latestStatus) }}<small v-if="item.latestDraftSubmissionId">새 업로드 · {{ draftStatus(item.latestDraftParsingStatus) }}</small></td><td><RouterLink :to="targetLink(item)" class="text-button" @click="requestDialog.close()">{{ item.latestStatus === 'PENDING' ? '승인·반려 검토' : '제출 내역' }} →</RouterLink><RouterLink v-if="item.latestDraftSubmissionId" :to="draftLink(item)" class="text-button draft-link" @click="requestDialog.close()">업로드 검증 확인 →</RouterLink></td></tr></tbody></table></div></template>
+    <dialog ref="actionDialog" class="request-dialog" aria-labelledby="action-title"><form @submit.prevent="submitAction"><div class="section-heading"><h2 id="action-title">{{ action === 'EXCLUDE' ? '선택 항목 제외' : action === 'SELECT' ? '검토 대상 선정' : '소명 요청 보내기' }}</h2><button type="button" class="dialog-close" aria-label="닫기" :disabled="actionBusy" @click="actionDialog.close()">×</button></div><p class="muted">{{ targetName }} · 선택 {{ customComparisonSelected ? selectedComparisonRows.length : selectedRows.length }}항목</p><p v-if="customComparisonSelected" class="notice">지금 선택한 두 버전의 비교값을 이번 소명 요청의 근거로 전달합니다.</p><ul class="action-items"><li v-for="item in (customComparisonSelected ? selectedComparisonRows : selectedRows)" :key="item.id || item.reportItem.id">{{ item.month }}월 · {{ item.reportItem.name }}</li></ul><p v-if="actionError" class="alert error" role="alert">{{ actionError }}</p><label v-if="action === 'REQUEST_EXPLANATION'">회신 기한<input v-model="actionDue" type="datetime-local" required :disabled="actionBusy" /></label><MessageTemplateSelect v-if="action === 'REQUEST_EXPLANATION'" type="EXPLANATION" :disabled="actionBusy" @select="actionNote = $event" /><label>{{ action === 'EXCLUDE' ? '제외 사유' : action === 'SELECT' ? '검토 메모 (선택)' : '요청 메시지' }}<textarea v-model="actionNote" :required="action !== 'SELECT'" maxlength="4000" :disabled="actionBusy" rows="3" /></label><div class="button-row"><button type="button" class="button" :disabled="actionBusy" @click="actionDialog.close()">취소</button><button class="button primary" :disabled="actionBusy">{{ actionBusy ? '처리 중…' : action === 'REQUEST_EXPLANATION' ? '요청 보내기' : '확인' }}</button></div></form></dialog>
+    <dialog ref="requestDialog" class="request-dialog monthly-request-dialog" aria-labelledby="request-title" @close="closeReply"><div class="section-heading"><h2 id="request-title">월간 요청·제출 현황</h2><button class="dialog-close" aria-label="닫기" @click="requestDialog.close()">×</button></div><p class="muted">확정된 연간 계획에 맞춰 필요한 조직에 제출을 요청합니다.</p>
+      <p v-if="error" class="error" role="alert">{{ error }}</p><details class="create-month"><summary>새 월간 요청 보내기</summary><form @submit.prevent="createRequest"><p class="notice">월간 요청 전에 해당 연도의 계획과 Contingency를 확정해야 합니다. <RouterLink :to="{ path: '/planning/annual-plan', query: { year: create.year } }">연간 계획 확정 확인 →</RouterLink></p><div class="form-columns"><label>연도<input v-model="create.year" type="number" min="2000" max="9999" required :disabled="saving" /></label><label>마감 월<select v-model="create.month" :disabled="saving"><option v-for="value in 12" :key="value" :value="value">{{ value }}월</option></select></label></div><label>회신 기한<input v-model="create.dueAt" type="datetime-local" :disabled="saving" /></label><MessageTemplateSelect type="MONTHLY_ACTUAL" :disabled="saving" @select="create.message = $event" /><label>요청 메시지<textarea v-model="create.message" maxlength="5000" :disabled="saving" rows="3" /></label><p class="muted">전체 조직이 기본 선택됩니다. 이번에 요청할 조직만 남겨 주세요.</p><div class="organization-checks"><label v-for="item in organizations" :key="item.id"><input v-model="create.organizationIds" type="checkbox" :value="item.id" />{{ item.name }}</label></div><button class="button primary" :disabled="saving || !create.organizationIds.length">{{ saving ? '생성 중…' : create.organizationIds.length + '개 조직에 제출 요청 보내기' }}</button></form></details>
+      <template v-if="selected"><div class="request-summary"><strong>{{ selected.year }}년 {{ selected.month }}월 실적·추정</strong><span>제출 {{ selected.submittedCount }} / {{ selected.selectedTargetCount ?? selected.targetCount }} · 승인 {{ selected.approvedCount }}</span></div><RequestEditor :key="selected.id + ':' + selected.stateToken" :request="selected" @updated="loadDetail" @refresh="loadDetail" /><div class="table-scroll"><table><thead><tr><th>사업조직</th><th>상태</th><th>회신·검토</th></tr></thead><tbody><template v-for="item in visibleTargets" :key="item.organization.id"><tr :class="{ 'reply-selected': expandedReplyId === String(item.organization.id) }"><th><button class="reply-toggle" :aria-expanded="expandedReplyId === String(item.organization.id)" @click="expandReply(item)">{{ expandedReplyId === String(item.organization.id) ? '▾' : '▸' }} {{ item.organization.name }}</button><small>{{ item.organization.code }}</small></th><td>{{ statusLabel(item.latestStatus) }}<small v-if="item.latestDraftSubmissionId">새 업로드 · {{ draftStatus(item.latestDraftParsingStatus) }}</small></td><td><button class="text-button" @click="expandReply(item)">{{ expandedReplyId === String(item.organization.id) ? '회신 접기' : '회신 펼치기' }}</button><RouterLink :to="targetLink(item)" class="text-button draft-link" @click="requestDialog.close()">{{ item.latestStatus === 'PENDING' ? '승인·반려 검토' : '제출 내역' }} →</RouterLink><RouterLink v-if="item.latestDraftSubmissionId" :to="draftLink(item)" class="text-button draft-link" @click="requestDialog.close()">업로드 검증 확인 →</RouterLink></td></tr><tr v-if="expandedReplyId === String(item.organization.id)" class="reply-detail"><td colspan="3"><p v-if="replyLoading" role="status">회신을 불러오는 중…</p><p v-if="replyError" class="alert error" role="alert">{{ replyError }}</p><template v-if="replySubmission"><div class="reply-heading"><div><strong>{{ item.organization.name }} · {{ replySubmission.versionLabel }}</strong><p>{{ replySubmission.submittedBy?.name || replySubmission.uploadedBy?.name }} · {{ dateTime(replySubmission.submittedAt || replySubmission.uploadedAt) }} 제출</p></div><button class="button" :disabled="replyDownloading" @click="downloadReply">⤓ {{ replySubmission.originalFilename }}</button></div><p v-if="replySubmission.rejectReason" class="notice">반려 사유: {{ replySubmission.rejectReason }}</p><SubmissionRejectionItems v-if="replySubmission.rejectionItems?.length" :submission="replySubmission" /><details class="reply-explanations"><summary>변경 항목 · 소명 회신 확인</summary><SubmissionReviews :key="replySubmission.id" :submission="replySubmission" @changed="refreshReply" /></details><RouterLink :to="{ path: '/planning/gap', query: { requestId: selected.id, organizationId: item.organization.id } }" class="button primary" @click="requestDialog.close()">이 조직의 Gap 검토하기 →</RouterLink></template><p v-else-if="!replyLoading && !replyError" class="notice">아직 최종 제출된 회신이 없습니다. 업로드 중인 자료는 초안 검증 화면에서 확인할 수 있습니다.</p></td></tr></template><tr v-if="!visibleTargets.length"><td colspan="3" class="empty">요청 대상 조직이 없습니다.</td></tr></tbody></table></div></template>
     </dialog>
   </div>
 </template>
 
 <style scoped>
+.reply-toggle{background:transparent;padding:0;text-align:left;font:inherit;color:inherit}.reply-selected{background:#faf7f1}.reply-detail>td{padding:20px;background:#fcfbf9}.reply-heading{display:flex;align-items:center;justify-content:space-between;gap:15px}.reply-heading p{font-size:11px;color:var(--muted);margin-top:6px}.reply-explanations{margin:20px 0}.reply-explanations summary{font-size:13px}@media(max-width:760px){.reply-heading{align-items:flex-start;flex-direction:column}}
+
 .sheet-selectors{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:18px 0}.sheet-selectors label{font-size:11px;color:#8b919c}.sheet-selectors select{font-size:12px}.criteria-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.criteria-title{min-width:96px;flex:1}.criteria-title h2{font-size:14px}.criteria-title small{display:block;color:#8e95a2;font-size:10px;margin-top:10px}.criterion-toggle{display:flex;align-items:center;gap:8px;border:1px solid #c59a60;background:#f6f0e4;border-radius:6px;padding:10px 12px;font-size:12px;white-space:nowrap;color:#775326;min-height:40px}.criterion-toggle input{accent-color:#a9875b;width:16px;min-height:16px;margin:0}.criterion-input{position:relative;width:114px}.criterion-input:nth-of-type(4){width:145px}.criterion-input input{margin:0;padding-right:28px;min-height:40px}.criterion-input>span:last-child{position:absolute;right:10px;top:11px;font-size:11px;color:#7b8291;font-weight:400}.comparison-filter select{margin:0;min-height:40px}.criteria-controls .button{min-height:40px}.criteria-help{display:flex;justify-content:space-between;color:#7b8291;font-size:11px;margin-left:110px;gap:10px}.criteria-help .text-button{font-size:11px;white-space:nowrap}.review-pipeline{list-style:none;display:grid;grid-template-columns:repeat(5,1fr);gap:18px;margin:26px 24px;padding:0}.review-pipeline li{border:1px solid #f0c86e;border-radius:7px;background:#fff7e6;position:relative}.review-pipeline li:not(:last-child)::after{content:'›';position:absolute;right:-12px;top:22px;color:#929baa}.review-pipeline button{background:transparent;padding:15px 12px;display:flex;align-items:flex-start;gap:10px;text-align:left;width:100%;color:#865b13}.review-pipeline b{display:flex;justify-content:center;align-items:center;width:24px;height:24px;border-radius:50%;background:currentColor;font-size:11px;position:relative;color:#865b13;flex-shrink:0}.review-pipeline b{background:#865b13;color:white}.review-pipeline .stage-2 b{background:#2d63aa;color:white}.review-pipeline .stage-3 b{background:#7e4eb3;color:white}.review-pipeline .stage-4 b{background:#b9573a;color:white}.review-pipeline .stage-5 b{background:#247a62;color:white}.review-pipeline strong{font-size:12px}.review-pipeline small{display:block;font-size:10px;color:#78808e;margin-top:7px}.review-pipeline .stage-2{background:#edf3ff;border-color:#b9d2fc}.stage-2 button,.stage-2 b{color:#2d63aa}.review-pipeline .stage-3{background:#f6efff;border-color:#dab8fa}.stage-3 button,.stage-3 b{color:#7e4eb3}.review-pipeline .stage-4{background:#fff1eb;border-color:#f3c3ac}.stage-4 button,.stage-4 b{color:#b9573a}.review-pipeline .stage-5{background:#ebf8f3;border-color:#9bcfbd}.stage-5 button,.stage-5 b{color:#247a62}.review-board{padding:22px 24px;min-height:480px}.review-tabs{display:flex;gap:20px;overflow-x:auto;border-bottom:1px solid #f1efea}.review-tabs button{white-space:nowrap;background:transparent;padding:0 0 12px;color:#7c8391;font-size:12px;border-bottom:2px solid transparent}.review-tabs span{font-size:11px;color:#929baa;margin-left:8px}.review-tabs .active{font-weight:700;color:#16181d;border-color:#16181d}.review-tabs .active span{color:#a9875b}.review-filters{display:flex;align-items:center;gap:10px;margin:4px 0}.review-filters label{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:400;color:#a0a7b2;white-space:nowrap}.review-filters select,.review-filters input{margin:0;font-size:11px;min-height:34px}.review-filters .search{margin-left:12px;flex:1;max-width:260px}.review-filters label:last-child{margin-left:auto}.review-count{font-size:11px;text-align:center;color:#77808d;margin-top:8px}.review-context{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:14px;gap:18px}.review-context p{font-size:11px;color:#7b8291;line-height:1.7;max-width:70%}.review-context a{white-space:nowrap;font-size:11px}.selection-bar{display:flex;align-items:center;justify-content:space-between;gap:20px;background:#14171e;border-radius:12px;padding:14px 24px;position:sticky;bottom:16px;z-index:3;box-shadow:0 5px 20px #14171e15;color:white}.selection-bar>strong{font-size:13px}.selection-bar .button{font-size:11px;min-height:36px}.selection-bar .clear-selection{background:#2a2f3a;border-color:#2a2f3a;color:#eee}.selection-bar .exclude-selection{background:#b8c4d3;border-color:#b8c4d3;color:#14171e}.selection-bar .primary{min-width:200px}.selection-bar .button:disabled{opacity:.45}.gap-detail-dialog{width:min(1120px,calc(100vw - 40px));padding:24px}.gap-detail-dialog>.section-heading{margin-bottom:20px}.action-items{max-height:180px;overflow:auto;font-size:12px;color:var(--muted);line-height:1.9;margin:0;padding-left:20px}.monthly-request-dialog{width:min(1000px,calc(100vw - 40px))}.monthly-request-dialog>.section-heading{margin-bottom:14px}.create-month{margin:20px 0}.create-month form{display:flex;flex-direction:column;gap:16px;margin-top:18px}.request-summary{display:flex;justify-content:space-between;margin:20px 0;font-size:13px}.request-summary span{color:var(--muted)}.organization-checks{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.organization-checks label{display:flex;gap:7px;align-items:center;font-size:11px}.organization-checks input{width:14px;min-height:14px;margin:0}.draft-link{display:block;margin-top:8px}td small{display:block;color:var(--muted);font-size:10px;margin-top:4px}@media(max-width:1150px){.review-filters{flex-wrap:wrap}.criteria-help{margin-left:0}.review-pipeline{gap:12px;margin:20px 0}.review-pipeline button{padding:12px 8px;gap:6px}.review-pipeline strong{font-size:11px}.review-pipeline b{width:20px;height:20px}}@media(max-width:760px){.sheet-selectors{grid-template-columns:1fr}.review-pipeline{grid-template-columns:repeat(2,1fr)}.review-pipeline li::after{display:none}.review-context{align-items:flex-start;flex-direction:column}.review-context p{max-width:none}.selection-bar{flex-wrap:wrap;padding:16px;gap:12px}.selection-bar .primary{min-width:0}.selection-bar .button-row{width:100%}.selection-bar .button{flex:1}.review-board{padding:16px}.review-filters label:last-child{margin-left:0}.organization-checks{grid-template-columns:1fr 1fr}}
 </style>

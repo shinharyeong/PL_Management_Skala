@@ -10,10 +10,14 @@ import io.skala.backend.common.ApiException;
 import io.skala.backend.foundation.CommandExecutor;
 import io.skala.backend.master.AnnualMasterService;
 import io.skala.backend.master.MonthlyMasterService;
+import io.skala.backend.review.ReviewComparisonService;
+import io.skala.backend.review.ReviewService;
 import io.skala.backend.security.Actor;
 import io.skala.backend.security.Organization;
 import java.nio.charset.StandardCharsets;
+import java.math.BigDecimal;
 import java.util.Map;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -58,7 +62,7 @@ class SubmissionWorkflowTests {
                 new ClassPathResource("db/migration/V3__annual_plan_masters.sql"),
                 new ClassPathResource("db/migration/V4__monthly_masters.sql"),
                 new ClassPathResource("db/migration/V5__submission_reviews_and_gap_thresholds.sql"),
-                new ClassPathResource("db/migration/V6__prd_review_workflow.sql")).execute(database);
+                new ClassPathResource("db/migration/V6__prd_review_workflow.sql"),new ClassPathResource("db/migration/V9__prd_workflow_settings.sql"),new ClassPathResource("db/migration/V11__review_requirement_policy.sql")).execute(database);
         jdbc = JdbcClient.create(database);
         mapper = new ObjectMapper();
         jdbc.sql("INSERT INTO organization(id,code,name) VALUES (1,'D100','합성 조직'),(2,'D200','다른 조직')").update();
@@ -87,7 +91,7 @@ class SubmissionWorkflowTests {
         when(submissions.submission(any(Actor.class), anyString())).thenAnswer(invocation ->
                 currentView(invocation.getArgument(0), invocation.getArgument(1)));
         var commands = new CommandExecutor(new JdbcTemplate(database), new DataSourceTransactionManager(database));
-        workflow = new SubmissionWorkflowService(jdbc, mapper, commands, submissions, validation, annualMasters, mock(MonthlyMasterService.class));
+        workflow = new SubmissionWorkflowService(jdbc, mapper, commands, submissions, validation, annualMasters, mock(MonthlyMasterService.class),new SubmissionRejectionService(jdbc,mapper));
     }
 
     /** 각 테스트의 메모리 DB 연결을 종료한다.
@@ -437,6 +441,83 @@ class SubmissionWorkflowTests {
                 .isInstanceOf(ApiException.class).extracting("code").isEqualTo("REQUEST_TARGET_EXCLUDED");
         verifyNoInteractions(validation, annualMasters);
         assertThat(jdbc.sql("SELECT status FROM submission WHERE id=10").query(String.class).single()).isEqualTo("PENDING");
+    }
+
+    /** 반려 항목의 금액·이름·사유를 불변 이력으로 남기고 재전달을 중복 저장하지 않는다.
+     * Args: 없음. Returns: 없음. Raises: DB·JSON 검증 오류. Side Effects: 합성 H2 반려와 이력 저장.
+     */
+    @Test
+    void rejectionItemsPreserveReviewedEvidenceAndReplayWithoutDuplicates() throws Exception {
+        makePending(10);seedReviewForRejection();Actor planner=planner();
+        var selected=mapper.readTree("{\"reviewItemId\":\"101\",\"reason\":\"증가 원천을 다시 확인해 주세요.\"}");
+        var input=new SubmissionWorkflowService.DecisionInput(currentView(planner,"10").get("stateToken").toString(),"REJECT","월별 근거 확인",List.of(selected));
+        workflow.decide(planner,"10","reject-items-001",input);workflow.decide(planner,"10","reject-items-001",input);
+        var rejections=new SubmissionRejectionService(jdbc,mapper);var item=rejections.items(10).getFirst();
+        assertThat(item.get("baselineAmount")).isEqualTo("100");assertThat(item.get("currentAmount")).isEqualTo("150");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM submission_rejection_item").query(Integer.class).single()).isEqualTo(1);
+        jdbc.sql("UPDATE report_item SET name='나중 이름' WHERE id=101").update();
+        assertThat(rejections.items(10).getFirst().get("reportItem")).isEqualTo(item.get("reportItem"));
+        assertThat(jdbc.sql("SELECT seq FROM submission WHERE id=10").query(Integer.class).single()).isEqualTo(1);
+    }
+
+    /** 잘못된 항목·원천 선택이 반려 헤더와 이력 전체를 롤백한다.
+     * Args: 없음. Returns: 없음. Raises: DB·JSON 검증 오류. Side Effects: 합성 H2 트랜잭션 실패·롤백.
+     */
+    @Test
+    void invalidRejectionSourceRollsBackWholeDecision() throws Exception {
+        makePending(10);seedReviewForRejection();Actor planner=planner();
+        var selected=mapper.readTree("{\"reviewItemId\":\"101\",\"reason\":\"원천 확인\",\"source\":{\"sheet\":\"없는 시트\",\"cell\":\"A1\"}}");
+        var input=new SubmissionWorkflowService.DecisionInput(currentView(planner,"10").get("stateToken").toString(),"REJECT","원천 확인",List.of(selected));
+        assertThatThrownBy(()->workflow.decide(planner,"10","reject-invalid-001",input)).isInstanceOf(ApiException.class).extracting("code").isEqualTo("INVALID_REQUEST");
+        assertThat(jdbc.sql("SELECT status FROM submission WHERE id=10").query(String.class).single()).isEqualTo("PENDING");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM submission_rejection_item").query(Integer.class).single()).isZero();
+    }
+
+    /** 독립 반려 검토 근거를 준비한다. Args: 없음. Returns: 없음. Raises: DB 오류. Side Effects: 합성 검토·비교 INSERT. */
+    private void seedReviewForRejection(){
+        jdbc.sql("INSERT INTO report_item(id,code,name,kind,is_leaf) VALUES (101,'REJECT_REVENUE','반려 매출','REVENUE',TRUE)").update();
+        jdbc.sql("INSERT INTO gap_threshold(id,scenario,percent,amount,applied_by,applied_at) VALUES (101,'ACTUAL',5,10,1,CURRENT_TIMESTAMP)").update();
+        jdbc.sql("INSERT INTO review_item(id,submission_id,report_item_id,year,month,scenario,amount_present,current_amount,change_detected,gap_exceeded,source_fingerprint,context_fingerprint,current_round) VALUES (101,10,101,2031,1,'PLAN',TRUE,150,TRUE,TRUE,?,?,1)").params("a".repeat(64),"b".repeat(64)).update();
+        jdbc.sql("INSERT INTO gap_comparison(review_item_id,basis,baseline_submission_id,baseline_scenario,baseline_amount,current_amount,gap_amount,gap_rate,threshold_id,exceeded) VALUES (101,'PLAN',10,'PLAN',100,150,50,50,101,TRUE)").update();
+    }
+
+    /** 명시 비교 요청은 자동 Gap과 이전 수용 소명을 유지하고 새 회차에만 다른 비교를 보관한다.
+     * Args: 없음. Returns: 없음. Raises: DB·JSON 검증 오류. Side Effects: 합성 H2 검토회차·이벤트·멱등 저장.
+     */
+    @Test
+    void explicitComparisonRequestPreservesFixedGapAndAcceptedPriorRound() throws Exception {
+        makePending(10);seedReviewForRejection();seedDraft(11);
+        jdbc.sql("UPDATE submission SET status='REJECTED',seq=2,submitted_by=2,submitted_at=CURRENT_TIMESTAMP WHERE id=11").update();
+        jdbc.sql("INSERT INTO review_explanation(review_item_id,round,answer,answered_by,answered_at,verdict,reviewed_by,reviewed_at) VALUES (101,1,'기존 수용 답변',2,CURRENT_TIMESTAMP,'ACCEPTED',1,CURRENT_TIMESTAMP)").update();
+        var comparison=spy(new ReviewComparisonService(jdbc,mapper));
+        doReturn(Map.of("101:2031:1:PLAN",new ReviewComparisonService.Cell(101,"REJECT_REVENUE","REVENUE",2031,1,"PLAN",new BigDecimal("150"),"a".repeat(64),List.of()))).when(comparison).cells(10);
+        var reviews=mock(ReviewService.class);
+        when(reviews.compareSubmissions(any(),eq("10"),anyMap())).thenReturn(Map.of("items",List.of(Map.of("reportItem",Map.of("id","101","name","반려 매출"),"year",2031,"month",1,"scenario","PLAN","baselineScenario","PLAN","baselineAmount","80","currentAmount","150","valueStatus","AVAILABLE"))));
+        when(reviews.get(any(),eq("101"))).thenReturn(Map.of("id","101","currentRound",2));
+        var commands=new CommandExecutor(new JdbcTemplate(database),new DataSourceTransactionManager(database));
+        var service=new ComparisonExplanationService(jdbc,mapper,commands,reviews,comparison,submissions);
+        var input=mapper.valueToTree(Map.of("expectedStateToken",currentView(planner(),"10").get("stateToken"),"baselineSubmissionId","11","baselineScenario","PLAN","scenario","PLAN","month",1,"reportItemIds",List.of("101"),"note","선택 비교 확인","dueAt","2031-12-01T00:00:00Z"));
+        service.request(planner(),"10","explicit-comparison-001",input);service.request(planner(),"10","explicit-comparison-001",input);
+        assertThat(jdbc.sql("SELECT baseline_amount FROM gap_comparison WHERE review_item_id=101").query(BigDecimal.class).single()).isEqualByComparingTo("100");
+        var previous=jdbc.sql("SELECT answer,verdict,request_comparison_json FROM review_explanation WHERE review_item_id=101 AND round=1").query().singleRow();
+        assertThat(previous.get("answer")).isEqualTo("기존 수용 답변");assertThat(previous.get("verdict")).isEqualTo("ACCEPTED");assertThat(previous.get("request_comparison_json")).isNull();
+        assertThat(jdbc.sql("SELECT request_comparison_json FROM review_explanation WHERE review_item_id=101 AND round=2").query(String.class).single()).contains("\"baselineAmount\":\"80\"");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM review_workflow_event").query(Integer.class).single()).isEqualTo(1);
+        var counts=new ReviewService(jdbc,commands,comparison).counts(10);assertThat(counts.get("unansweredCount")).isEqualTo(1);assertThat(counts.get("pendingReviewCount")).isEqualTo(1);
+    }
+
+    /** 아직 바뀔 수 있는 초안을 기준으로 영속 소명 요청을 만들지 않는다.
+     * Args: 없음. Returns: 없음. Raises: DB·JSON 검증 오류. Side Effects: 합성 H2 읽기·실패 롤백.
+     */
+    @Test
+    void explicitComparisonRejectsDraftBaselineWithoutCreatingReview() throws Exception {
+        makePending(10);seedDraft(11);
+        var commands=new CommandExecutor(new JdbcTemplate(database),new DataSourceTransactionManager(database));
+        var reviews=mock(ReviewService.class);
+        var service=new ComparisonExplanationService(jdbc,mapper,commands,reviews,new ReviewComparisonService(jdbc,mapper),submissions);
+        var input=mapper.valueToTree(Map.of("expectedStateToken",currentView(planner(),"10").get("stateToken"),"baselineSubmissionId","11","baselineScenario","PLAN","scenario","PLAN","month",1,"reportItemIds",List.of("101"),"note","선택 비교 확인","dueAt","2031-12-01T00:00:00Z"));
+        assertThatThrownBy(()->service.request(planner(),"10","draft-comparison-001",input)).isInstanceOf(ApiException.class).extracting("code").isEqualTo("INVALID_REQUEST");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM review_item").query(Integer.class).single()).isZero();verifyNoInteractions(reviews);
     }
 
     /** 독립 기획 계정의 인증 문맥을 만든다.

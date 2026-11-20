@@ -30,13 +30,14 @@ public class SubmissionWorkflowService {
     private final SubmissionValidationService validation;
     private final AnnualMasterService annualMasters;
     private final MonthlyMasterService monthlyMasters;
+    private final SubmissionRejectionService rejections;
 
     /** 검증·조회와 같은 DB 트랜잭션을 사용하는 명령 의존성을 연결한다.
-     * Args: jdbc DB, mapper JSON, commands 멱등 경계, submissions 조회, validation 검증·적재, annualMasters 연간 마스터, monthlyMasters 실적 마스터 발행.
+     * Args: jdbc DB, mapper JSON, commands 멱등 경계, submissions 조회, validation 검증·적재, annualMasters 연간 마스터, monthlyMasters 실적 마스터 발행, rejections 반려 근거.
      * Returns: 없음. Raises: 없음. Side Effects: 없음.
      */
     public SubmissionWorkflowService(JdbcClient jdbc, ObjectMapper mapper, CommandExecutor commands,
-            SubmissionService submissions, SubmissionValidationService validation, AnnualMasterService annualMasters, MonthlyMasterService monthlyMasters) {
+            SubmissionService submissions, SubmissionValidationService validation, AnnualMasterService annualMasters, MonthlyMasterService monthlyMasters, SubmissionRejectionService rejections) {
         this.jdbc = jdbc;
         this.mapper = mapper;
         this.commands = commands;
@@ -44,6 +45,7 @@ public class SubmissionWorkflowService {
         this.validation = validation;
         this.annualMasters = annualMasters;
         this.monthlyMasters = monthlyMasters;
+        this.rejections = rejections;
     }
 
     /** 현재 파싱 결과를 검증하고 검증 근거와 선택한 월별 상세를 원자적으로 채택한다.
@@ -60,6 +62,7 @@ public class SubmissionWorkflowService {
             Map<String, Object> row = lockDraft(actor, submissionId, input);
             lockAnnualPlan(row);
             jdbc.sql("SELECT id FROM gap_threshold_guard WHERE id=1 FOR UPDATE").query(Integer.class).single();
+            jdbc.sql("SELECT id FROM review_policy_guard WHERE id=1 FOR UPDATE").query(Integer.class).single();
             validation.validateLocked(actor, submissionId);
             return new CommandExecutor.Result(200, json(object("submission", submissions.submission(actor, submissionId),
                     "changedReviewItemIds", validation.reviewIds(submissionId, false), "answerRequiredReviewItemIds", validation.reviewIds(submissionId, true))),
@@ -81,6 +84,7 @@ public class SubmissionWorkflowService {
             Map<String, Object> row = lockDraft(actor, submissionId, input);
             checkSubmissionWindow(actor, row);
             jdbc.sql("SELECT id FROM gap_threshold_guard WHERE id=1 FOR UPDATE").query(Integer.class).single();
+            jdbc.sql("SELECT id FROM review_policy_guard WHERE id=1 FOR UPDATE").query(Integer.class).single();
             validation.assertReadyForSubmit(actor, submissionId);
             int seq = jdbc.sql("SELECT COALESCE(MAX(seq),0)+1 FROM submission WHERE request_id=? AND organization_id=?")
                     .params(row.get("request_id"), row.get("organization_id")).query(Integer.class).single();
@@ -135,6 +139,7 @@ public class SubmissionWorkflowService {
                     """).params(input.action().equals("APPROVE") ? "APPROVED" : "REJECTED", id(actor.id()),
                             OffsetDateTime.now(ZoneOffset.UTC), input.note(), id(submissionId)).update();
             if (changed != 1) throw conflict("INVALID_SUBMISSION_STATE", "이미 검토가 완료된 제출본입니다.");
+            if (input.action().equals("REJECT")) rejections.save(actor,id(submissionId),input.rejectionItems());
             List<Map<String, Object>> masterEffects = input.action().equals("APPROVE")
                     ? (jdbc.sql("SELECT type FROM submission_request WHERE id=?").param(row.get("request_id")).query(String.class).single().equals("ANNUAL_PLAN")
                         ? List.of(annualMasters.publishAfterApproval(actor, submissionId)) : monthlyMasters.publishAfterApproval(actor, submissionId)) : List.of();
@@ -268,9 +273,9 @@ public class SubmissionWorkflowService {
     public record StateInput(@jakarta.validation.constraints.NotBlank String expectedStateToken) {}
 
     /** 승인과 반려 입력을 구분한다. 자동 생성 접근자는 추가 동작이 없다. */
-    public record DecisionInput(String expectedStateToken, String action, String note) {
+    public record DecisionInput(String expectedStateToken, String action, String note, List<JsonNode> rejectionItems) {
         /** 타입·필수값을 확인하고 반려 사유의 양끝 공백만 제거한다.
-         * Args: expectedStateToken 현재 토큰, action APPROVE/REJECT, note 반려 때만 필수인 사유.
+         * Args: expectedStateToken 현재 토큰, action APPROVE/REJECT, note 반려 때만 필수인 사유, rejectionItems 선택 반려 항목.
          * Returns: 없음. Raises: ApiException 유효하지 않은 명령. Side Effects: 없음.
          */
         public DecisionInput {
@@ -281,7 +286,14 @@ public class SubmissionWorkflowService {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "판단 종류와 상태 토큰, 1~2000자의 반려 사유를 확인해 주세요.");
             }
             if (note != null) note = note.strip();
+            rejectionItems = rejectionItems == null ? List.of() : List.copyOf(rejectionItems);
+            if (rejectionItems.size()>100 || ("APPROVE".equals(action)&&!rejectionItems.isEmpty())) throw invalidDecision("반려 항목은 반려할 때 100개까지 선택할 수 있습니다.");
         }
+
+        /** 항목 선택이 없는 기존 판단 호출을 유지한다.
+         * Args: expectedStateToken 현재 토큰, action 판단, note 전체 사유. Returns: 없음. Raises: 입력 오류. Side Effects: 없음.
+         */
+        public DecisionInput(String expectedStateToken,String action,String note){this(expectedStateToken,action,note,List.of());}
 
         /** JSON 필드 존재와 문자열 타입을 검사해 승인 메모·알 수 없는 입력을 거부한다.
          * Args: input 요청 JSON. Returns: 검증된 판단 입력.
@@ -292,7 +304,7 @@ public class SubmissionWorkflowService {
             if (input == null || !input.isObject()) throw invalidDecision("판단 요청은 JSON 객체여야 합니다.");
             var fields = input.fieldNames();
             while (fields.hasNext()) {
-                if (!java.util.Set.of("expectedStateToken", "action", "note").contains(fields.next())) {
+                if (!java.util.Set.of("expectedStateToken", "action", "note", "rejectionItems").contains(fields.next())) {
                     throw invalidDecision("허용되지 않은 판단 입력입니다.");
                 }
             }
@@ -300,8 +312,11 @@ public class SubmissionWorkflowService {
                     || (input.has("note") && (!input.path("note").isTextual() || "APPROVE".equals(input.path("action").asText())))) {
                 throw invalidDecision("판단 입력의 문자열 타입을 확인하세요. 승인에는 사유를 보내지 않습니다.");
             }
+            if(input.has("rejectionItems")&&(!input.path("rejectionItems").isArray()||"APPROVE".equals(input.path("action").asText())))throw invalidDecision("rejectionItems는 반려할 때만 배열로 지정합니다.");
+            var items=new java.util.ArrayList<JsonNode>();
+            for(JsonNode item:input.path("rejectionItems")){if(!item.isObject())throw invalidDecision("반려 항목은 객체여야 합니다.");items.add(item.deepCopy());}
             return new DecisionInput(input.path("expectedStateToken").asText(), input.path("action").asText(),
-                    input.has("note") ? input.path("note").asText() : null);
+                    input.has("note") ? input.path("note").asText() : null,items);
         }
     }
 }
