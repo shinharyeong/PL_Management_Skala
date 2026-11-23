@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import re
 import unicodedata
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -11,7 +10,6 @@ from ..config import get_settings
 
 REPO = Path(__file__).resolve().parents[3]
 PARSER_SRC = REPO / "parser" / "src"
-DOMAIN_RULES = REPO / "docs" / "domain-rules.md"
 
 
 REV_SHEET = "매출_세부_IFRS15後"
@@ -104,21 +102,16 @@ def compress_rows(rows) -> str:
     return ",".join(out)
 
 
+DEFAULT_THRESHOLDS = {
+    "ACTUAL": {"percent": Decimal(5), "amount_won": Decimal(10) ** 7},     # ±5%·1천만 원
+    "ESTIMATE": {"percent": Decimal(10), "amount_won": Decimal(5) * Decimal(10) ** 7},  # ±10%·5천만 원
+}
+
+
 def load_thresholds() -> dict:
-    """docs/domain-rules.md 의 '기준' 절에서 실적·추정 기준을 읽는다. 문서에는 '예)'로만 존재한다."""
-    text = DOMAIN_RULES.read_text(encoding="utf-8")
-    m = re.search(
-        r"예\)\s*실적\s*±(\d+(?:\.\d+)?)%[·\s]*(\d+)(천만|만|억)\s*원,\s*추정\s*±(\d+(?:\.\d+)?)%[·\s]*(\d+)(천만|만|억)\s*원",
-        text,
-    )
-    if not m:
-        raise RuntimeError("문서에 없음: 실적·추정 기준 값을 docs/domain-rules.md에서 찾지 못했습니다.")
-    unit = {"천만": Decimal(10) ** 7, "만": Decimal(10) ** 4, "억": Decimal(10) ** 8}
-    line = next(l for l in text.splitlines() if "예) 실적" in l)
+    """실적·추정 Gap 기본 기준. 예시값이며 확정 기준은 경영기획 설정(PRD FR-MONTH-005)을 따른다."""
     return {
-        "ACTUAL": {"percent": Decimal(m.group(1)), "amount_won": Decimal(m.group(2)) * unit[m.group(3)]},
-        "ESTIMATE": {"percent": Decimal(m.group(4)), "amount_won": Decimal(m.group(5)) * unit[m.group(6)]},
-        "source": "docs/domain-rules.md §4 '기준' (문서에는 '예)' 예시값으로만 기재, 확정 기준값 아님)",
-        "source_line": line.strip(),
+        **{k: dict(v) for k, v in DEFAULT_THRESHOLDS.items()},
+        "source": "ai 기본값(예시: 실적 ±5%·1천만 원, 추정 ±10%·5천만 원, 확정 기준값 아님)",
         "rule": "abs(Gap률) > percent AND abs(Gap금액) > amount (엄격 초과, 반올림 전 십진값)",
     }

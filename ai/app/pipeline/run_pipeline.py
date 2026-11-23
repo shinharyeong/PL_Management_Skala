@@ -50,7 +50,7 @@ def main():
     linked = explain_stage.link(g, subs, b["snapshots"])
     sc = explain_stage.scenario_check(g, subs)
     write_json("gaps.json", {
-        "meta": meta, "thresholds": th, "rule_source": "docs/domain-rules.md §4, docs/development/erd.md, db-mapping.md §6",
+        "meta": meta, "thresholds": th, "rule_source": "PRD ver1 FR-MONTH-005·006, ai/app/pipeline/common.py 기본 기준",
         "comparison_chain": g["steps"], "gaps": g["gaps"], "op_comparisons": g["op_comparisons"], "issues": g["issues"],
         "scenario_check": sc,
         "notes": ["설명 원문(담당자·거래내역 및 산출근거)은 의미 비교에서 제외: 정규화 규칙이 문서에 없음", "비교 단위는 조직·보고 항목(매출=관리분류, 비용=실적집계기준)·연월·시나리오, 금액은 원 단위 Decimal"],
