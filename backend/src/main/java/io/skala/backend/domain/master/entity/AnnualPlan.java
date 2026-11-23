@@ -43,4 +43,15 @@ public class AnnualPlan extends BaseCreatedTimeEntity {
 
     @Column(name = "confirmed_at")
     private OffsetDateTime confirmedAt;
+
+    public static AnnualPlan collecting(int year) {
+        AnnualPlan plan = new AnnualPlan();
+        plan.year = year;
+        plan.status = AnnualPlanStatus.COLLECTING;
+        return plan;
+    }
+
+    public boolean isConfirmed() {
+        return status == AnnualPlanStatus.CONFIRMED;
+    }
 }

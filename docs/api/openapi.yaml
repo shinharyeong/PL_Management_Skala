@@ -680,6 +680,9 @@ components:
       properties:
         organization:
           $ref: '#/components/schemas/Organization'
+        selected:
+          type: boolean
+          description: 실제로 요청을 보낸 조직인지(false면 필수 대상이지만 아직 요청 안 함)
         requestedAt:
           $ref: '#/components/schemas/Timestamp'
         dueAt:
@@ -3386,33 +3389,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /submission-requests/{requestId}/template/file:
-    get:
-      operationId: downloadRequestTemplate
-      tags:
-      - 업로드·검증
-      summary: UP-01 제출 양식 다운로드(연간/월간 구분)
-      x-fr:
-      - FR-UPLOAD-002
-      x-tables:
-      - request_template
-      - stored_object
-      parameters:
-      - $ref: '#/components/parameters/RequestIdPath'
-      responses:
-        '200':
-          $ref: '#/components/responses/FileStream'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          description: '`TEMPLATE_NOT_REGISTERED` 양식이 아직 등록되지 않음'
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
-      description: 권한을 확인한 뒤 backend가 S3에서 원본을 읽어 그대로 내려준다.
   /submission-requests/{requestId}/submissions:
     post:
       operationId: createSubmissionDraft
@@ -5102,3 +5078,24 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /submission-template/file:
+    get:
+      operationId: downloadRequestTemplate
+      tags:
+      - 업로드·검증
+      summary: UP-01 제출 양식 다운로드(연간·월간 공통)
+      x-fr:
+      - FR-UPLOAD-002
+      x-tables: []
+      responses:
+        '200':
+          $ref: '#/components/responses/FileStream'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`TEMPLATE_NOT_FOUND` 서버에 양식 파일이 없음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      description: 연간 계획과 월간 시트가 같은 양식이라 파일 하나를 내려준다. 로그인한 사용자 누구나 받을 수 있다. 파일이 준비되지 않았으면 404.

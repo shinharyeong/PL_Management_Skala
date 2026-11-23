@@ -213,7 +213,7 @@ API별 업무 오류 코드(`REQUEST_ALREADY_EXISTS`, `PENDING_ALREADY_EXISTS`, 
 
 | ID | 메서드 | 경로 | 설명 | 주요 요청 | 주요 응답 | 권한 | FR | 관련 테이블 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| UP-01 | GET | `/submission-requests/{requestId}/template/file` | 제출 양식 다운로드(연간/월간 구분) | — | 파일 스트림 | O | UPLOAD-002 | request_template, stored_object |
+| UP-01 | GET | `/submission-template/file` | 제출 양식 다운로드(연간·월간 공통 파일 하나) | — | 파일 스트림 · 파일이 없으면 404 `TEMPLATE_NOT_FOUND` | P·O | UPLOAD-002 | — |
 | UP-03 | POST | `/submission-requests/{requestId}/submissions` | 엑셀 업로드 → 파일 규칙 확인 → S3 `drafts/` 저장 → 제출 초안 생성 → 파싱 작업 등록 | multipart `file`(.xlsx, 요청당 1개) | `202` `submission{id, status: DRAFT, kind: ANNUAL_PLAN·MONTHLY_ACTUAL, title}`, `parsingJob{status: QUEUED}` · 오류 `INVALID_FILENAME`(422), `ORGANIZATION_MISMATCH`, `UNSUPPORTED_FILE_TYPE`(415), `FILE_TOO_LARGE`(413) | O | UPLOAD-001, 003, 004, 005 | submission, stored_object, parsing_job |
 | UP-04 | GET | `/submissions/{submissionId}` | 제출본 상태 조회. 파싱 진행 중에는 폴링 | — | `submission{status, label, ...}`, `parsingJob{status: QUEUED·RUNNING·SUCCEEDED·FAILED}`, `validation{canSubmit}` | P·O | UPLOAD-005 | submission, parsing_job |
 | UP-05 | GET | `/submissions/{submissionId}/diagnostics` | 검증 결과 · 수정 필요 표 | — | `errorCount`, `items[{sourceCell, item, rule, guide}]` (예: 손익제출!N40 · 설비 임차료 · 금액 누락) | O | UPLOAD-006 | parsing_job, submission_validation |
