@@ -127,4 +127,16 @@ public class ReviewExplanation {
     public boolean isInherited() {
         return inheritedFrom != null;
     }
+
+    /** 소명 답변 작성·수정 */
+    public void answer(String text, AppUser by, OffsetDateTime at) {
+        this.answer = text;
+        this.answeredBy = by;
+        this.answeredAt = at;
+    }
+
+    /** 첨부가 바뀔 때마다 올려 상태 토큰이 달라지게 한다. */
+    public void touchAttachments() {
+        this.attachmentRevision = attachmentRevision + 1;
+    }
 }

@@ -10,4 +10,8 @@ public interface ReviewExplanationRepository extends JpaRepository<ReviewExplana
 
     @Query("select e from ReviewExplanation e join fetch e.reviewItem i where i.submission.id = :submissionId")
     List<ReviewExplanation> findAllBySubmissionId(@Param("submissionId") Long submissionId);
+
+    List<ReviewExplanation> findAllByReviewItemIdOrderByRoundAsc(Long reviewItemId);
+
+    java.util.Optional<ReviewExplanation> findByReviewItemIdAndRound(Long reviewItemId, Integer round);
 }

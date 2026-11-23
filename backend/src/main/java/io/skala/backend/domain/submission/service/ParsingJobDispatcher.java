@@ -37,13 +37,15 @@ public class ParsingJobDispatcher {
     private final TransactionTemplate transaction;
     private final Clock clock;
     private final Duration timeout;
+    private final boolean sweeperEnabled;
     private final ExecutorService executor;
 
     public ParsingJobDispatcher(ParsingJobRepository parsingJobRepository, ParsingResultService parsingResultService,
                                 ParserProcessRunner parserProcessRunner, FileStorage fileStorage,
                                 TransactionTemplate transaction, Clock clock,
                                 @Value("${app.parser.timeout:PT5M}") Duration timeout,
-                                @Value("${app.parser.max-concurrency:2}") int maxConcurrency) {
+                                @Value("${app.parser.max-concurrency:2}") int maxConcurrency,
+                                @Value("${app.parser.sweeper.enabled:true}") boolean sweeperEnabled) {
         this.parsingJobRepository = parsingJobRepository;
         this.parsingResultService = parsingResultService;
         this.parserProcessRunner = parserProcessRunner;
@@ -51,6 +53,7 @@ public class ParsingJobDispatcher {
         this.transaction = transaction;
         this.clock = clock;
         this.timeout = timeout;
+        this.sweeperEnabled = sweeperEnabled;
         this.executor = Executors.newFixedThreadPool(Math.max(1, maxConcurrency), runnable -> {
             Thread thread = new Thread(runnable, "parsing-job");
             thread.setDaemon(true);
@@ -105,9 +108,12 @@ public class ParsingJobDispatcher {
         }
     }
 
-    /** 1분마다: 오래 대기 중인 작업은 다시 실행, 제한 시간을 넘긴 작업은 실패 처리 */
+    /** 1분마다(global SchedulingConfig): 오래 대기 중인 작업은 다시 실행, 제한 시간을 넘긴 작업은 실패 처리 */
     @Scheduled(fixedDelayString = "${app.parser.sweep-interval:PT1M}", initialDelayString = "PT30S")
     public void sweep() {
+        if (!sweeperEnabled) {
+            return;
+        }
         OffsetDateTime now = OffsetDateTime.now(clock);
         parsingJobRepository.findAllByStatusAndCreatedAtBefore(ParsingJobStatus.QUEUED, now.minusMinutes(1))
                 .forEach(job -> submit(job.getId(), job.getAttemptNo()));

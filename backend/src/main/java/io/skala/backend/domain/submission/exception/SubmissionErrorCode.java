@@ -19,6 +19,9 @@ public enum SubmissionErrorCode {
     PARSING_NOT_READY(HttpStatus.CONFLICT, "파일 확인이 아직 끝나지 않았습니다. 잠시 후 다시 시도해 주세요."),
     VALIDATION_NOT_ALLOWED(HttpStatus.CONFLICT, "제출 전 초안에서만 변경 확인을 할 수 있습니다."),
     COMPARISON_SOURCE_UNAVAILABLE(HttpStatus.CONFLICT, "비교할 기준 버전의 데이터가 없습니다. 경영기획팀에 문의해 주세요."),
+    VALIDATION_REQUIRED(HttpStatus.CONFLICT, "변경 확인을 먼저 진행해 주세요."),
+    REVIEW_CONTEXT_CHANGED(HttpStatus.CONFLICT, "비교 기준이 바뀌었습니다. 변경 확인을 다시 진행해 주세요."),
+    ANSWER_REQUIRED(HttpStatus.UNPROCESSABLE_ENTITY, "소명을 작성하지 않은 항목이 있습니다."),
     VALIDATION_FAILED(HttpStatus.UNPROCESSABLE_ENTITY, "파일 검증에서 수정할 항목이 있습니다. 검증 결과를 확인해 주세요.");
 
     private final HttpStatus status;
