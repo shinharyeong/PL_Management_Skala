@@ -30,4 +30,13 @@ public class StoredObject extends BaseCreatedTimeEntity {
     @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "sha256", nullable = false, length = 64)
     private String sha256;
+
+    public static StoredObject create(String objectKey, String contentType, long sizeBytes, String sha256) {
+        StoredObject object = new StoredObject();
+        object.objectKey = objectKey;
+        object.contentType = contentType;
+        object.sizeBytes = sizeBytes;
+        object.sha256 = sha256;
+        return object;
+    }
 }
