@@ -1814,6 +1814,8 @@ paths:
                           - REQUEST_NEEDED
                           - NOT_SUBMITTED
                           - REVIEW_NEEDED
+                          - EXPLANATION_REVIEW_NEEDED
+                          description: 요청 필요 · 미제출 · 검토 필요 조직 · 소명 검토 필요 조직(재요청한 소명에 답이 왔고 판단 전)
                         label:
                           type: string
                           example: 월간 시트 미제출
@@ -3173,7 +3175,8 @@ paths:
                           type:
                           - string
                           - 'null'
-                          example: v10.01
+                          description: 그 달 가장 최근 승인 버전. 승인본이 없으면 null
+                          example: ver10.01
                   history:
                     type: array
                     items:
@@ -3183,6 +3186,13 @@ paths:
                           $ref: '#/components/schemas/Id'
                         label:
                           type: string
+                          example: '2026-10-02'
+                        status:
+                          type: string
+                          enum:
+                          - PENDING
+                          - REJECTED
+                          - APPROVED
                         lastModifiedAt:
                           $ref: '#/components/schemas/Timestamp'
                         file:
@@ -3232,12 +3242,21 @@ paths:
                           items:
                             type: object
                             properties:
-                              false:
+                              'no':
                                 type: integer
+                                description: 묶음 안의 순번(1부터)
                               code:
                                 type: string
                               name:
                                 type: string
+                              month:
+                                type: integer
+                              scenario:
+                                type: string
+                                enum:
+                                - PLAN
+                                - ACTUAL
+                                - ESTIMATE
                               explanation:
                                 type: string
         '401':
