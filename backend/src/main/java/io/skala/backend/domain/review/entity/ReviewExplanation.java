@@ -79,4 +79,52 @@ public class ReviewExplanation {
 
     @Column(name = "attachment_revision", nullable = false)
     private Long attachmentRevision = 0L;
+
+    /** 조직 담당자가 제출 전에 써야 하는 소명 자리. 재제출이면 반려 사유를 요청 메모로 옮겨 둔다. */
+    public static ReviewExplanation pending(ReviewItem reviewItem, int round, String requestNote) {
+        ReviewExplanation explanation = new ReviewExplanation();
+        explanation.reviewItem = reviewItem;
+        explanation.round = round;
+        explanation.requestNote = requestNote;
+        explanation.verdict = ExplanationVerdict.PENDING;
+        explanation.attachmentRevision = 0L;
+        return explanation;
+    }
+
+    /** 값이 그대로인 항목은 지난 승인 소명을 그대로 이어받는다(FR-PROOF-007). */
+    public static ReviewExplanation inherit(ReviewItem reviewItem, int round, ReviewExplanation accepted) {
+        ReviewExplanation explanation = new ReviewExplanation();
+        explanation.reviewItem = reviewItem;
+        explanation.round = round;
+        explanation.answer = accepted.getAnswer();
+        explanation.answeredBy = accepted.getAnsweredBy();
+        explanation.answeredAt = accepted.getAnsweredAt();
+        explanation.verdict = ExplanationVerdict.ACCEPTED;
+        explanation.reviewedBy = accepted.getReviewedBy();
+        explanation.reviewedAt = accepted.getReviewedAt();
+        explanation.inheritedFrom = accepted.getInheritedFrom() != null ? accepted.getInheritedFrom() : accepted;
+        explanation.attachmentRevision = 0L;
+        return explanation;
+    }
+
+    public boolean isAnswered() {
+        return answer != null && !answer.isBlank();
+    }
+
+    /** 이어받았던 소명이 더 이상 맞지 않으면(값이 바뀜) 새로 써야 하는 자리로 되돌린다. */
+    public void resetToPending(String requestNote) {
+        this.requestNote = requestNote;
+        this.answer = null;
+        this.answeredBy = null;
+        this.answeredAt = null;
+        this.verdict = ExplanationVerdict.PENDING;
+        this.reviewedBy = null;
+        this.reviewedAt = null;
+        this.reviewNote = null;
+        this.inheritedFrom = null;
+    }
+
+    public boolean isInherited() {
+        return inheritedFrom != null;
+    }
 }

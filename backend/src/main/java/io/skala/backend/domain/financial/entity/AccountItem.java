@@ -34,4 +34,12 @@ public class AccountItem extends BaseCreatedTimeEntity {
 
     @Column(name = "source_name", nullable = false, length = 500)
     private String sourceName;
+
+    public static AccountItem create(AccountSourceType sourceType, String sourceCode, String sourceName) {
+        AccountItem item = new AccountItem();
+        item.sourceType = sourceType;
+        item.sourceCode = sourceCode;
+        item.sourceName = sourceName;
+        return item;
+    }
 }

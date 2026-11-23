@@ -53,4 +53,22 @@ public class ReportItem extends BaseTimeEntity {
 
     @Column(name = "active", nullable = false)
     private Boolean active = true;
+
+    public static ReportItem create(String code, String name, ReportItem parent, ReportItemKind kind,
+                                    boolean leaf, int displayOrder) {
+        ReportItem item = new ReportItem();
+        item.code = code;
+        item.name = name;
+        item.parent = parent;
+        item.kind = kind;
+        item.isLeaf = leaf;
+        item.displayOrder = displayOrder;
+        item.active = true;
+        return item;
+    }
+
+    /** 처음에 상위 항목으로만 만들어진 행이 나중에 말단으로도 쓰이면 말단 표시를 켠다. */
+    public void markLeaf() {
+        this.isLeaf = true;
+    }
 }

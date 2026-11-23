@@ -69,4 +69,28 @@ public class FinancialLine {
 
     @Column(name = "source_row", nullable = false)
     private Integer sourceRow;
+
+    @lombok.Builder(builderMethodName = "builder")
+    private static FinancialLine of(Submission submission, AccountItem accountItem, ReportItem reportItem,
+                                    String detailId, String detailRevision, String headquartersCode,
+                                    String teamCode, String taskCode, String managementCategory,
+                                    String actualBasis, String costType, String description,
+                                    String sourceSheet, Integer sourceRow) {
+        FinancialLine line = new FinancialLine();
+        line.submission = submission;
+        line.accountItem = accountItem;
+        line.reportItem = reportItem;
+        line.detailId = detailId;
+        line.detailRevision = detailRevision;
+        line.headquartersCode = headquartersCode;
+        line.teamCode = teamCode;
+        line.taskCode = taskCode;
+        line.managementCategory = managementCategory;
+        line.actualBasis = actualBasis;
+        line.costType = costType;
+        line.description = description;
+        line.sourceSheet = sourceSheet;
+        line.sourceRow = sourceRow;
+        return line;
+    }
 }

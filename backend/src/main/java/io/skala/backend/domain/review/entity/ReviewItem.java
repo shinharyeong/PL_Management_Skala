@@ -90,4 +90,44 @@ public class ReviewItem extends BaseTimeEntity {
 
     @Column(name = "rejected", nullable = false)
     private Boolean rejected = false;
+
+    public static ReviewItem create(Submission submission, ReportItem reportItem, int year, int month,
+                                    Scenario scenario, BigDecimal currentAmount, boolean changeDetected,
+                                    String sourceFingerprint, String contextFingerprint, String policyVersion) {
+        ReviewItem item = new ReviewItem();
+        item.submission = submission;
+        item.reportItem = reportItem;
+        item.year = year;
+        item.month = month;
+        item.scenario = scenario;
+        item.amountPresent = currentAmount != null;
+        item.currentAmount = currentAmount;
+        item.changeDetected = changeDetected;
+        item.gapExceeded = false;
+        item.sourceFingerprint = sourceFingerprint;
+        item.contextFingerprint = contextFingerprint;
+        item.currentRound = 1;
+        item.active = true;
+        item.reviewPolicyVersion = policyVersion;
+        item.workflowState = WorkflowState.NEEDS_REVIEW;
+        item.rejected = false;
+        return item;
+    }
+
+    /** 재검증 때 같은 키의 항목을 새 계산 결과로 바꾼다. */
+    public void refresh(BigDecimal currentAmount, boolean changeDetected, String sourceFingerprint,
+                        String contextFingerprint, String policyVersion) {
+        this.amountPresent = currentAmount != null;
+        this.currentAmount = currentAmount;
+        this.changeDetected = changeDetected;
+        this.sourceFingerprint = sourceFingerprint;
+        this.contextFingerprint = contextFingerprint;
+        this.reviewPolicyVersion = policyVersion;
+        this.active = true;
+    }
+
+    /** 재검증 결과에 더 이상 없는 항목은 지우지 않고 비활성으로 둔다(소명·첨부 이력 보존). */
+    public void deactivate() {
+        this.active = false;
+    }
 }

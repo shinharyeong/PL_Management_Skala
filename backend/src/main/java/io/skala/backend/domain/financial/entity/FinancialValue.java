@@ -50,4 +50,17 @@ public class FinancialValue {
 
     @Column(name = "source_cell", nullable = false, length = 30)
     private String sourceCell;
+
+    public static FinancialValue create(FinancialLine line, int year, int month, Scenario scenario,
+                                        BigDecimal amount, String sourceRecordId, String sourceCell) {
+        FinancialValue value = new FinancialValue();
+        value.line = line;
+        value.year = year;
+        value.month = month;
+        value.scenario = scenario;
+        value.amount = amount;
+        value.sourceRecordId = sourceRecordId;
+        value.sourceCell = sourceCell;
+        return value;
+    }
 }
