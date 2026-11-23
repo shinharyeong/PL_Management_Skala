@@ -1299,15 +1299,13 @@ paths:
       tags:
       - 로그인·사용자
       summary: AUTH-01 인증 메일 요청·재전송
-      description: 등록된 사내 도메인·계정에만 6자리 인증코드를 보냄. 코드 유효시간 3분, 재전송은 1분 후 가능.
+      description: 등록된 사내 도메인·계정에만 6자리 인증코드를 보냄. 코드 유효시간 3분, 재전송은 1분 후 가능. 로그인 전이라 사용자를 알 수 없어 Idempotency-Key를 받지 않는다(재전송 대기 1분으로 중복 발송을 막음).
       x-fr:
       - FR-AUTH-001
       - FR-AUTH-002
       x-tables:
       - app_user
       security: []
-      parameters:
-      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -1366,7 +1364,7 @@ paths:
       tags:
       - 로그인·사용자
       summary: AUTH-02 인증코드로 로그인
-      description: 성공하면 역할에 따라 홈 경로를 함께 돌려줌(경영기획팀 → 전사 손익 현황, 조직 담당자 → 요청함).
+      description: 성공하면 역할에 따라 홈 경로를 함께 돌려줌(경영기획팀 → 전사 손익 현황, 조직 담당자 → 요청함). 로그인 전이라 Idempotency-Key를 받지 않는다(코드는 한 번만 쓸 수 있음). 토큰 유효시간 기본 12시간.
       x-fr:
       - FR-AUTH-002
       - FR-AUTH-003
@@ -1374,8 +1372,6 @@ paths:
       x-tables:
       - app_user
       security: []
-      parameters:
-      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -1414,7 +1410,7 @@ paths:
                   me:
                     $ref: '#/components/schemas/Me'
         '400':
-          description: '`INVALID_AUTH_CODE` 코드 불일치(''인증 코드가 일치하지 않습니다'') 또는 만료(''유효시간이 경과되어, 코드 재전송을 요청해주세요''). `details.reason`=MISMATCH·EXPIRED'
+          description: '`INVALID_AUTH_CODE` 코드 불일치(''인증 코드가 일치하지 않습니다'') 또는 만료(''유효시간이 경과되어, 코드 재전송을 요청해주세요''). 이유는 `errors[0].code`=MISMATCH·EXPIRED·TOO_MANY_ATTEMPTS(5번 틀리면 재전송 필요)'
           content:
             application/problem+json:
               schema:

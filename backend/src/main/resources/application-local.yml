@@ -1,0 +1,7 @@
+# 로컬 개발용(SPRING_PROFILES_ACTIVE=local). 체험 계정을 넣고, 인증코드는 메일 대신 로그에 출력한다.
+spring:
+  flyway:
+    locations: classpath:db/migration,classpath:db/local
+app:
+  auth:
+    dev-log-code: true
