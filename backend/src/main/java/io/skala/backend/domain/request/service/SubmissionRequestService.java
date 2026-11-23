@@ -102,7 +102,26 @@ public class SubmissionRequestService {
                 .map(org -> RequestTarget.of(request.getId(), org.getId(), selected.contains(org.getId())))
                 .toList());
         targetRepository.flush();
+        if (!annual) {
+            fillConfirmedPlan(request.getId(), plan.getId());
+        }
         return summary(request.getId());
+    }
+
+    /**
+     * 월간 요청의 대상 조직마다 '확정 연간 계획' 제출본을 넣는다(실적 대 계획 Gap·1월 비교 기준).
+     * 요청을 보내는 시점의 최신 연간 master 기준이며, 나중에 연간 master가 다시 만들어져도 이미 보낸 요청은 그대로 둔다.
+     * 연간 계획에 없던 조직은 null(계획 없음)로 남는다.
+     */
+    private void fillConfirmedPlan(Long requestId, Long annualPlanId) {
+        jdbc.update("""
+                UPDATE request_target t SET confirmed_plan_submission_id = ams.submission_id
+                  FROM annual_master_source ams
+                 WHERE t.request_id = ? AND ams.organization_id = t.organization_id
+                   AND ams.master_id = (SELECT am.id FROM annual_master am
+                                          JOIN submission_request r ON r.id = am.request_id
+                                         WHERE r.annual_plan_id = ? AND r.type = 'ANNUAL_PLAN'
+                                         ORDER BY am.seq DESC LIMIT 1)""", requestId, annualPlanId);
     }
 
     /** REQ-03 */

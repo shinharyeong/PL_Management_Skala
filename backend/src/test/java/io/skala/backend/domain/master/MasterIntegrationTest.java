@@ -3,6 +3,7 @@ package io.skala.backend.domain.master;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -70,7 +72,7 @@ class MasterIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void annualMasterIsPublishedWhenEveryRequestedOrganizationIsApprovedAndConfirmsPlan() {
+    void annualMasterIsPublishedWhenEveryRequestedOrganizationIsApprovedAndConfirmsPlan() throws Exception {
         long request = insertRequest("ANNUAL_PLAN", null);
         long a1 = insertSubmission(request, orgA, "APPROVED", 1, 1);
         assertThat(publish(a1)).isEmpty();
@@ -85,12 +87,23 @@ class MasterIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(publish(b1)).isEmpty();
 
+        // 월간 요청을 보내면 그 시점 최신 연간 master의 승인본이 확정 계획으로 들어간다.
+        long january = sendMonthlyRequest(1);
+        assertThat(confirmedPlan(january, orgA)).isEqualTo(a1);
+        assertThat(confirmedPlan(january, orgB)).isEqualTo(b1);
+        assertThat(confirmedPlan(january, orgC)).isNull();
+
         long a2 = insertSubmission(request, orgA, "APPROVED", 2, 2);
         PublishedMaster second = publish(a2).orElseThrow();
         assertThat(second.label()).isEqualTo("master_plan" + year + ".02");
         assertThat(jdbc.queryForObject("SELECT previous_master_id FROM annual_master WHERE id = ?", Long.class, second.id())).isEqualTo(first.id());
         assertThat(jdbc.queryForObject("SELECT submission_id FROM annual_master_source WHERE master_id = ? AND organization_id = ?",
                 Long.class, second.id(), orgA)).isEqualTo(a2);
+
+        // 재승인으로 .02가 생기면 그 뒤에 보내는 요청부터 새 계획을 쓰고, 이미 보낸 요청은 그대로 둔다.
+        long february = sendMonthlyRequest(2);
+        assertThat(confirmedPlan(february, orgA)).isEqualTo(a2);
+        assertThat(confirmedPlan(january, orgA)).isEqualTo(a1);
 
         long pending = insertSubmission(request, orgB, "PENDING", 2, null);
         assertThatThrownBy(() -> publish(pending)).isInstanceOf(IllegalStateException.class);
@@ -142,6 +155,22 @@ class MasterIntegrationTest extends PostgresIntegrationTest {
 
         mvc.perform(auth(get("/api/v1/masters/999999999/file"), planner)).andExpect(status().isNotFound());
         mvc.perform(auth(get("/api/v1/masters"), manager)).andExpect(status().isForbidden());
+    }
+
+    private long sendMonthlyRequest(int month) throws Exception {
+        String body = "{\"type\":\"MONTHLY_ACTUAL\",\"year\":%d,\"month\":%d,\"dueAt\":\"2999-01-01T00:00:00Z\",\"organizationIds\":[\"%d\",\"%d\"]}"
+                .formatted(year, month, orgA, orgB);
+        String location = mvc.perform(auth(post("/api/v1/submission-requests"), planner)
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getHeader("Location");
+        return Long.parseLong(location.replaceAll(".*/", ""));
+    }
+
+    private Long confirmedPlan(long requestId, long orgId) {
+        return jdbc.queryForObject("SELECT confirmed_plan_submission_id FROM request_target WHERE request_id = ? AND organization_id = ?",
+                Long.class, requestId, orgId);
     }
 
     private Optional<PublishedMaster> publish(long submissionId) {

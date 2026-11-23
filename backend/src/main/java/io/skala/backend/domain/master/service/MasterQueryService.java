@@ -99,8 +99,7 @@ public class MasterQueryService {
                 r.createCell(4).setCellValue(rs.getString("scenario"));
                 r.createCell(5).setCellValue(rs.getInt("year"));
                 r.createCell(6).setCellValue(rs.getInt("month"));
-                BigDecimal amount = rs.getBigDecimal("amount");
-                r.createCell(7).setCellValue(amount.doubleValue());
+                writeAmount(r, 7, rs.getBigDecimal("amount"));
             }, masterId);
 
             Sheet sources = workbook.createSheet("출처");
@@ -124,6 +123,19 @@ public class MasterQueryService {
                 r.createCell(6).setCellValue(reviewedAt == null ? "" : reviewedAt.atZoneSameInstant(KST).toLocalDateTime().toString());
             }, masterId);
             workbook.write(out);
+        }
+    }
+
+    /**
+     * 엑셀 숫자 칸은 double(유효숫자 15자리)이라, 원 단위 정수로 15자리 이하면 숫자로 쓰고
+     * 소수가 있거나 더 긴 금액은 값이 바뀌지 않도록 문자열로 쓴다.
+     */
+    static void writeAmount(Row row, int column, BigDecimal amount) {
+        BigDecimal value = amount.stripTrailingZeros();
+        if (value.scale() <= 0 && value.precision() - value.scale() <= 15) {
+            row.createCell(column).setCellValue(value.doubleValue());
+        } else {
+            row.createCell(column).setCellValue(value.toPlainString());
         }
     }
 
