@@ -18,37 +18,27 @@ import io.skala.backend.domain.submission.value.BaselineKind;
 import io.skala.backend.domain.user.entity.AppUser;
 import io.skala.backend.domain.user.repository.AppUserRepository;
 import io.skala.backend.global.exception.BusinessException;
+import io.skala.backend.support.PostgresIntegrationTest;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 실제 PostgreSQL(V1 스키마)에서 파서 결과 적재 → 변경 감지 → 소명 대상 생성 흐름을 확인한다.
- * IT_DB_URL(예: jdbc:postgresql://localhost:15432/skala_it), IT_DB_USERNAME, IT_DB_PASSWORD가 있을 때만 실행.
+ * TEST_DB_URL이 있을 때만 실행(PostgresIntegrationTest 참고).
  * 빈 DB에서 실행해야 한다(Flyway V1부터 적용).
  */
-@SpringBootTest
-@EnabledIfEnvironmentVariable(named = "IT_DB_URL", matches = ".+")
-class SubmissionValidationIntegrationTest {
+@EnabledIfEnvironmentVariable(named = "TEST_DB_URL", matches = ".+")
+class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
 
     private static final String SHA_OCT = "a".repeat(64);
     private static final String SHA_NOV = "b".repeat(64);
     private static final String SALES_KEY = "[\"REVENUE\",[\"매출\",\"제품매출\"]]";
     private static final String RENT_KEY = "[\"COST\",[\"판관비\",\"임차료\"]]";
-
-    @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", () -> System.getenv("IT_DB_URL"));
-        registry.add("spring.datasource.username", () -> System.getenv().getOrDefault("IT_DB_USERNAME", "skala"));
-        registry.add("spring.datasource.password", () -> System.getenv().getOrDefault("IT_DB_PASSWORD", ""));
-    }
 
     @Autowired
     JdbcTemplate jdbc;
@@ -186,7 +176,7 @@ class SubmissionValidationIntegrationTest {
     }
 
     private String token(long submissionId) {
-        return tx.execute(s -> StateTokens.forSubmission(submissionRepository.findById(submissionId).orElseThrow(),
+        return tx.execute(s -> SubmissionStateToken.of(submissionRepository.findById(submissionId).orElseThrow(),
                 parsingJobRepository.findBySubmissionId(submissionId).orElse(null)));
     }
 

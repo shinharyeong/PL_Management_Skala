@@ -17,6 +17,7 @@ import io.skala.backend.domain.submission.value.SubmissionStatus;
 import io.skala.backend.domain.user.entity.AppUser;
 import io.skala.backend.global.exception.BusinessException;
 import io.skala.backend.global.exception.ErrorCode;
+import io.skala.backend.global.util.StateToken;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,9 +37,7 @@ public class SubmissionValidationService {
     public ValidationResponse validate(Long submissionId, String expectedStateToken, AppUser actor) {
         Submission submission = submissionAccess.loadForOrgManager(submissionId, actor);
         ParsingJob job = parsingJobRepository.findBySubmissionId(submissionId).orElse(null);
-        if (!StateTokens.forSubmission(submission, job).equals(expectedStateToken)) {
-            throw new BusinessException(ErrorCode.RESOURCE_CHANGED);
-        }
+        StateToken.verify(expectedStateToken, SubmissionStateToken.of(submission, job));
         if (submission.getStatus() != SubmissionStatus.DRAFT) {
             throw SubmissionErrorCode.VALIDATION_NOT_ALLOWED.exception();
         }
@@ -60,7 +59,7 @@ public class SubmissionValidationService {
                 toResponse(baseline),
                 new ValidationResponse.Progress(progress.answered(), progress.required()),
                 progress.complete(),
-                StateTokens.forSubmission(submission, job));
+                SubmissionStateToken.of(submission, job));
     }
 
     private BaselineResponse toResponse(Baseline baseline) {
