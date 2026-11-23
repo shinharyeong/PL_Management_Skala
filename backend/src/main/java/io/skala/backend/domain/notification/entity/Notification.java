@@ -69,4 +69,26 @@ public class Notification extends BaseCreatedTimeEntity {
 
     @Column(name = "read_at")
     private OffsetDateTime readAt;
+
+    public static Notification create(AppUser recipient, NotificationType type, String eventKey,
+                                      SubmissionRequest request, Organization organization, Submission submission,
+                                      ReviewExplanation reviewExplanation, String title, OffsetDateTime occurredAt) {
+        Notification notification = new Notification();
+        notification.recipient = recipient;
+        notification.type = type;
+        notification.eventKey = eventKey;
+        notification.request = request;
+        notification.organization = organization;
+        notification.submission = submission;
+        notification.reviewExplanation = reviewExplanation;
+        notification.title = title;
+        notification.occurredAt = occurredAt;
+        return notification;
+    }
+
+    public void markRead(OffsetDateTime at) {
+        if (readAt == null) {
+            readAt = at;
+        }
+    }
 }
