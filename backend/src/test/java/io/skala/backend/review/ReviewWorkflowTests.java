@@ -1,6 +1,7 @@
 package io.skala.backend.review;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.skala.backend.common.ApiException;
@@ -33,7 +34,7 @@ class ReviewWorkflowTests {
     @BeforeEach
     void prepare() {
         database=new EmbeddedDatabaseBuilder().setType(EmbeddedDatabaseType.H2).setName("review_"+UUID.randomUUID()+";MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=YEAR,MONTH").build();
-        var resources=List.of("V1__submission_parser_foundation.sql","V2__validated_financial_submissions.sql","V3__annual_plan_masters.sql","V4__monthly_masters.sql","V5__submission_reviews_and_gap_thresholds.sql","V6__prd_review_workflow.sql");
+        var resources=List.of("V1__submission_parser_foundation.sql","V2__validated_financial_submissions.sql","V3__annual_plan_masters.sql","V4__monthly_masters.sql","V5__submission_reviews_and_gap_thresholds.sql","V6__prd_review_workflow.sql","V9__prd_workflow_settings.sql","V11__review_requirement_policy.sql");
         new ResourceDatabasePopulator(resources.stream().map(name->new ClassPathResource("db/migration/"+name)).toArray(ClassPathResource[]::new)).execute(database);
         jdbc=JdbcClient.create(database);var mapper=new ObjectMapper().findAndRegisterModules();
         comparisons=new ReviewComparisonService(jdbc,mapper);
@@ -120,12 +121,81 @@ class ReviewWorkflowTests {
         assertThatThrownBy(()->service.actions(planner,"locked-batch-001",locked)).isInstanceOf(ApiException.class).extracting("code").isEqualTo("REVIEW_LOCKED");
     }
 
+    /** 전역 모드는 권한·멱등·낙관적 잠금을 적용하며 과거 검토의 필수 여부를 소급하지 않는다.
+     * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 정책 이력·멱등 결과만 생성한다.
+     */
+    @Test void policyChangesAreAuthorizedIdempotentAndPreserveCompletedReviews() throws Exception {
+        var policies=policies();var current=policies.current(planner);
+        assertThat(current.get("requirementMode")).isEqualTo("GAP_ONLY");
+        var input=new ReviewPolicyService.ApplyInput(current.get("stateToken").toString(),"ALL_CHANGES");
+        assertThatThrownBy(()->policies.apply(manager,"policy-role-check",input)).isInstanceOf(AccessDeniedException.class);
+        var first=policies.apply(planner,"policy-all-changes",input);
+        assertThat(policies.apply(planner,"policy-all-changes",input).replayed()).isTrue();
+        assertThat(new ObjectMapper().readTree(first.body()).path("requirementMode").asText()).isEqualTo("ALL_CHANGES");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM review_policy").query(Integer.class).single()).isEqualTo(2);
+        assertThatThrownBy(()->policies.apply(planner,"policy-stale-check",new ReviewPolicyService.ApplyInput(input.expectedStateToken(),"GAP_ONLY")))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("RESOURCE_CHANGED");
+        assertThatThrownBy(()->policies.apply(planner,"policy-invalid-mode",new ReviewPolicyService.ApplyInput(input.expectedStateToken(),"ALL")))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("INVALID_REQUEST");
+        assertThat(service.counts(20).get("requiredCount")).isEqualTo(2);
+        assertThat(service.get(planner,"100").get("requirementMode")).isEqualTo("GAP_ONLY");
+        assertThat(service.get(planner,"101").get("requirementMode")).isEqualTo("ALL_CHANGES");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM review_explanation").query(Integer.class).single()).isEqualTo(3);
+    }
+
+    /** 후보 영향은 변경·Gap의 중복을 제거하고 명시 요청과 제외 결정을 유지한다.
+     * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 테스트 조건의 검토 상태만 변경하며 정책 미리보기는 읽기만 한다.
+     */
+    @Test void policyPreviewCountsUnionAndKeepsExplicitRequestsAndExclusions() {
+        var policies=policies();
+        var all=policies.preview(planner,new ReviewPolicyService.PreviewInput("2","ALL_CHANGES"));
+        var gap=policies.preview(planner,new ReviewPolicyService.PreviewInput("2","GAP_ONLY"));
+        assertThat(all.get("requiredItemCount")).isEqualTo(3);assertThat(gap.get("requiredItemCount")).isEqualTo(1);
+        jdbc.sql("UPDATE review_item SET workflow_state='REQUESTED' WHERE id=100").update();
+        jdbc.sql("UPDATE review_item SET workflow_state='EXCLUDED' WHERE id=102").update();
+        gap=policies.preview(planner,new ReviewPolicyService.PreviewInput("2","GAP_ONLY"));
+        assertThat(gap).containsEntry("requiredItemCount",1).containsEntry("explicitlyRequestedItemCount",1).containsEntry("excludedItemCount",1).containsEntry("requiredOrganizationCount",1);
+        assertThat(gap.get("sourceSubmissionIds")).asList().containsExactly("20");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM review_policy").query(Integer.class).single()).isEqualTo(1);
+    }
+
+    /** 연간 변경도 선택 모드로 고정되고 모드 변경 후 초안 재검증은 새 회차를 남긴다.
+     * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 연간 초안·검토·정책 이력만 생성하며 비교본 완전성만 대역으로 지정한다.
+     */
+    @Test void annualValidationSnapshotsModeAndRevalidationPreservesOldRounds() {
+        jdbc.sql("INSERT INTO submission_request(id,annual_plan_id,type,status,requested_by,requested_at,period_key) VALUES (3,1,'ANNUAL_PLAN','OPEN',1,CURRENT_TIMESTAMP,'2031-PLAN')").update();
+        jdbc.sql("INSERT INTO request_target(request_id,organization_id) VALUES (3,1)").update();
+        seedSubmission(30,3,1,"APPROVED");seedSubmission(31,3,2,"DRAFT");
+        var compared=spy(comparisons);
+        var before=new ReviewComparisonService.Cell(1,"REV","REVENUE",2031,1,"PLAN",new java.math.BigDecimal("100"),"c".repeat(64),List.of());
+        var after=new ReviewComparisonService.Cell(1,"REV","REVENUE",2031,1,"PLAN",new java.math.BigDecimal("110"),"d".repeat(64),List.of());
+        doReturn(Map.of("1:2031:1:PLAN",before)).when(compared).cells(30);
+        doReturn(Map.of("1:2031:1:PLAN",after)).when(compared).cells(31);
+        doReturn(true).when(compared).complete(30);
+        var oldContext=compared.context(31);assertThat(oldContext.get("requirementMode")).isEqualTo("GAP_ONLY");
+        assertThat(compared.prepare(31,oldContext,true)).isEmpty();assertThat(service.counts(31).get("requiredCount")).isEqualTo(0);
+        var oldItem=jdbc.sql("SELECT * FROM review_item WHERE submission_id=31").query().singleRow();
+        jdbc.sql("UPDATE review_explanation SET answer='과거 선택 소명' WHERE review_item_id=?").param(oldItem.get("id")).update();
+        var policies=policies();policies.apply(planner,"annual-policy-all",new ReviewPolicyService.ApplyInput(policies.current(planner).get("stateToken").toString(),"ALL_CHANGES"));
+        var newContext=compared.context(31);assertThat(newContext).isNotEqualTo(oldContext);
+        assertThat(service.counts(31).get("requiredCount")).isEqualTo(0);
+        assertThat(compared.prepare(31,newContext,true)).isEmpty();
+        assertThat(service.counts(31)).containsEntry("requiredCount",1).containsEntry("unansweredCount",1);
+        assertThat(service.ids(31,true)).containsExactly(oldItem.get("id").toString());
+        assertThat(jdbc.sql("SELECT requirement_mode FROM review_item WHERE submission_id=31").query(String.class).single()).isEqualTo("ALL_CHANGES");
+        assertThat(jdbc.sql("SELECT answer FROM review_explanation WHERE review_item_id=? AND round=1").param(oldItem.get("id")).query(String.class).single()).isEqualTo("과거 선택 소명");
+        assertThat(jdbc.sql("SELECT current_round FROM review_item WHERE submission_id=31").query(Integer.class).single()).isEqualTo(2);
+    }
+
+    /** 같은 합성 DB의 실제 정책 서비스를 구성한다. Args: 없음. Returns: 정책 서비스. Raises: 없음. Side Effects: 없음. */
+    private ReviewPolicyService policies() { return new ReviewPolicyService(jdbc,new CommandExecutor(new JdbcTemplate(database),new DataSourceTransactionManager(database)),comparisons,service); }
+
     /** 현재 토큰으로 대상 참조를 만든다. Args: id 검토 ID. Returns: 명령 항목. Raises: 조회 오류. Side Effects: H2 읽기. */
     private ReviewService.ActionItem item(String id) { return new ReviewService.ActionItem(id,service.get(planner,id).get("stateToken").toString()); }
 
     /** 합성 제출 헤더를 추가한다. Args: id 제출, request 요청, sequence 회차, status 상태. Returns: 없음. Raises: DB 오류. Side Effects: 메모리 DB INSERT. */
     private void seedSubmission(long id,long request,int sequence,String status) {
         jdbc.sql("INSERT INTO submission(id,request_id,organization_id,seq,status,original_filename,source_object_key,source_sha256,uploaded_by,uploaded_at) VALUES (?,?,1,?,?,'synthetic.xlsx','source/test',?,2,CURRENT_TIMESTAMP)")
-                .params(id,request,sequence,status,"a".repeat(64)).update();
+                .params(id,request,"DRAFT".equals(status)?null:sequence,status,"a".repeat(64)).update();
     }
 }

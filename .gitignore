@@ -20,6 +20,9 @@ Data/
 output/
 logs/
 
+# 개발용 장표 스크립트가 생성한 미리보기·내보내기 결과
+/frontend/public/previews/
+
 # 제거한 AI 실험의 기존 로컬 비밀 설정·캐시·결과는 추적하지 않는다.
 /parser_ai/
 

@@ -39,11 +39,13 @@ public class ReviewComparisonService {
                 JOIN annual_plan p ON p.id=r.annual_plan_id WHERE r.annual_plan_id=? AND r.type='ANNUAL_PLAN'
                 AND t.organization_id=? AND t.excluded=FALSE AND p.status='CONFIRMED' AND t.confirmed_plan_submission_id IS NOT NULL
                 """, row.get("annual_plan_id"), row.get("organization_id")) : List.<Map<String,Object>>of();
+        var requirementPolicy=one("SELECT * FROM review_policy ORDER BY id DESC LIMIT 1");
         return object("previousSubmissionId", previous.isEmpty() ? null : previous.getFirst().get("id").toString(),
                 "planSubmissionId", plan.isEmpty() ? null : plan.getFirst().get("id").toString(),
                 "actualThresholdId", monthly ? latestThresholdId("ACTUAL") : null,
                 "estimateThresholdId", monthly && number(row.get("month")) < 12 ? latestThresholdId("ESTIMATE") : null,
-                "reviewPolicyVersion", monthly ? "monthly-actual/2.0" : "annual-plan/2.0");
+                "reviewPolicyVersion", monthly ? "monthly-actual/2.0" : "annual-plan/2.0",
+                "reviewPolicyId",requirementPolicy.get("id").toString(),"requirementMode",requirementPolicy.get("requirement_mode"));
     }
 
     /** 초안의 저장된 비교 기준이 현재 직전본·확정계획·기준과 같은지 확인한다.
@@ -248,7 +250,7 @@ public class ReviewComparisonService {
             jdbc.sql("UPDATE review_item SET amount_present=?,current_amount=?,change_detected=?,gap_exceeded=?,source_fingerprint=?,context_fingerprint=?,current_round=?,active=TRUE WHERE id=?")
                     .params(present,present ? cell.amount() : null,change,gap,cell.fingerprint(),fingerprint,round,reviewId).update();
         }
-        jdbc.sql("UPDATE review_item SET review_policy_version=? WHERE id=?").params(context.get("reviewPolicyVersion"),reviewId).update();
+        jdbc.sql("UPDATE review_item SET review_policy_version=?,requirement_mode=? WHERE id=?").params(context.get("reviewPolicyVersion"),context.get("requirementMode"),reviewId).update();
         if (createRound) jdbc.sql("UPDATE review_item SET workflow_state='NEEDS_REVIEW',workflow_note=NULL WHERE id=?").param(reviewId).update();
         jdbc.sql("DELETE FROM gap_comparison WHERE review_item_id=?").param(reviewId).update();
         for (var comparison : comparisons) jdbc.sql("""
@@ -261,6 +263,7 @@ public class ReviewComparisonService {
                     INSERT INTO review_explanation(review_item_id,round,answer,answered_by,answered_at,verdict,reviewed_by,reviewed_at,review_note,inherited_from_id)
                     VALUES (?,?,?,?,?,'ACCEPTED',?,?,?,?)
                     """).params(reviewId,round,inherited.get("answer"),inherited.get("answered_by"),inherited.get("answered_at"),inherited.get("reviewed_by"),inherited.get("reviewed_at"),inherited.get("review_note"),inherited.get("id")).update();
+            if(inherited!=null&&inherited.get("request_comparison_json")!=null)jdbc.sql("UPDATE review_explanation SET request_comparison_json=? WHERE review_item_id=? AND round=?").params(inherited.get("request_comparison_json"),reviewId,round).update();
         }
     }
 
@@ -392,6 +395,8 @@ public class ReviewComparisonService {
     private Map<String,Object> diagnostic(String code,String message) { return object("code",code,"severity","ERROR","stage","COMPARISON","message",message,"source",null); }
     /** JSON을 정규화한다. Args: value 메모리값. Returns: JSON. Raises: IllegalStateException 직렬화실패. Side Effects: 없음. */
     public String json(Object value) { try { return mapper.writeValueAsString(value); } catch(Exception e) { throw new IllegalStateException("검토 근거를 직렬화하지 못했습니다."); } }
+    /** 저장된 명시 요청 비교를 읽는다. Args: value nullable JSON. Returns: JSON 객체 또는 null. Raises: 저장 JSON 손상. Side Effects: 메모리 변환만 수행한다. */
+    public JsonNode requestComparison(Object value) { if(value==null)return null;try{return mapper.readTree(value.toString());}catch(Exception exception){throw new IllegalStateException("명시 요청 비교 근거를 읽지 못했습니다.");} }
     /** 정수를 읽는다. Args: value JDBC 정수. Returns: long. Raises: 타입오류. Side Effects: 없음. */
     private long number(Object value) { return ((Number)value).longValue(); }
     /** nullable ID를 읽는다. Args: value ID. Returns: Long/null. Raises: 입력오류. Side Effects: 없음. */

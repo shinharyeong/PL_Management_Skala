@@ -120,3 +120,11 @@ bash scripts/dev-down.sh
 # 프론트만 개발 서버: cd frontend && npx vite   (/api → 8080, /ai → 8000 프록시)
 ```
 환경변수(`ai/.env.example`): `AI_DAILY_CALL_LIMIT`, `AI_UPLOAD_MAX_FILES`(기본 150), `AI_UPLOAD_MAX_TOTAL_MB`(기본 400), `AI_PARSE_WORKERS`, `CHAT_MEMORY`, `CHAT_TEST_LOG`. nginx 의 `/ai/` 업로드 상한은 300MB 입니다.
+
+## 보고 작성 연결
+
+`/v1/report-authoring/sql`, `/edit`, `/pdf`는 백엔드 `PLANNER` 인증을 통과한 요청만 받는 별도 내부 경계다. `X-Report-Service-Token`은 AI의 `REPORT_AI_TOKEN`과 일치해야 한다. 백엔드에는 같은 토큰과 `REPORT_AI_URL`을 설정한다. 기존 배치·SQLite 챗봇의 파일 경로나 캐시를 이 경로에 연결하지 않는다.
+
+PDF는 사용자가 분석 요청한 바이트만 받고, `maskNumbers=true`이면 원문을 재사용하지 않는 메모리 재구성을 수행한다. 외부 모델 결과는 초안이며 사용자 확인 전 저장·적용하지 않는다. API키 미설정·모델실패·스캔 마스킹실패는 수동 작업 안내를 반환한다.
+
+검증은 `tests/test_report_authoring.py`의 합성 메모리 PDF와 모의 Responses 클라이언트로 수행한다. 실제 API키·사용자 원본·Data 폴더를 테스트에 사용하지 않는다.
