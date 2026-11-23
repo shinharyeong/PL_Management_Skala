@@ -57,4 +57,26 @@ public class SubmissionValidation {
 
     @Column(name = "validated_at", nullable = false)
     private OffsetDateTime validatedAt;
+
+    public static SubmissionValidation record(Submission submission, int attemptNo, StoredObject parserResult,
+                                              String policyVersion, StoredObject validationResult, AppUser validatedBy,
+                                              OffsetDateTime validatedAt) {
+        SubmissionValidation validation = new SubmissionValidation();
+        validation.submission = submission;
+        validation.update(attemptNo, submission.getSourceSha256(), parserResult, policyVersion, validationResult,
+                validatedBy, validatedAt);
+        return validation;
+    }
+
+    /** 재파싱하면 같은 행을 새 시도 결과로 바꾼다(제출본당 한 행). */
+    public void update(int attemptNo, String sourceSha256, StoredObject parserResult, String policyVersion,
+                       StoredObject validationResult, AppUser validatedBy, OffsetDateTime validatedAt) {
+        this.attemptNo = attemptNo;
+        this.sourceSha256 = sourceSha256;
+        this.parserResultObject = parserResult;
+        this.policyVersion = policyVersion;
+        this.validationResultObject = validationResult;
+        this.validatedBy = validatedBy;
+        this.validatedAt = validatedAt;
+    }
 }

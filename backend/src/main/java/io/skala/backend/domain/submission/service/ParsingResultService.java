@@ -1,5 +1,10 @@
 package io.skala.backend.domain.submission.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.skala.backend.domain.file.entity.StoredObject;
+import io.skala.backend.domain.file.service.FileStorage;
+import io.skala.backend.domain.file.value.FilePurpose;
 import io.skala.backend.domain.financial.dto.IngestionDiagnostic;
 import io.skala.backend.domain.financial.dto.IngestionResult;
 import io.skala.backend.domain.financial.dto.parser.ParserSubmissionData;
@@ -9,11 +14,14 @@ import io.skala.backend.domain.request.repository.SubmissionRequestRepository;
 import io.skala.backend.domain.submission.entity.ParsingJob;
 import io.skala.backend.domain.submission.entity.Submission;
 import io.skala.backend.domain.submission.parser.ParserBridgeResponse;
+import io.skala.backend.domain.submission.entity.SubmissionValidation;
 import io.skala.backend.domain.submission.repository.ParsingJobRepository;
+import io.skala.backend.domain.submission.repository.SubmissionValidationRepository;
 import io.skala.backend.domain.submission.value.ParsingJobStatus;
 import io.skala.backend.domain.submission.value.SubmissionStatus;
 import io.skala.backend.domain.user.entity.Organization;
 import io.skala.backend.domain.user.repository.OrganizationRepository;
+import java.io.ByteArrayInputStream;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -29,6 +37,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <ul>
  *   <li>FAILED(파일을 읽지 못함) → parsing_job FAILED. UP-06으로 다시 시도할 수 있다</li>
  *   <li>SUCCEEDED·NEEDS_REVIEW → 적재. 검증 오류가 있으면 SUCCEEDED + error_code=VALIDATION_FAILED('수정 필요')</li>
+ *   <li>파서 출력은 results/parser/, 검증 결과(오류 목록)는 results/validation/에 저장하고 submission_validation에 기록</li>
  * </ul>
  */
 @Service
@@ -41,14 +50,25 @@ public class ParsingResultService {
     private final SubmissionRequestRepository submissionRequestRepository;
     private final OrganizationRepository organizationRepository;
     private final FinancialIngestionService financialIngestionService;
+    private final SubmissionValidationRepository submissionValidationRepository;
+    private final FileStorage fileStorage;
+    private final ObjectMapper objectMapper;
     private final Clock clock;
+
+    /** 테스트·재처리용: 원본 JSON 없이 해석한 응답만 있을 때 */
+    @Transactional
+    public Optional<IngestionResult> apply(Long parsingJobId, int attemptNo, ParserBridgeResponse response) {
+        return apply(parsingJobId, attemptNo, response, null);
+    }
 
     /**
      * @param attemptNo 실행할 때의 시도 번호. 그 사이 재시도로 번호가 바뀌었으면 결과를 버린다
+     * @param rawJson   파서 stdout 원본. 결과 파일(results/parser/)로 보관한다. null이면 response를 직렬화해 보관
      * @return 적재 결과. 파싱 실패나 이미 끝난 작업이면 비어 있다
      */
     @Transactional
-    public Optional<IngestionResult> apply(Long parsingJobId, int attemptNo, ParserBridgeResponse response) {
+    public Optional<IngestionResult> apply(Long parsingJobId, int attemptNo, ParserBridgeResponse response,
+                                          byte[] rawJson) {
         ParsingJob job = parsingJobRepository.findById(parsingJobId)
                 .orElseThrow(() -> new IllegalArgumentException("parsing_job not found: " + parsingJobId));
         if (job.getStatus() != ParsingJobStatus.RUNNING || job.getAttemptNo() != attemptNo) {
@@ -87,10 +107,30 @@ public class ParsingResultService {
             }
         }
         IngestionResult result = new IngestionResult(ingested.lineCount(), ingested.valueCount(), diagnostics);
-        // TODO(B FileStorage): 진단 목록을 검증 결과 파일로 저장하고 submission_validation에 기록(UP-05)
+        StoredObject parserResult = saveJson(FilePurpose.PARSER_RESULT, "parser-result.json",
+                rawJson != null ? rawJson : toJson(response));
+        StoredObject validationResult = saveJson(FilePurpose.VALIDATION_RESULT, "validation-result.json",
+                toJson(ValidationReport.of(attemptNo, diagnostics)));
+        submissionValidationRepository.findById(submission.getId()).ifPresentOrElse(
+                existing -> existing.update(attemptNo, submission.getSourceSha256(), parserResult,
+                        ValidationReport.POLICY_VERSION, validationResult, submission.getUploadedBy(), now),
+                () -> submissionValidationRepository.save(SubmissionValidation.record(submission, attemptNo,
+                        parserResult, ValidationReport.POLICY_VERSION, validationResult, submission.getUploadedBy(), now)));
         job.succeed(response.parserVersion(), response.contractVersion(),
-                data.adapterVersion(), null, result.passed() ? null : VALIDATION_FAILED, now);
+                data.adapterVersion(), parserResult, result.passed() ? null : VALIDATION_FAILED, now);
         return Optional.of(result);
+    }
+
+    private StoredObject saveJson(FilePurpose purpose, String name, byte[] json) {
+        return fileStorage.save(purpose, name, "application/json", new ByteArrayInputStream(json));
+    }
+
+    private byte[] toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsBytes(value);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /** 작업 실행 중 예외·시간 초과 */

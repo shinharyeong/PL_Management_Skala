@@ -3,7 +3,6 @@ package io.skala.backend.domain.submission.service;
 import io.skala.backend.domain.file.entity.StoredObject;
 import io.skala.backend.domain.file.service.FileStorage;
 import io.skala.backend.domain.submission.entity.ParsingJob;
-import io.skala.backend.domain.submission.parser.ParserBridgeResponse;
 import io.skala.backend.domain.submission.parser.ParserProcessRunner;
 import io.skala.backend.domain.submission.repository.ParsingJobRepository;
 import io.skala.backend.domain.submission.value.ParsingJobStatus;
@@ -95,11 +94,11 @@ public class ParsingJobDispatcher {
                 object.getObjectKey();
                 return new Source(job.getSubmission().getOriginalFilename(), object);
             });
-            ParserBridgeResponse response;
+            ParserProcessRunner.ParserRun response;
             try (InputStream content = fileStorage.open(source.object())) {
                 response = parserProcessRunner.run(source.filename(), content);
             }
-            parsingResultService.apply(jobId, attemptNo, response);
+            parsingResultService.apply(jobId, attemptNo, response.response(), response.raw());
         } catch (Exception e) {
             log.error("파싱 작업 {} 실패", jobId, e);
             parsingResultService.fail(jobId, attemptNo, "PARSER_INTERNAL_ERROR");

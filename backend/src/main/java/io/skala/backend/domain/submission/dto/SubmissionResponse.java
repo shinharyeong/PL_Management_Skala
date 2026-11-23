@@ -45,7 +45,7 @@ public record SubmissionResponse(
 
     /**
      * @param canSubmit  파일 검증 통과 + 변경 확인(PROOF-01) 완료 + 소명 모두 작성
-     * @param errorCount 검증 오류 건수. 통과면 0. 오류 목록 저장(UP-05) 전까지는 실패 시 null
+     * @param errorCount 검증 오류 건수(UP-05 표의 행 수). 통과면 0, 아직 모르면 null
      */
     public record Validation(boolean canSubmit, Integer errorCount) {
     }

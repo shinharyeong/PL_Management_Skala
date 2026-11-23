@@ -2,8 +2,10 @@ package io.skala.backend.domain.submission.controller;
 
 import io.skala.backend.domain.file.entity.StoredObject;
 import io.skala.backend.domain.file.service.FileStorage;
+import io.skala.backend.domain.submission.dto.DiagnosticsResponse;
 import io.skala.backend.domain.submission.dto.RetryRequest;
 import io.skala.backend.domain.submission.dto.SubmissionResponse;
+import io.skala.backend.domain.submission.service.SubmissionDiagnosticsService;
 import io.skala.backend.domain.submission.service.SubmissionFileService;
 import io.skala.backend.domain.submission.service.SubmissionQueryService;
 import io.skala.backend.domain.submission.service.SubmissionUploadService;
@@ -37,7 +39,7 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-/** UP-03 업로드, UP-04 상태 조회, UP-06 파싱 재시도, REQ-07 제출 파일 다운로드 */
+/** UP-03 업로드, UP-04 상태 조회, UP-05 검증 결과, UP-06 파싱 재시도, REQ-07 제출 파일 다운로드 */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/v1")
@@ -46,6 +48,7 @@ public class SubmissionUploadController {
     private final SubmissionUploadService submissionUploadService;
     private final SubmissionQueryService submissionQueryService;
     private final SubmissionFileService submissionFileService;
+    private final SubmissionDiagnosticsService submissionDiagnosticsService;
     private final FileStorage fileStorage;
     private final CurrentUser currentUser;
     private final IdempotentCommandExecutor idempotency;
@@ -74,6 +77,11 @@ public class SubmissionUploadController {
     @GetMapping("/submissions/{submissionId}")
     public SubmissionResponse get(@PathVariable Long submissionId) {
         return submissionQueryService.get(submissionId, currentUser.get());
+    }
+
+    @GetMapping("/submissions/{submissionId}/diagnostics")
+    public DiagnosticsResponse diagnostics(@PathVariable Long submissionId) {
+        return submissionDiagnosticsService.get(submissionId, currentUser.get());
     }
 
     @PostMapping("/submissions/{submissionId}/parsing-retries")

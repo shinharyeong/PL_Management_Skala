@@ -63,7 +63,7 @@ public class SubmissionUploadService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.FORBIDDEN));
         RequestTarget target = requestTargetRepository.findById(new RequestTargetId(requestId, organization.getId()))
                 .orElseThrow(SubmissionErrorCode.REQUEST_TARGET_EXCLUDED::exception);
-        if (Boolean.TRUE.equals(target.getExcluded())) {
+        if (Boolean.TRUE.equals(target.getExcluded()) || !Boolean.TRUE.equals(target.getSelected())) {
             throw SubmissionErrorCode.REQUEST_TARGET_EXCLUDED.exception();
         }
         if (request.getStatus() != RequestStatus.OPEN) {
