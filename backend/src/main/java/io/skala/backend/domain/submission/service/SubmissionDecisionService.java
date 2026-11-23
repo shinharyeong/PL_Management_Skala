@@ -69,7 +69,7 @@ public class SubmissionDecisionService {
     @Transactional
     public DecisionResponse decide(Long submissionId, AuthenticatedUser user, DecisionRequest request) {
         user.requireRole(UserRole.PLANNER);
-        Submission submission = submissionAccess.loadForRead(submissionId, user);
+        Submission submission = submissionAccess.lockForRead(submissionId, user);
         ParsingJob job = parsingJobRepository.findBySubmissionId(submissionId).orElse(null);
         StateToken.verify(request.expectedStateToken(), SubmissionStateToken.of(submission, job));
         if (submission.getStatus() != SubmissionStatus.PENDING) {

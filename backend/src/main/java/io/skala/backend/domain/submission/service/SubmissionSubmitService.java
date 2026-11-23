@@ -114,7 +114,7 @@ public class SubmissionSubmitService {
     @Transactional
     public SubmissionResponse submit(Long submissionId, AuthenticatedUser user, String replyMessage,
                                      String expectedStateToken) {
-        Submission submission = submissionAccess.loadForOrgManager(submissionId, user);
+        Submission submission = submissionAccess.lockForOrgManager(submissionId, user);
         ParsingJob job = parsingJobRepository.findBySubmissionId(submissionId).orElse(null);
         StateToken.verify(expectedStateToken, SubmissionStateToken.of(submission, job));
         if (submission.getStatus() != SubmissionStatus.DRAFT) {
