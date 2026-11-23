@@ -71,8 +71,9 @@ public class MeService {
                 SELECT count(*) FROM submission_request r
                 JOIN request_target t ON t.request_id = r.id
                 WHERE r.status = 'OPEN' AND t.organization_id = ? AND t.selected AND NOT t.excluded
-                  AND NOT EXISTS (SELECT 1 FROM submission s WHERE s.request_id = r.id
-                                  AND s.organization_id = t.organization_id AND s.status IN ('PENDING', 'APPROVED'))""",
+                  AND COALESCE((SELECT s.status FROM submission s WHERE s.request_id = r.id
+                                  AND s.organization_id = t.organization_id AND s.status <> 'DRAFT'
+                                  ORDER BY s.seq DESC LIMIT 1), 'REJECTED') = 'REJECTED'""",
                 user.organizationId()));
     }
 
