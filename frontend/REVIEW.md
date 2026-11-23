@@ -1,6 +1,8 @@
 # 프론트 임시v1 · PRD 점검 및 1차 고도화
 
-점검일: 2026-11-23. 기반: develop `56f2cf28a006f576a3213af1fcf57bb043b8d7e4`.
+최초 점검일: 2026-11-23. 구현 기반: develop `56f2cf28a006f576a3213af1fcf57bb043b8d7e4`.
+
+2026-11-23 PR 리뷰 반영: 아래 파일 제한·세션 항목은 이후 병합된 [#35](https://github.com/shinharyeong/PL_Management_Skala/pull/35), [#39](https://github.com/shinharyeong/PL_Management_Skala/pull/39)의 기준으로 정정했다. 구현 기반 커밋과 최신 백엔드 상태를 구분하며, 최신 develop을 병합해 통합 검증했다는 의미는 아니다.
 
 - [기준 Figma · 프론트 임시v1](https://www.figma.com/design/ZW7ZlgvtY4phycygZqir3z?node-id=236-259)
 - [PRD · 기능 및 비기능 요구사항](https://docs.google.com/spreadsheets/d/1F7CZ7YO394ma0pxRRFdJ9-dEbSEq3RBm/edit?gid=1734192708)
@@ -51,8 +53,8 @@ npm run build
 | 우선순위 | 과제 | 완료 기준 |
 |---|---|---|
 | P0 | API 앱에 피그마 화면 통합 | 기존 인증·요청·업로드·비교·검토 로직을 재사용하고 실제 API로 경영기획→담당자→회신→검토 왕복. 예시 수치를 운영 화면에 사용하지 않음. |
-| P0 | 파일 제한 계약 | PRD Excel20MB와 실제 `UploadView.vue`·서버16MB 불일치 합의. FE만 올리지 말고 서버/인프라 제한과 함께 경계값 검증. PDF50MB 실제 형식·권한 검증. |
-| P0 | 운영 인증·권한 | 현재 서버 local/demo 고정8시간 메모리 세션과 PRD 미사용60분·공유 세션 차이 해소. 실제 이메일, 만료·로그아웃·다른 조직 ID 접근403을 통합 검증. |
+| P0 | 파일 제한 계약 | #35 이후 서버 `FilePurpose.SUBMISSION_EXCEL`은 PRD대로 20MB를 허용한다. multipart 파일 한도는 30MB(요청 전체 31MB)이다. 남은 수정은 API 앱 `UploadView.vue`의 16MB 검증·안내를 통합 시 20MB로 맞추고 경계값을 검증하는 것이다. 소명 첨부 `ReviewAttachments.vue`의 16MB 제한은 백엔드 16MiB 기준과 맞으므로 일괄 상향하지 않는다. PDF50MB 요구의 실제 용도별 계약·형식·권한 검증은 별도로 남는다. |
+| P0 | 운영 인증·권한 | #39 이후 세션 TTL 기본값은 12시간(`app.auth.session-ttl`, `PT12H`)이다. 기존 8시간 메모리 세션 설명은 이전 구현 기준이다. PRD의 미사용 60분 만료와는 다른 정책이므로 운영 만료·공유 세션 정책을 합의하고 실제 이메일, 만료·로그아웃·다른 조직 ID 접근403을 통합 검증한다. |
 | P1 | 비동기 실패·중복·충돌 | 로딩/취소, 타임아웃 재시도, 중복 발송 방지, 401·403·409와 최신 상태 재조회. 요청 추적ID를 유지하며 내부 오류를 노출하지 않음. |
 | P1 | 숫자·원천 추적 | backend NUMERIC 단일 계산, 0/음수/누락·큰 금액, 실제 원본 셀·버전 연결. 체험용 60/40 분할 근거는 운영 증거로 사용하지 않음. |
 | P1 | 성능·지원 환경 | 최신 데스크톱 Chrome/Edge ≥1440px. 조직22×12개월×월제출5의 주요 화면/Gap3초, 약1MB Excel30초 목표를 실제 API로 측정. 팀 확정이 필요한 목표는 합의 후 인수. 모바일은 PRD 지원 대상이 아님. |
