@@ -68,4 +68,49 @@ public class ParsingJob extends BaseCreatedTimeEntity {
 
     @Column(name = "finished_at")
     private OffsetDateTime finishedAt;
+
+    public static ParsingJob queue(Submission submission, String engine, int attemptNo) {
+        ParsingJob job = new ParsingJob();
+        job.submission = submission;
+        job.status = ParsingJobStatus.QUEUED;
+        job.engine = engine;
+        job.attemptNo = attemptNo;
+        return job;
+    }
+
+    public void start(OffsetDateTime now) {
+        this.status = ParsingJobStatus.RUNNING;
+        this.startedAt = now;
+        this.finishedAt = null;
+        this.errorCode = null;
+        this.errorMessage = null;
+    }
+
+    /**
+     * 파싱 성공. 파일은 읽었지만 검증 오류가 있으면 validationErrorCode에 VALIDATION_FAILED를 남긴다
+     * (상태는 통과/수정 필요 두 가지뿐이라 SUCCEEDED + 오류 코드로 '수정 필요'를 표현).
+     */
+    public void succeed(String parserVersion, String contractVersion, String mappingVersion,
+                        StoredObject resultObject, String validationErrorCode, OffsetDateTime now) {
+        this.status = ParsingJobStatus.SUCCEEDED;
+        this.parserVersion = parserVersion;
+        this.contractVersion = contractVersion;
+        this.mappingVersion = mappingVersion;
+        this.resultObject = resultObject;
+        this.errorCode = validationErrorCode;
+        this.errorMessage = null;
+        this.finishedAt = now;
+    }
+
+    public void fail(String errorCode, String errorMessage, OffsetDateTime now) {
+        this.status = ParsingJobStatus.FAILED;
+        this.errorCode = errorCode;
+        this.errorMessage = errorMessage;
+        this.finishedAt = now;
+    }
+
+    /** 파싱이 끝났고 검증 오류도 없는지 */
+    public boolean passed() {
+        return status == ParsingJobStatus.SUCCEEDED && errorCode == null;
+    }
 }
