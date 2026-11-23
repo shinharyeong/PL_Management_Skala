@@ -91,4 +91,19 @@ public class Submission {
 
     @Column(name = "approved_seq")
     private Integer approvedSeq;
+
+    /** 업로드한 파일로 제출 초안(DRAFT)을 만든다. 회차(seq)는 제출할 때 정한다. */
+    public static Submission draft(Long requestId, Long organizationId, String originalFilename,
+                                   StoredObject sourceObject, AppUser uploadedBy, OffsetDateTime uploadedAt) {
+        Submission submission = new Submission();
+        submission.requestId = requestId;
+        submission.organizationId = organizationId;
+        submission.status = SubmissionStatus.DRAFT;
+        submission.originalFilename = originalFilename;
+        submission.sourceObject = sourceObject;
+        submission.sourceSha256 = sourceObject.getSha256();
+        submission.uploadedBy = uploadedBy;
+        submission.uploadedAt = uploadedAt;
+        return submission;
+    }
 }

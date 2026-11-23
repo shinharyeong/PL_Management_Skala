@@ -2,11 +2,10 @@ package io.skala.backend.domain.submission.support;
 
 import io.skala.backend.domain.submission.entity.Submission;
 import io.skala.backend.domain.submission.repository.SubmissionRepository;
-import io.skala.backend.domain.user.entity.AppUser;
 import io.skala.backend.domain.user.value.UserRole;
 import io.skala.backend.global.exception.BusinessException;
 import io.skala.backend.global.exception.ErrorCode;
-import java.util.Objects;
+import io.skala.backend.global.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -22,13 +21,16 @@ public class SubmissionAccess {
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
     }
 
-    /** 조직 담당자 전용 명령. 다른 조직이면 403. */
-    public Submission loadForOrgManager(Long submissionId, AppUser actor) {
+    /** 경영기획팀은 모든 조직, 조직 담당자는 자기 조직 제출본만 조회 */
+    public Submission loadForRead(Long submissionId, AuthenticatedUser user) {
         Submission submission = load(submissionId);
-        if (actor.getRole() != UserRole.ORG_MANAGER || actor.getOrganization() == null
-                || !Objects.equals(actor.getOrganization().getId(), submission.getOrganizationId())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN);
-        }
+        user.requireOrganizationAccess(submission.getOrganizationId());
         return submission;
+    }
+
+    /** 조직 담당자 전용 명령. 다른 역할이거나 다른 조직이면 403. */
+    public Submission loadForOrgManager(Long submissionId, AuthenticatedUser user) {
+        user.requireRole(UserRole.ORG_MANAGER);
+        return loadForRead(submissionId, user);
     }
 }

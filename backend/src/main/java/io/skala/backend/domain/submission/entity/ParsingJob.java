@@ -113,4 +113,15 @@ public class ParsingJob extends BaseCreatedTimeEntity {
     public boolean passed() {
         return status == ParsingJobStatus.SUCCEEDED && errorCode == null;
     }
+
+    /** 실패한 작업을 같은 파일로 다시 대기열에 넣는다(UP-06). */
+    public void requeue() {
+        this.status = ParsingJobStatus.QUEUED;
+        this.attemptNo = attemptNo + 1;
+        this.resultObject = null;
+        this.errorCode = null;
+        this.errorMessage = null;
+        this.startedAt = null;
+        this.finishedAt = null;
+    }
 }

@@ -12,12 +12,13 @@ import io.skala.backend.domain.financial.dto.parser.ParserSubmissionData.ReportI
 import io.skala.backend.domain.financial.dto.parser.ParserSubmissionData.Source;
 import io.skala.backend.domain.financial.dto.parser.ParserSubmissionData.Value;
 import io.skala.backend.domain.submission.dto.ValidationResponse;
+import io.skala.backend.domain.submission.parser.ParserBridgeResponse;
 import io.skala.backend.domain.submission.repository.ParsingJobRepository;
 import io.skala.backend.domain.submission.repository.SubmissionRepository;
 import io.skala.backend.domain.submission.value.BaselineKind;
-import io.skala.backend.domain.user.entity.AppUser;
-import io.skala.backend.domain.user.repository.AppUserRepository;
+import io.skala.backend.domain.user.value.UserRole;
 import io.skala.backend.global.exception.BusinessException;
+import io.skala.backend.global.security.AuthenticatedUser;
 import io.skala.backend.support.PostgresIntegrationTest;
 import java.util.List;
 import java.util.Map;
@@ -51,8 +52,6 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
     @Autowired
     ParsingJobRepository parsingJobRepository;
     @Autowired
-    AppUserRepository appUserRepository;
-    @Autowired
     TransactionTemplate tx;
 
     @Test
@@ -64,7 +63,8 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
                 + orgId + ") returning id");
         long outsider = insert("insert into app_user(email, name, role, organization_id) values ('z@x.io', '남', 'ORG_MANAGER', "
                 + otherOrgId + ") returning id");
-        long plan = insert("insert into annual_plan(year, status) values (2026, 'CONFIRMED') returning id");
+        long plan = insert("insert into annual_plan(year, status) values (2026, 'CONFIRMED') "
+                + "on conflict (year) do update set year = excluded.year returning id");
         long octRequest = request(plan, 10, planner);
         long novRequest = request(plan, 11, planner);
         jdbc.update("insert into request_target(request_id, organization_id) values (?, ?), (?, ?)",
@@ -73,14 +73,14 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         // 10월 제출본: 적재 후 승인 처리
         long octSubmission = draft(octRequest, orgId, manager, "drafts/oct.xlsx", SHA_OCT);
         long octJob = job(octSubmission);
-        IngestionResult octResult = parsingResultService.complete(octJob, versions(), null, data(SHA_OCT, List.of(
+        IngestionResult octResult = complete(octJob, data(SHA_OCT, List.of(
                 line("1:10", "REVENUE", SALES_KEY, "매출", 10, "A-1",
                         value(10, "ACTUAL", "1000", "N10"), value(11, "ESTIMATE", "1100", "O10")))));
         assertThat(octResult.diagnostics()).isEmpty();
         assertThat(octResult.lineCount()).isEqualTo(1);
         assertThat(octResult.valueCount()).isEqualTo(2);
 
-        AppUser managerUser = appUserRepository.findById(manager).orElseThrow();
+        AuthenticatedUser managerUser = new AuthenticatedUser(manager, UserRole.ORG_MANAGER, orgId);
         ValidationResponse octValidation = validationService.validate(octSubmission, token(octSubmission), managerUser);
         assertThat(octValidation.baseline().kind()).isEqualTo(BaselineKind.NONE);
         assertThat(octValidation.progress().required()).isZero();
@@ -98,7 +98,7 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         // 11월 제출본: 10월 실적은 그대로, 11월 추정은 바뀜, 임차료 새로 생김, 빈 칸은 저장하지 않음
         long novSubmission = draft(novRequest, orgId, manager, "drafts/nov.xlsx", SHA_NOV);
         long novJob = job(novSubmission);
-        IngestionResult novResult = parsingResultService.complete(novJob, versions(), null, data(SHA_NOV, List.of(
+        IngestionResult novResult = complete(novJob, data(SHA_NOV, List.of(
                 line("1:10", "REVENUE", SALES_KEY, "매출", 10, "A-1",
                         value(10, "ACTUAL", "1000.000000", "N10"), value(11, "ESTIMATE", "1300", "O10")),
                 line("2:5", "COST", RENT_KEY, "비용", 5, "C-9",
@@ -109,7 +109,7 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         assertThat(novResult.valueCount()).isEqualTo(3);
 
         assertThatThrownBy(() -> validationService.validate(novSubmission, token(novSubmission),
-                appUserRepository.findById(outsider).orElseThrow()))
+                new AuthenticatedUser(outsider, UserRole.ORG_MANAGER, otherOrgId)))
                 .isInstanceOf(BusinessException.class).extracting("code").isEqualTo("FORBIDDEN");
         assertThatThrownBy(() -> validationService.validate(novSubmission, "st_stale", managerUser))
                 .isInstanceOf(BusinessException.class).extracting("code").isEqualTo("RESOURCE_CHANGED");
@@ -154,7 +154,8 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         long planner = insert("insert into app_user(email, name, role) values ('p9@x.io', '기획', 'PLANNER') returning id");
         long manager = insert("insert into app_user(email, name, role, organization_id) values ('o9@x.io', '담당', 'ORG_MANAGER', "
                 + orgId + ") returning id");
-        long plan = insert("insert into annual_plan(year, status) values (2030, 'COLLECTING') returning id");
+        long plan = insert("insert into annual_plan(year, status) values (2030, 'COLLECTING') "
+                + "on conflict (year) do update set year = excluded.year returning id");
         long req = request(plan, 3, planner);
         jdbc.update("insert into request_target(request_id, organization_id) values (?, ?)", req, orgId);
         long submission = draft(req, orgId, manager, "drafts/bad.xlsx", SHA_OCT);
@@ -165,13 +166,13 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
                 List.of(new ReportItem(SALES_KEY, "REVENUE", "제품매출", List.of("매출", "제품매출"), "RESOLVED")),
                 List.of(line("1:10", "REVENUE", SALES_KEY, "매출", 10, "A-1", value(3, "ACTUAL", "1", "N10"))),
                 List.of());
-        IngestionResult result = parsingResultService.complete(jobId, versions(), null, bad);
+        IngestionResult result = complete(jobId, bad);
 
         assertThat(result.diagnostics()).extracting("rule")
                 .containsExactlyInAnyOrder("ORGANIZATION_MISMATCH", "PERIOD_OUT_OF_RANGE");
         assertThat(parsingJobRepository.findById(jobId).orElseThrow().getErrorCode()).isEqualTo("VALIDATION_FAILED");
         assertThatThrownBy(() -> validationService.validate(submission, token(submission),
-                appUserRepository.findById(manager).orElseThrow()))
+                new AuthenticatedUser(manager, UserRole.ORG_MANAGER, orgId)))
                 .isInstanceOf(BusinessException.class).extracting("code").isEqualTo("VALIDATION_FAILED");
     }
 
@@ -188,7 +189,7 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         return jdbc.queryForObject("""
                 insert into submission_request(annual_plan_id, type, month, status, requested_by, requested_at, period_key)
                 values (?, 'MONTHLY_ACTUAL', ?, 'OPEN', ?, now(), ?) returning id
-                """, Long.class, plan, month, planner, "M-" + plan + "-" + month);
+                """, Long.class, plan, month, planner, "M" + month + "-" + java.util.UUID.randomUUID().toString().substring(0, 12));
     }
 
     private long draft(long request, long org, long user, String key, String sha) {
@@ -208,8 +209,9 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
                 """, Long.class, submission);
     }
 
-    private static ParsingResultService.ParserVersions versions() {
-        return new ParsingResultService.ParserVersions("test", "preview-records/1.0", "m1");
+    private IngestionResult complete(long jobId, ParserSubmissionData data) {
+        return parsingResultService.apply(jobId, 1, new ParserBridgeResponse("1.0", "test", "preview-records/1.0",
+                "SUCCEEDED", null, List.of(), data)).orElseThrow();
     }
 
     private static ParserSubmissionData data(String sha, List<Line> lines) {
