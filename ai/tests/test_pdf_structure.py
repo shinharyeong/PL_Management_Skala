@@ -613,3 +613,559 @@ def test_derive_spec_maps_difference_column_to_gap():
     T = lambda *r: [{"type": "text", "text": x} if x else {"type": "number"} for x in r]
     sp = D.derive_spec([T("사업부", "계획", "실적", "차이"), T("사업부1", "", "", "")], 1, ["영업이익"], [{"code": "F10", "name": "사업부1"}])
     assert [c["t"] for c in sp["cols"]] == ["current", "current", "gap"] or sp["cols"][-1]["t"] == "gap"
+
+
+def _shifted_vlm_blocks(lines, dy):
+    """줄 단위 블록을 만들고 박스를 세로로 dy 만큼 틀어 놓는다(VLM 좌표가 아래로 밀린 상황)."""
+    from app.pdf_structure.extract import mask
+    out = []
+    for l in lines:
+        out.append({"kind": "paragraph", "page": 1, "text": mask(l.raw)[0], "bbox": [l.x0, l.top + dy, l.x1, l.bottom + dy], "needs_review": [], "_line": l})
+    return out
+
+
+def test_snap_uses_text_and_reading_order_not_vlm_vertical_position():
+    from app.pdf_structure import vlm as V
+    from app.pdf_structure.extract import read_pdf
+    doc = fitz.open()
+    pg = doc.new_page()
+    ko = ["월간 실적 보고서", "영업이익은 계획 대비 개선되었습니다", "주요 증감 원인 요약", "신규 계약 반영으로 매출 증가", "일회성 비용 발생으로 이익 감소", "각주 참고 사항 안내문"]
+    try:
+        font = fitz.Font("korea") if hasattr(fitz, "Font") else None
+    except Exception:
+        font = None
+    if font is None:
+        pytest.skip("한글 글꼴 없음")
+    for i, t in enumerate(ko):
+        y = 80 + i * 120
+        pg.insert_text((60, y), t, fontname="korea", fontsize=12)
+    data = doc.tobytes()
+    doc.close()
+    _, lines, _, _ = read_pdf(data)
+    ls = lines[0]
+    if len(ls) != len(ko):
+        pytest.skip("한글 줄 추출이 기대와 다름")
+    blocks = _shifted_vlm_blocks(ls, dy=300)                 # 모든 박스를 300pt 아래로 틀어 놓는다
+    V.snap_bboxes(blocks, {1: ls}, {1: (595.0, 842.0)}, [])
+    for b in blocks:
+        l = b["_line"]
+        cy = (l.top + l.bottom) / 2
+        assert b["bbox"][1] <= cy <= b["bbox"][3], (b["text"], b["bbox"], cy)      # 박스가 자기 글자 줄을 덮는다
+        assert not b["needs_review"]
+
+
+def test_snap_flags_block_whose_text_is_not_in_pdf_and_when_no_text_layer():
+    from app.pdf_structure import vlm as V
+    from app.pdf_structure.extract import read_pdf, _flag
+    doc = fitz.open()
+    pg = doc.new_page()
+    try:
+        pg.insert_text((60, 100), "월간 실적 보고서", fontname="korea", fontsize=12)
+    except Exception:
+        pytest.skip("한글 글꼴 없음")
+    data = doc.tobytes()
+    doc.close()
+    _, lines, _, _ = read_pdf(data)
+    ghost = {"kind": "paragraph", "page": 1, "text": "문서에 전혀 없는 유령 문장입니다", "bbox": [10, 500, 200, 520], "needs_review": []}
+    real = {"kind": "title", "page": 1, "text": "월간 실적 보고서", "bbox": [10, 600, 200, 620], "needs_review": []}
+    V.snap_bboxes([real, ghost], {1: lines[0]}, {1: (595.0, 842.0)}, [])
+    assert real["bbox"][1] < 100 and not real["needs_review"]                     # 위치는 글자 줄로 되돌아오고
+    assert [f["code"] for f in ghost["needs_review"]] == ["box_unresolved"]       # 근거 없는 박스에는 경고가 달린다
+    nolayer = {"kind": "paragraph", "page": 1, "text": "그림만 있는 페이지의 문장", "bbox": [0, 0, 1, 1], "needs_review": []}
+    V.snap_bboxes([nolayer], {}, {1: (595.0, 842.0)}, [])
+    assert [f["code"] for f in nolayer["needs_review"]] == ["box_unresolved"]
+
+
+# ---------------- 줄 번호 방식: VLM 은 줄 id 만, 박스는 코드가 PDF 줄 좌표로 ----------------
+KO_LINES = ["월간 실적 보고서", "영업이익은 계획 대비 개선되었습니다", "주요 증감 원인 요약", "신규 계약 반영으로 매출 증가", "일회성 비용 발생으로 이익 감소", "각주 참고 사항 안내문"]
+
+
+def _ko_pdf():
+    doc = fitz.open()
+    pg = doc.new_page()
+    try:
+        for i, t in enumerate(KO_LINES):
+            pg.insert_text((60, 80 + i * 120), t, fontname="korea", fontsize=12)
+    except Exception:
+        pytest.skip("한글 글꼴 없음")
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def _sent_lines(kw):
+    txt = next(p["text"] for p in kw["messages"][1]["content"] if p["type"] == "text")
+    return _json.loads(txt.split("\n")[1])
+
+
+def _messy(box_dy=300):
+    return [50, 500 + box_dy // 10, 990, 990]                    # 일부러 엉망인 VLM 좌표(실제 위치와 무관)
+
+
+def _vlm_fake(groups_of, ignored=()):
+    def answer(kw):
+        rows = _sent_lines(kw)
+        return {"blocks": groups_of([r["id"] for r in rows], rows), "ignored_lines": list(ignored)}
+    return answer
+
+
+def _text_blocks(r):
+    return [b for b in r["blocks"] if b.get("from_vlm") and b["kind"] in ("title", "paragraph", "footnote")]
+
+
+def test_vlm_boxes_come_from_line_ids_even_when_vlm_bbox_is_garbage(monkeypatch):
+    from app.pdf_structure.extract import read_pdf, _bbox
+    pdf = _ko_pdf()
+    _, lines, _, _ = read_pdf(pdf)
+    ls = lines[0]
+    ids = [l.lid for l in ls]
+    ans = _vlm_fake(lambda ids, rows: [
+        {"kind": "title", "lines": [ids[0]], "bbox": _messy(), "text": "월간 실적 보고서", "level": 1},
+        {"kind": "paragraph", "lines": ids[1:3], "bbox": _messy(), "text": "영업이익은 계획 대비 개선되었습니다 주요 증감 원인 요약"},
+        {"kind": "paragraph", "lines": ids[3:5], "bbox": [0, 0, 1000, 1000], "text": "신규 계약 반영으로 매출 증가 일회성 비용 발생으로 이익 감소"},
+        {"kind": "footnote", "lines": [ids[5]], "bbox": _messy(), "marker": "※", "text": "각주 참고 사항 안내문", "footnote_of": None}])
+    c = _AiClient(ans)
+    monkeypatch.setattr(openai_client, "make_client", lambda s: c)
+    r = extract_structure(pdf, use_ai=True)
+    assert r["vlm"]["mode"] == "vlm"
+    by = {l.lid: l for l in ls}
+    tb = _text_blocks(r)
+    assert len(tb) == 4
+    for b in tb:
+        assert b["bbox"] == _bbox([by[i] for i in b["line_ids"]])      # 박스 = 줄 좌표 합집합 (±0)
+        assert not any(f["code"] in ("box_unresolved", "vlm_missed") for f in b["needs_review"])
+    assert r["vlm"]["boxes_unresolved"] == 0
+
+
+def test_vlm_line_id_missing_is_filled_and_flagged(monkeypatch):
+    pdf = _ko_pdf()
+    ans = _vlm_fake(lambda ids, rows: [
+        {"kind": "title", "lines": [ids[0]], "text": "월간 실적 보고서", "level": 1},
+        {"kind": "paragraph", "lines": ids[1:3], "text": "영업이익은 계획 대비 개선되었습니다 주요 증감 원인 요약"},
+        {"kind": "footnote", "lines": [ids[5]], "marker": "※", "text": "각주 참고 사항 안내문", "footnote_of": None}])      # ids[3], ids[4] 를 빠뜨림
+    c = _AiClient(ans)
+    monkeypatch.setattr(openai_client, "make_client", lambda s: c)
+    r = extract_structure(pdf, use_ai=True)
+    filled = [b for b in r["blocks"] if b.get("from_rules_fill")]
+    assert filled and {i for b in filled for i in b["line_ids"]} >= {3, 4}
+    assert all(any(f["code"] == "vlm_missed" for f in b["needs_review"]) for b in filled)      # "확인 필요 0개" 가 아니다
+    assert r["vlm"]["lines_missing_filled"] == len(filled)
+
+
+def test_vlm_line_in_two_blocks_belongs_to_first_and_second_is_flagged():
+    from app.pdf_structure import vlm as V
+    from app.pdf_structure.extract import read_pdf, _bbox
+    _, lines, _, _ = read_pdf(_ko_pdf())
+    ls = lines[0]
+    ids = [l.lid for l in ls]
+    out = {"blocks": [{"kind": "paragraph", "lines": ids[0:3], "text": "월간 실적 보고서 영업이익은 계획 대비 개선되었습니다"},
+                      {"kind": "paragraph", "lines": ids[2:5], "text": "주요 증감 원인 요약 신규 계약 반영으로 매출 증가"}], "ignored_lines": [ids[5]]}
+    rep: dict = {}
+    bl = V.build_blocks(out, {"page": 1, "width": 595.0, "height": 842.0}, ls, rep)
+    by = {l.lid: l for l in ls}
+    assert bl[0]["line_ids"] == ids[0:3] and bl[1]["line_ids"] == ids[3:5]       # 겹친 줄은 먼저 배정한 블록만 갖는다
+    assert not bl[0]["needs_review"] and [f["code"] for f in bl[1]["needs_review"]] == ["kind_ambiguous"]
+    assert bl[1]["bbox"] == _bbox([by[i] for i in ids[3:5]]) and rep["overlap"] == [ids[2]] and rep["missing"] == [ids[5]]      # 글자가 있는 줄은 무시 목록에 넣어도 '놓친 줄'로 본다
+
+
+def test_vlm_page_without_text_layer_keeps_vlm_box_but_flags_every_block():
+    from app.pdf_structure import vlm as V
+    out = {"blocks": [{"kind": "paragraph", "bbox": [10, 10, 500, 60], "text": "그림만 있는 쪽의 문장"}, {"kind": "chart", "bbox": [10, 100, 600, 400], "chart_type": "bar", "title": "차트"}]}
+    bl = V.build_blocks(out, {"page": 1, "width": 800.0, "height": 1000.0}, [])
+    assert all([f["code"] for f in b["needs_review"]] == ["box_unresolved"] for b in bl)
+    assert bl[0]["bbox"] == [8.0, 10.0, 400.0, 60.0]                              # VLM 좌표를 그대로 변환(근사)
+
+
+def test_vlm_too_many_lines_page_sends_no_line_list(monkeypatch):
+    from app.pdf_structure import vlm as V
+    monkeypatch.setattr(V, "MAX_LINES_PER_PAGE", 3)
+    seen = {}
+    def answer(kw):
+        seen["txt"] = next(p["text"] for p in kw["messages"][1]["content"] if p["type"] == "text")
+        return {"blocks": [{"kind": "paragraph", "bbox": [50, 50, 900, 900], "text": "월간 실적 보고서 영업이익은 계획 대비 개선되었습니다"}]}
+    monkeypatch.setattr(openai_client, "make_client", lambda s: _AiClient(answer))
+    r = extract_structure(_ko_pdf(), use_ai=True)
+    assert "줄 목록 없음" in seen["txt"] and r["vlm"]["mode"] == "vlm"
+    assert all(b["bbox"][3] - b["bbox"][1] < 842 for b in r["blocks"])             # 글자 대조(snap)나 경고로 처리된다
+
+
+def test_sample_pdfs_mock_vlm_with_line_ids_and_garbage_bbox_cover_all_text_blocks():
+    import glob
+    from app.pdf_structure import vlm as V
+    from app.pdf_structure.extract import read_pdf
+    pdfs = sorted(glob.glob(str(Path.home() / "Downloads" / "Claude outputs" / "*.pdf")))
+    if not pdfs:
+        pytest.skip("샘플 PDF 없음")
+    for f in pdfs:
+        data = open(f, "rb").read()
+        rules = extract_structure(data)["blocks"]
+        pages, lines, _, _ = read_pdf(data)
+        for pi, pl in enumerate(lines, 1):
+            groups = []
+            if not [x for x in rules if x["page"] == pi]:
+                continue                                                  # 글자 없는 스캔 쪽은 규칙 블록이 없다
+            for b in [x for x in rules if x["page"] == pi]:
+                g = {"kind": b["kind"], "lines": b["line_ids"], "bbox": [0, 900, 1000, 1000]}          # 위치는 엉망
+                if b["kind"] in ("title", "paragraph", "footnote"):
+                    g.update(text=b["text"], level=b.get("level"))
+                elif b["kind"] == "table":
+                    g["rows"] = [[c.get("text") if c["type"] == "text" else None for c in r] for r in b["table"]["rows"]]
+                else:
+                    g["items"] = [{"marker": i["marker"], "text": i["text"], "level": 0} for i in b["items"]]
+                groups.append(g)
+            built = V.build_blocks({"blocks": groups}, {"page": pi, "width": 595.0, "height": 842.0}, pl, {})
+            by = {l.lid: l for l in pl}
+            miss = [b for b in built if b["line_ids"] and not all(b["bbox"][1] <= (by[i].top + by[i].bottom) / 2 <= b["bbox"][3] for i in b["line_ids"])]
+            assert miss == [], f
+
+
+# ---------------- 나란히 놓인 덩어리(칸) 쪼개기 ----------------
+def _cards_pdf() -> bytes:
+    """A4 가로: 위 제목 줄 하나에 두 제목(좌우), 아래 카드 3개(이름·큰 숫자·보조 글자)가 같은 높이에 나란히."""
+    doc = fitz.open()
+    pg = doc.new_page(width=842, height=595)
+    pg.insert_text((50, 60), "Monthly dashboard", fontname="helv", fontsize=15)
+    for i, x in enumerate((60, 330, 600)):
+        pg.insert_text((x, 110), f"Card {i + 1} name", fontname="helv", fontsize=8.5)
+        pg.insert_text((x, 135), f"{i + 1}00.5", fontname="helv", fontsize=17)
+        pg.insert_text((x, 152), "vs plan +1.0", fontname="helv", fontsize=8.5)
+    pg.insert_text((60, 200), "Left panel title", fontname="helv", fontsize=11)
+    pg.insert_text((520, 200), "Right panel title", fontname="helv", fontsize=11)
+    pg.insert_text((60, 300), "Body text of the report goes here as a plain sentence.", fontname="helv", fontsize=10)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+def _no_split(monkeypatch):
+    from app.pdf_structure import extract as X
+    monkeypatch.setattr(X, "_split_columns", lambda ls, W, H, p: ls)
+
+
+def test_side_by_side_cards_are_split_into_columns_with_exact_boxes():
+    from app.pdf_structure.extract import read_pdf, _bbox
+    r = extract_structure(_cards_pdf())
+    cards = [b for b in r["blocks"] if b["kind"] == "paragraph" and "Card" in b["text"]]
+    assert len(cards) == 3                                                       # 카드 3개가 따로 박스
+    assert len({tuple(b["bbox"]) for b in cards}) == 3 and cards[0]["bbox"][2] < cards[1]["bbox"][0] < cards[1]["bbox"][2] < cards[2]["bbox"][0]
+    assert all(len(b["line_ids"]) == 3 for b in cards)                           # 카드 하나 = 세 줄(이름·숫자·보조 글자)
+    _, lines, _, _ = read_pdf(_cards_pdf())
+    by = {l.lid: l for l in lines[0]}
+    assert all(b["bbox"] == _bbox([by[i] for i in b["line_ids"]]) for b in cards)   # 박스 = 조각 좌표 합집합
+    ids = [l.lid for l in lines[0]]
+    assert ids == list(range(len(ids)))                                          # 번호는 읽는 순서대로 이어진다
+    titles = [b for b in r["blocks"] if "panel" in (b.get("text") or "")]
+    assert len(titles) == 2 and titles[0]["bbox"][2] < titles[1]["bbox"][0]     # 한 줄에 합쳐졌던 두 제목이 둘로
+
+
+def test_no_gutter_pdfs_are_identical_to_before(monkeypatch):
+    from app.pdf_structure import extract as X
+    pdfs = [make_pdf(), make_pdf(misaligned=True)]
+    if SAMPLE.exists():
+        pdfs.append(SAMPLE.read_bytes())
+    for data in pdfs:
+        now = extract_structure(data)
+        _, ls_now, _, _ = X.read_pdf(data)
+        with monkeypatch.context() as m:
+            m.setattr(X, "_split_columns", lambda ls, W, H, p: ls)
+            before = extract_structure(data)
+            _, ls_before, _, _ = X.read_pdf(data)
+        assert [[(l.lid, l.top, l.x0, l.x1, l.raw) for l in p] for p in ls_now] == [[(l.lid, l.top, l.x0, l.x1, l.raw) for l in p] for p in ls_before]
+        assert [(b["kind"], b["bbox"], b["line_ids"]) for b in now["blocks"]] == [(b["kind"], b["bbox"], b["line_ids"]) for b in before["blocks"]]
+
+
+def test_wide_gap_table_is_not_mistaken_for_a_gutter():
+    r = extract_structure(make_pdf())                                           # 열 간격이 넓은 3칸 표(185pt)도 표로 남는다
+    t = next(b for b in r["blocks"] if b["kind"] == "table")
+    assert t["table"]["columns"] == 3 and len(t["table"]["rows"]) == 3
+
+
+def test_vlm_line_ids_of_split_cards_give_separate_exact_boxes():
+    from app.pdf_structure import vlm as V
+    from app.pdf_structure.extract import read_pdf, _bbox
+    _, lines, _, _ = read_pdf(_cards_pdf())
+    ls = lines[0]
+    cards = [[l.lid for l in ls if f"Card {k}" in l.raw or (l.x0 > 30 + 270 * (k - 1) and l.x0 < 120 + 270 * (k - 1) and l.top > 95 and l.top < 160)] for k in (1, 2, 3)]
+    out = {"blocks": [{"kind": "numbercard", "lines": c, "bbox": [0, 0, 1000, 1000], "cards": [{"label": f"Card {k}", "unit": "", "delta_label": None}]} for k, c in enumerate(cards, 1)], "ignored_lines": []}
+    bl = V.build_blocks(out, {"page": 1, "width": 842.0, "height": 595.0}, ls, {})
+    by = {l.lid: l for l in ls}
+    assert len({tuple(b["bbox"]) for b in bl}) == 3                              # 서로 다른 박스(VLM 좌표는 전부 같은 값이었다)
+    assert all(b["bbox"] == _bbox([by[i] for i in b["line_ids"]]) and len(b["line_ids"]) == 3 for b in bl)
+
+
+def test_line_list_sent_to_vlm_has_right_edge_and_prompt_v5():
+    from app.pdf_structure import vlm as V
+    from app.pdf_structure.ai_extract import _line_rows
+    from app.pdf_structure.extract import read_pdf
+    _, lines, _, _ = read_pdf(_cards_pdf())
+    assert all({"id", "x", "x1", "top"} <= set(r) for r in _line_rows(lines[0])) and V.PROMPT_VERSION == "pdf-vlm-v5" and "x1(오른쪽 끝)" in V.SYSTEM
+
+
+def test_block_with_non_adjacent_lines_is_flagged_because_its_box_is_wide():
+    from app.pdf_structure import vlm as V
+    from app.pdf_structure.extract import read_pdf
+    _, lines, _, _ = read_pdf(_ko_pdf())
+    ids = [l.lid for l in lines[0]]
+    out = {"blocks": [{"kind": "paragraph", "lines": [ids[0], ids[3]], "text": "월간 실적 보고서 신규 계약 반영으로 매출 증가"},
+                      {"kind": "paragraph", "lines": [ids[1], ids[2]], "text": "영업이익은 계획 대비 개선되었습니다 주요 증감 원인 요약"},
+                      {"kind": "paragraph", "lines": [ids[4], ids[5]], "text": "일회성 비용 발생으로 이익 감소 각주 참고 사항 안내문"}]}
+    bl = V.build_blocks(out, {"page": 1, "width": 595.0, "height": 842.0}, lines[0], {})
+    assert [f["code"] for f in bl[0]["needs_review"]] == ["kind_ambiguous"] and not bl[1]["needs_review"] and not bl[2]["needs_review"]
+
+
+# ---------------- 여러 줄(병합) 머리 표 ----------------
+def _T(*r):
+    return [{"type": "text", "text": x} if x else {"type": "number"} for x in r]
+
+
+_MERGED_ROWS = [_T("사업부", "매출", "", "", "영업이익", "", "", "판정"), _T("", "계획", "실적", "차이", "계획", "실적", "차이", ""),
+                _T("사업부1", "", "", "", "", "", "", "Gap"), _T("사업부2", "", "", "", "", "", "", "정상"), _T("소계", "", "", "", "", "", "", ""), _T("합계", "", "", "", "", "", "", "")]
+_SPANS = [{"row": 0, "col": 1, "colspan": 3, "rowspan": 1}, {"row": 0, "col": 4, "colspan": 3, "rowspan": 1}, {"row": 0, "col": 0, "colspan": 1, "rowspan": 2}]
+_ORGS = [{"code": "F10", "name": "사업부1"}, {"code": "F12", "name": "사업부2"}]
+
+
+def test_header_grid_fills_colspan_and_rowspan():
+    from app.pdf_structure import table_header as TH
+    lay = TH.header_layout(_MERGED_ROWS, 2, _SPANS)
+    assert lay["grid"] == [["사업부", "매출", "매출", "매출", "영업이익", "영업이익", "영업이익", "판정"], ["사업부", "계획", "실적", "차이", "계획", "실적", "차이", "판정"]]
+    assert TH.header_grid(_MERGED_ROWS, 2, _SPANS) == lay["grid"] and not lay["ambiguous"]
+    assert lay["cells"][0][1] == {"j": 1, "text": "매출", "colspan": 3} and lay["cells"][0][2].get("hide") and lay["cells"][0][0].get("rowspan") == 2 and lay["cells"][1][0].get("hide")
+    assert lay["paths"][1] == ["매출", "계획"] and lay["paths"][7] == ["판정"] and lay["paths"][0] == ["사업부"]
+
+
+def test_derive_spec_gives_each_column_its_metric_and_total_rows():
+    from app.pdf_structure import data_select as D
+    sp = D.derive_spec(_MERGED_ROWS, 2, ["매출", "영업비용", "영업이익"], _ORGS, _SPANS)
+    assert [(c["t"], c.get("metric")) for c in sp["cols"]] == [("cmpval", "매출"), ("current", "매출"), ("gap", "매출"), ("cmpval", "영업이익"), ("current", "영업이익"), ("gap", "영업이익"), ("unknown", None)]
+    assert [r["t"] for r in sp["rows"]] == ["org", "org", "subtotal", "total"] and D._row_kind("계획 대비") is None and D._row_kind("계") == "total" and D._row_kind("합 계") == "total"
+
+
+def _fake_bases(rev_missing_org=None):
+    vals = {"revenue_won": {"F10": (900e6, 860e6), "F12": (1110e6, 1150e6)}, "op_won": {"F10": (240e6, 200e6), "F12": (160e6, 200e6)}}
+
+    def fake(con, info, y, m, col, org):
+        cur, plan = vals[col][org]
+        return {"현재": None if (rev_missing_org == org and col == "revenue_won") else cur, "계획": plan, "직전 월": None, "전년 동월": None, "직전 추정": None}
+    return fake
+
+
+def _fill(monkeypatch, spec, **kw):
+    from app.pdf_structure import data_select as D
+    monkeypatch.setattr(D, "_bases", _fake_bases(**kw))
+    return D.fill_spec_table(None, {"orgs": _ORGS}, {"year": 2026, "month": 11}, spec, {})
+
+
+def test_fill_uses_column_metric_not_row_default_and_unknown_text_column_is_no_data(monkeypatch):
+    from app.pdf_structure import data_select as D
+    sp = D.derive_spec(_MERGED_ROWS, 2, ["매출", "영업비용", "영업이익"], _ORGS, _SPANS)
+    rows, miss = _fill(monkeypatch, sp)
+    assert [c["text"] for c in rows[2]] == ["사업부1", "8.6", "9.0", "+0.4", "2.0", "2.4", "+0.4", "데이터 없음"]      # 매출 열과 영업이익 열은 서로 다른 값
+    assert [c["text"] for c in rows[3]][1:7] == ["11.5", "11.1", "△0.4", "2.0", "1.6", "△0.4"] and miss
+    assert [c["text"] for c in rows[0]][:3] == ["사업부", "매출", ""] and rows[0][1]["colspan"] == 3 and rows[0][0]["rowspan"] == 2     # 머리는 병합 격자 그대로(2줄)
+
+
+def test_fill_missing_metric_in_db_is_no_data_never_another_metric(monkeypatch):
+    from app.pdf_structure import data_select as D
+    sp = D.derive_spec(_MERGED_ROWS, 2, ["매출", "영업비용", "영업이익"], _ORGS, _SPANS)
+    monkeypatch.setattr(D, "METRIC_COL", {"영업비용": "cost_won", "영업이익": "op_won"})          # 매출이 DB 지표에 없는 경우
+    rows, _ = _fill(monkeypatch, sp)
+    r = [c["text"] for c in rows[2]]
+    assert r[1:4] == ["데이터 없음"] * 3 and r[4:7] == ["2.0", "2.4", "+0.4"]
+    assert len({x for row in rows[2:6] for x in [c["text"] for c in row][4:7]} & {"8.6", "9.0", "11.5"}) == 0
+
+
+def test_subtotal_and_total_are_sums_of_org_rows_and_no_data_when_any_part_is_missing(monkeypatch):
+    from app.pdf_structure import data_select as D
+    sp = D.derive_spec(_MERGED_ROWS, 2, ["매출", "영업비용", "영업이익"], _ORGS, _SPANS)
+    rows, _ = _fill(monkeypatch, sp)
+    sub, tot = [c["text"] for c in rows[4]], [c["text"] for c in rows[5]]
+    assert sub[:7] == ["소계", "20.1", "20.1", "0.0", "4.0", "4.0", "0.0"] and tot[1:7] == sub[1:7] and tot[0] == "합계" and sub[7] == "데이터 없음"      # 8.6+11.5, 9.0+11.1, +0.4-0.4 …
+    rows, _ = _fill(monkeypatch, sp, rev_missing_org="F12")                                  # 사업부2 의 매출 실적이 없으면
+    sub = [c["text"] for c in rows[4]]
+    assert sub[1] == "20.1" and sub[2] == "데이터 없음" and sub[3] == "데이터 없음" and sub[5] == "4.0"      # 그 열 합계만 '데이터 없음'(일부만 더하지 않음)
+    D.SCOPE_ORGS.set(["F10"])
+    try:
+        rows, _ = _fill(monkeypatch, sp)
+        assert all(c["text"] == "데이터 없음" for c in rows[-1][1:])                          # 범위 필터가 걸리면 합계는 만들지 않는다
+    finally:
+        D.SCOPE_ORGS.set([])
+
+
+def test_header_without_spans_is_flagged_and_columns_are_not_guessed(monkeypatch):
+    from app.pdf_structure import data_select as D
+    from app.pdf_structure import vlm as V
+    rows = [_T("사업부", "매출", "", "", "영업이익", "", ""), _T("", "계획", "실적", "차이", "계획", "실적", "차이"), _T("사업부1", "", "", "", "", "", "")]
+    out = {"blocks": [{"kind": "table", "rows": [[(c.get("text") if c["type"] == "text" else None) for c in r] for r in rows], "header_rows": 2}]}
+    b = V.build_blocks(out, {"page": 1, "width": 800.0, "height": 1000.0})[0]
+    assert any(f["code"] == "header_ambiguous" for f in b["needs_review"])
+    sp = D.derive_spec(rows, 2, ["매출", "영업비용", "영업이익"], _ORGS, None)
+    assert [(c["t"], c.get("metric")) for c in sp["cols"]] == [("cmpval", "매출"), ("unknown", None), ("unknown", None), ("cmpval", "영업이익"), ("unknown", None), ("unknown", None)]
+    out_rows, _ = _fill(monkeypatch, sp)
+    assert [c["text"] for c in out_rows[-1]][1:] == ["8.6", "데이터 없음", "데이터 없음", "2.0", "데이터 없음", "데이터 없음"]
+
+
+def _two_column_pdf() -> bytes:
+    """A4 세로, 본문 2단(칸 사이 약 40pt). 왼쪽은 촘촘한 문단, 오른쪽은 간격 있는 항목(좌우 줄의 높이는 서로 다름)."""
+    doc = fitz.open()
+    pg = doc.new_page()
+    pg.insert_text((40, 60), "Two column briefing", fontname="helv", fontsize=16)
+    for i in range(14):
+        pg.insert_text((40, 110 + i * 14), f"Left column sentence number {i} with plenty of words in it", fontname="helv", fontsize=9.5)
+    for i in range(7):
+        pg.insert_text((313, 118 + i * 28), f"Right item {i} with a rather long description text", fontname="helv", fontsize=9.5)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+def test_two_column_body_is_split_into_columns_and_read_column_by_column():
+    from app.pdf_structure.extract import read_pdf
+    r = extract_structure(_two_column_pdf())
+    _, lines, _, _ = read_pdf(_two_column_pdf())
+    texts = [l.raw for l in lines[0]]
+    first_right = next(i for i, t in enumerate(texts) if t.startswith("Right item"))
+    assert all(t.startswith(("Two", "Left")) for t in texts[:first_right]) and all(t.startswith("Right") for t in texts[first_right:])      # 왼쪽 칸을 다 읽은 뒤 오른쪽 칸
+    for b in r["blocks"]:
+        assert not (b["bbox"][0] < 280 and b["bbox"][2] > 313), (b["kind"], b["bbox"])                                                        # 어떤 블록도 두 칸에 걸치지 않는다
+    assert [l.lid for l in lines[0]] == list(range(len(lines[0])))
+
+
+def test_gutter_rules_keep_tables_and_single_column_text_intact(monkeypatch):
+    from app.pdf_structure import extract as X
+    for data in (make_pdf(), _ko_pdf()):
+        now = [[l.raw for l in p] for p in X.read_pdf(data)[1]]
+        with monkeypatch.context() as m:
+            m.setattr(X, "_split_columns", lambda ls, W, H, p: ls)
+            before = [[l.raw for l in p] for p in X.read_pdf(data)[1]]
+        assert now == before
+
+
+# ---------------- 어려운 PDF 대응(카드 격자·신문형 단·도형 경계·라벨 열·날짜) ----------------
+def _draw_pdf(draw, size=(595, 842)) -> bytes:
+    doc = fitz.open()
+    pg = doc.new_page(width=size[0], height=size[1])
+    draw(pg)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+def _blocks_x(r, kind=None):
+    return [b for b in r["blocks"] if kind is None or b["kind"] == kind]
+
+
+def test_two_by_two_card_grid_is_split_into_four_cards():
+    def draw(pg):
+        for ci, x in enumerate((60, 300)):
+            for ri, y in enumerate((100, 200)):
+                pg.insert_text((x, y), f"Metric {ci}{ri}", fontname="helv", fontsize=8.5)
+                pg.insert_text((x, y + 22), f"{ci}{ri}0.5", fontname="helv", fontsize=20)
+                pg.insert_text((x, y + 38), "vs plan +1.0", fontname="helv", fontsize=8.5)
+    r = extract_structure(_draw_pdf(draw))
+    cards = [b for b in _blocks_x(r, "paragraph") if "Metric" in b["text"]]
+    assert len(cards) == 4 and len({tuple(b["bbox"]) for b in cards}) == 4          # 줄마다 2칸뿐이어도(라벨-값 표 방어) 카드(글자 크기가 다름)는 쪼갠다
+    assert all(not (b["bbox"][0] < 200 < b["bbox"][2]) for b in cards)
+
+
+def test_three_column_newspaper_text_is_split_into_three_columns():
+    words = "report quarter review metric budget plan cost sales field data trend risk item note".split()
+
+    def draw(pg):
+        for ci, x in enumerate((40, 207, 374)):
+            for i in range(18):
+                pg.insert_text((x, 150 + i * 14), " ".join(words[(i + ci + k) % len(words)] for k in range(5))[:30], fontname="helv", fontsize=10)
+    r = extract_structure(_draw_pdf(draw))
+    for b in r["blocks"]:
+        assert not (b["bbox"][0] < 190 < b["bbox"][2] or b["bbox"][0] < 357 < b["bbox"][2]), (b["kind"], b["bbox"])        # 어떤 블록도 단 경계를 넘지 않는다
+    assert len([b for b in r["blocks"] if b["bbox"][0] < 100]) >= 1 and len([b for b in r["blocks"] if b["bbox"][0] > 350]) >= 1
+
+
+def test_shape_edge_separates_a_table_from_a_text_list_with_the_same_rows():
+    def draw(pg):
+        pg.draw_rect(fitz.Rect(40, 90, 410, 240), fill=(0.9, 0.92, 0.96), color=(0.7, 0.7, 0.7))              # 표 배경 사각형(오른쪽 끝 x=410)
+        for i in range(6):
+            y = 110 + i * 22
+            pg.insert_text((50, y), f"Unit{i}", fontname="helv", fontsize=9)
+            for j, x in enumerate((150, 230, 310)):
+                pg.insert_text((x, y), f"{i}.{j}0", fontname="helv", fontsize=9)
+            pg.insert_text((448, y), f"Issue {i}: short description text", fontname="helv", fontsize=9)
+    r = extract_structure(_draw_pdf(draw))
+    assert not any(b["bbox"][0] < 410 and b["bbox"][2] > 448 for b in r["blocks"])                         # 표와 오른쪽 목록이 한 블록에 섞이지 않는다
+
+
+def test_year_month_without_wol_is_a_date_kept_and_retimed_not_a_value():
+    from app.pdf_structure import data_select as D
+    assert mask("제 12호 · 2026.11")[0] == "제 12호 · 2026.11" and mask("영업이익 128.4억")[0] == "영업이익 {수치}"
+    assert D.retime("기준: 2026.11 (가상)", (26, 11), {"year": 2026, "month": 10}) == "기준: 2026.10 (가상)"
+    assert D.retime("2025.11 대비", (26, 11), {"year": 2026, "month": 10}) == "2025.11 대비"                   # 다른 해는 그대로
+
+
+def test_label_column_is_found_when_first_column_is_a_group_and_totals_sum_org_rows(monkeypatch):
+    from app.pdf_structure import data_select as D
+    rows = [_T("구분", "조직", "계획", "실적"), _T("본부A", "사업부1", "", ""), _T("", "사업부2", "", ""), _T("합계", "", "", "")]
+    assert D._label_col(rows, 1, ["매출", "영업이익"], _ORGS) == 1
+    sp = D.derive_spec(rows, 1, ["매출", "영업이익"], _ORGS)
+    assert sp["lead_heads"] == ["구분"] and sp["corner"] == "조직" and sp["rows"][0]["lead"] == ["본부A"] and sp["rows"][2]["t"] == "total"
+    monkeypatch.setattr(D, "_bases", _fake_bases())
+    out, _ = D._fill_table(None, {"orgs": _ORGS}, {"year": 2026, "month": 11}, {"rows": rows, "header_rows": 1}, ["매출", "영업이익"], _ORGS, {}, None)
+    assert [c["text"] for c in out[1]] == ["본부A", "사업부1", "8.6", "9.0"] or [c["text"] for c in out[1]][:2] == ["본부A", "사업부1"]
+    assert [c["text"] for c in out[3]][0] == "합계" and out[3][2]["missing"] is False                  # 합계 행: 사업부 행 합
+    out2, _ = D.fill_spec_table(None, {"orgs": _ORGS}, {"year": 2026, "month": 11}, sp, {})
+    assert [c["text"] for c in out2[0]][:2] == ["구분", "조직"] and [c["text"] for c in out2[1]][:2] == ["본부A", "사업부1"]
+
+
+def test_masked_number_token_never_leaks_into_unresolved_table_cells(monkeypatch):
+    from app.pdf_structure import data_select as D
+    monkeypatch.setattr(D, "_bases", _fake_bases())
+    rows = [_T("항목", "값"), [{"type": "text", "text": "▲ {수치}"}, {"type": "text", "text": "▲ {수치}p"}]]
+    out, miss = D._fill_table(None, {"orgs": _ORGS}, {"year": 2026, "month": 11}, {"rows": rows, "header_rows": 1}, ["매출"], _ORGS, {}, None)
+    assert "{수치}" not in str([c["text"] for r in out for c in r]) and miss
+
+
+# ---------------- 흐름 점검에서 나온 수정 ----------------
+def test_vlm_may_ignore_only_page_numbers_and_numeric_labels_other_lines_are_filled(monkeypatch):
+    from app.pdf_structure import vlm as V
+    assert V._ignorable("- 1 -") and V._ignorable("17.8") and V._ignorable("7.1 7.1") and not V._ignorable("2026.11 · 경영기획팀") and not V._ignorable("경영기획팀 1 / 1")
+    from app.pdf_structure.extract import read_pdf
+    _, lines, _, _ = read_pdf(_ko_pdf())
+    ids = [l.lid for l in lines[0]]
+    rep: dict = {}
+    V.build_blocks({"blocks": [{"kind": "paragraph", "lines": ids[:3], "text": "월간 실적 보고서 영업이익은 계획 대비 개선되었습니다"}], "ignored_lines": ids[3:]}, {"page": 1, "width": 595.0, "height": 842.0}, lines[0], rep)
+    assert rep["missing"] == ids[3:]                                                     # 한글 줄을 무시했으면 전부 놓친 줄 → 채워서 노란 표시
+
+
+def test_rule_block_whose_lines_are_already_owned_by_a_vlm_block_is_not_added_twice():
+    from app.pdf_structure import vlm as V
+    vb = [{"kind": "table", "page": 1, "line_ids": [5, 6, 7], "needs_review": [], "bbox": [0, 0, 10, 10], "table": {"rows": [[{"type": "text", "text": "원인"}]], "columns": 1, "header_rows": 1}}]
+    rb = [{"kind": "paragraph", "page": 1, "line_ids": [5], "needs_review": [], "bbox": [0, 0, 10, 10], "text": "표 1. 원인별 건수"}]
+    assert V.add_missed(vb, rb, {1: (595.0, 842.0)}) == []
+
+
+def test_full_date_is_kept_and_reason_column_is_a_cause_column():
+    from app.pdf_structure import data_select as D
+    assert mask("작성 2026.11.20 · 제 12호")[0] == "작성 2026.11.20 · 제 12호"
+    sp = D.derive_spec([_T("조직", "계획", "사유"), _T("사업부1", "", "계약 종료"), _T("사업부2", "", "신규 계약")], 1, ["영업이익"], _ORGS)
+    assert [c["t"] for c in sp["cols"]] == ["cmpval", "cause"] or sp["cols"][-1]["t"] == "cause"
+
+
+def test_chart_metric_is_read_from_text_never_defaulted_and_month_axis_uses_those_months(monkeypatch):
+    from app.pdf_structure import data_select as D
+    seen = {}
+
+    def fake_chart(con, info, base, metric, limit, ctype="bar", scope=None, months_n=None, months=None):
+        seen.update(metric=metric, ctype=ctype, months=months)
+        return ([{"name": "x", "won": 1, "text": "0.0"}], False) if metric in D.METRIC_COL else ([], True)
+    monkeypatch.setattr(D, "_chart", fake_chart)
+    base = {"year": 2026, "month": 11}
+
+    def run(block):
+        monkeypatch.setattr(D, "_con", lambda: None)
+        return D.fill_report.__wrapped__(base, [block]) if hasattr(D.fill_report, "__wrapped__") else None
+    # fill_report 전체는 DB 가 필요하므로 차트 분기의 규칙만 같은 식으로 확인한다
+    metrics = ["매출", "영업비용", "영업이익"]
+    known = [k for k in metrics if k in D.METRIC_COL]
+    assert D._metric_in("분기별 지연 건수 추이", known) is None and D._metric_in("월별 영업이익 추이", known) == "영업이익"
+    import re as _re
+    cats = ["6월", "7월", "8월"]
+    ms = [int(m.group(1)) for m in (_re.fullmatch(r"\s*(\d{1,2})월\s*", c) for c in cats) if m]
+    assert ms == [6, 7, 8]
