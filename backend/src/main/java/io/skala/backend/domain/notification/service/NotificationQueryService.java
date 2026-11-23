@@ -41,7 +41,7 @@ public class NotificationQueryService {
     static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     /**
-     * 기한이 지났는데 아직 제출하지 않은 (요청, 조직). 요청 진행 현황(REQ-04)의 OVERDUE와 같은 기준이다.
+     * 기한이 지났는데 아직 제출하지 않았거나 최신 제출본이 반려된 (요청, 조직). 요청 진행 현황(REQ-04)의 OVERDUE와 같은 기준이다.
      * 파라미터: 기준 시각
      */
     static final String OVERDUE_TARGETS_SQL = """
@@ -50,8 +50,9 @@ public class NotificationQueryService {
               JOIN annual_plan p ON p.id = r.annual_plan_id
               JOIN request_target t ON t.request_id = r.id AND t.selected AND NOT t.excluded
              WHERE r.status = 'OPEN' AND r.due_at < ?
-               AND NOT EXISTS (SELECT 1 FROM submission s
-                                WHERE s.request_id = r.id AND s.organization_id = t.organization_id AND s.status <> 'DRAFT')""";
+               AND COALESCE((SELECT s.status FROM submission s
+                              WHERE s.request_id = r.id AND s.organization_id = t.organization_id AND s.status <> 'DRAFT'
+                              ORDER BY s.seq DESC LIMIT 1), 'REJECTED') = 'REJECTED'""";
 
     private static final String LIST_SQL = """
             SELECT n.id, n.type, n.title, n.occurred_at, n.read_at, n.request_id, n.organization_id, n.submission_id,
