@@ -829,9 +829,10 @@ components:
           type: string
           enum:
           - PREV_MONTH_APPROVED
+          - ANNUAL_PLAN
           - REJECTED
           - NONE
-          description: 전월 승인 제출본 / 반려된 제출본(재제출) / 비교 기준 없음(연간 계획)
+          description: 전월 승인 제출본 / 확정 연간 계획(1월 월간 시트, 같은 구분끼리만 비교) / 반려된 제출본(재제출) / 비교 기준 없음(연간 계획 첫 제출, 계획 없는 조직)
         submissionId:
           oneOf:
           - $ref: '#/components/schemas/Id'

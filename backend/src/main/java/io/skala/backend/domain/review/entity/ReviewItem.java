@@ -142,4 +142,9 @@ public class ReviewItem extends BaseTimeEntity {
         this.workflowState = WorkflowState.REQUESTED;
         return currentRound;
     }
+
+    /** 제출할 때 계산한 Gap 기준 초과 여부 */
+    public void markGap(boolean exceeded) {
+        this.gapExceeded = exceeded;
+    }
 }

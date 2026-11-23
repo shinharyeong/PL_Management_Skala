@@ -3,13 +3,13 @@ package io.skala.backend.domain.review.dto;
 import io.skala.backend.domain.financial.value.Scenario;
 import java.util.List;
 
-/** GAP-08 · PROOF-03 항목 상세. summary(Gap 기준)는 경영기획팀 보기에서만 채운다. */
+/** GAP-08 · PROOF-03 항목 상세. summary(계획 대비·Gap 기준)는 경영기획팀에게만 내려준다. */
 public record ReviewItemDetailResponse(
         String id,
         String path,
         Scenario scenario,
         int month,
-        Object summary,
+        GapSummary summary,
         List<Row> rows,
         ExplanationResponse previousExplanation,
         List<ExplanationResponse> explanations,

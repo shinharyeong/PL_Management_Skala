@@ -15,6 +15,7 @@ import io.skala.backend.domain.review.repository.ReviewExplanationRepository;
 import io.skala.backend.domain.review.repository.ReviewItemRepository;
 import io.skala.backend.domain.review.service.Amounts;
 import io.skala.backend.domain.review.service.ExplanationTargetService;
+import io.skala.backend.domain.review.service.GapCalculator;
 import io.skala.backend.domain.review.value.ExplanationVerdict;
 import io.skala.backend.domain.submission.dto.BaselineResponse;
 import io.skala.backend.domain.submission.dto.SubmissionResponse;
@@ -63,6 +64,7 @@ public class SubmissionSubmitService {
     private final ReviewExplanationRepository reviewExplanationRepository;
     private final ReviewAttachmentRepository reviewAttachmentRepository;
     private final ExplanationTargetService explanationTargetService;
+    private final GapCalculator gapCalculator;
     private final BaselineResolver baselineResolver;
     private final SubmissionQueryService submissionQueryService;
     private final AppUserRepository appUserRepository;
@@ -147,6 +149,8 @@ public class SubmissionSubmitService {
                             "reviewItemIds[" + i + "]", String.valueOf(unanswered.get(i)))).toList());
         }
 
+        // 이 시점의 Gap 기준으로 Gap을 계산해 고정한다(이후 기준을 바꿔도 소급하지 않음).
+        gapCalculator.calculate(submission);
         OffsetDateTime now = OffsetDateTime.now(clock);
         int seq = submissionRepository.findMaxSeq(submission.getRequestId(), submission.getOrganizationId()) + 1;
         // 제출이 확정되는 트랜잭션 안에서 보존 위치로 복사한다. 복사에 실패하면 제출도 실패한다.
