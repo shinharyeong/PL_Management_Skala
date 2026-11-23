@@ -18,6 +18,7 @@ public abstract class PostgresIntegrationTest {
         registry.add("spring.datasource.url", () -> System.getenv("TEST_DB_URL"));
         registry.add("spring.datasource.username", () -> System.getenv().getOrDefault("TEST_DB_USERNAME", "postgres"));
         registry.add("spring.datasource.password", () -> System.getenv().getOrDefault("TEST_DB_PASSWORD", ""));
+        registry.add("app.notification.overdue-scan.cron", () -> "-");
         registry.add("app.storage.local-root", () -> System.getProperty("java.io.tmpdir") + "/skala-test-storage");
     }
 }

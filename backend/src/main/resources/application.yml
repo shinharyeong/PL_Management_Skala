@@ -42,3 +42,7 @@ app:
   submission-template:
     location: ${SUBMISSION_TEMPLATE_LOCATION:file:./templates/submission-template.xlsx}
     filename: 제출양식.xlsx
+  # 기한 경과 알림 확인 주기(KST cron). "-"이면 끈다.
+  notification:
+    overdue-scan:
+      cron: ${NOTIFICATION_OVERDUE_SCAN_CRON:0 */5 * * * *}
