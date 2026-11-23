@@ -140,6 +140,17 @@ public class ReviewItemQueryService {
         return item;
     }
 
+    /**
+     * 상태를 바꾸는 명령용: 항목이 속한 제출본 행을 먼저 잠그고 항목을 읽는다.
+     * 같은 제출본의 소명 작성·판단·승인·제출이 동시에 들어와도 차례로 처리된다.
+     */
+    ReviewItem lockForCommand(Long reviewItemId, AuthenticatedUser user) {
+        Long submissionId = reviewItemRepository.findSubmissionId(reviewItemId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+        submissionAccess.lockForRead(submissionId, user);
+        return load(reviewItemId, user);
+    }
+
     static ReviewExplanation currentExplanation(List<ReviewExplanation> explanations, ReviewItem item) {
         return explanations.stream().filter(e -> Objects.equals(e.getRound(), item.getCurrentRound()))
                 .findFirst().orElse(null);

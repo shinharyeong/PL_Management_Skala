@@ -21,6 +21,20 @@ public class SubmissionAccess {
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
     }
 
+    /** 제출본 행을 잠그고 읽은 뒤 조회 권한을 확인한다. 상태를 바꾸는 명령의 첫 조회에 쓴다. */
+    public Submission lockForRead(Long submissionId, AuthenticatedUser user) {
+        Submission submission = submissionRepository.findByIdForUpdate(submissionId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+        user.requireOrganizationAccess(submission.getOrganizationId());
+        return submission;
+    }
+
+    /** 조직 담당자 전용 명령: 역할 확인 후 제출본 행을 잠그고 읽는다. */
+    public Submission lockForOrgManager(Long submissionId, AuthenticatedUser user) {
+        user.requireRole(UserRole.ORG_MANAGER);
+        return lockForRead(submissionId, user);
+    }
+
     /** 경영기획팀은 모든 조직, 조직 담당자는 자기 조직 제출본만 조회 */
     public Submission loadForRead(Long submissionId, AuthenticatedUser user) {
         Submission submission = load(submissionId);

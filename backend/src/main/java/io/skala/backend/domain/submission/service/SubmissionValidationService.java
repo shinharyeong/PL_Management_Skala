@@ -35,7 +35,7 @@ public class SubmissionValidationService {
 
     @Transactional
     public ValidationResponse validate(Long submissionId, String expectedStateToken, AuthenticatedUser actor) {
-        Submission submission = submissionAccess.loadForOrgManager(submissionId, actor);
+        Submission submission = submissionAccess.lockForOrgManager(submissionId, actor);
         ParsingJob job = parsingJobRepository.findBySubmissionId(submissionId).orElse(null);
         StateToken.verify(expectedStateToken, SubmissionStateToken.of(submission, job));
         if (submission.getStatus() != SubmissionStatus.DRAFT) {

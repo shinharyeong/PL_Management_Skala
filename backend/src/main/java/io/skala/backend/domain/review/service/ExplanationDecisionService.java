@@ -42,7 +42,7 @@ public class ExplanationDecisionService {
     public ExplanationDecisionResponse decide(Long reviewItemId, AuthenticatedUser user,
                                              ExplanationDecisionRequest request) {
         user.requireRole(UserRole.PLANNER);
-        ReviewItem item = reviewItemQueryService.load(reviewItemId, user);
+        ReviewItem item = reviewItemQueryService.lockForCommand(reviewItemId, user);
         Submission submission = item.getSubmission();
         List<ReviewExplanation> explanations = reviewExplanationRepository.findAllByReviewItemIdOrderByRoundAsc(item.getId());
         ReviewExplanation current = ReviewItemQueryService.currentExplanation(explanations, item);

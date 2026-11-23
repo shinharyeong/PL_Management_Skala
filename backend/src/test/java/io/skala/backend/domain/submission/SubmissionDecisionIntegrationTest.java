@@ -65,6 +65,8 @@ class SubmissionDecisionIntegrationTest extends PostgresIntegrationTest {
     FileStorage fileStorage;
     @Autowired
     ParsingResultService parsingResultService;
+    @Autowired
+    javax.sql.DataSource dataSource;
 
     String orgCode;
     String orgName;
@@ -198,6 +200,44 @@ class SubmissionDecisionIntegrationTest extends PostgresIntegrationTest {
         history.get("items").forEach(i -> states.put(i.get("id").asText(), i.get("displayStatus").asText()));
         assertThat(states).containsEntry(String.valueOf(nov), "SUPERSEDED")
                 .containsEntry(String.valueOf(resubmission), "PENDING");
+    }
+
+    @Test
+    void 같은_제출본을_동시에_두_번_승인해도_한_번만_처리된다() throws Exception {
+        long nov = submittedNovember();
+        for (JsonNode item : itemsByName(nov).values()) {
+            judge(item.get("reviewItemId").asText(), Map.of("verdict", "ACCEPT")).andExpect(status().isOk());
+        }
+        String token = submissionToken(nov);
+        // 다른 연결에서 제출본 행을 잡아 두고 두 승인을 동시에 보낸 뒤 놓는다. 잠금 없이 상태를 읽는 구현이면
+        // 둘 다 PENDING을 보고 성공(200, 200)하므로 이 테스트가 실패한다.
+        List<Integer> statuses = new java.util.ArrayList<>();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try (java.sql.Connection holder = dataSource.getConnection()) {
+            holder.setAutoCommit(false);
+            try (var lock = holder.prepareStatement("select id from submission where id = ? for update")) {
+                lock.setLong(1, nov);
+                lock.executeQuery();
+            }
+            List<java.util.concurrent.Future<Integer>> results = new java.util.ArrayList<>();
+            for (int i = 0; i < 2; i++) {
+                results.add(pool.submit(() -> decide(nov, Map.of("decision", "APPROVE"), token)
+                        .andReturn().getResponse().getStatus()));
+            }
+            Thread.sleep(1500);
+            holder.commit();
+            for (java.util.concurrent.Future<Integer> result : results) {
+                statuses.add(result.get(30, java.util.concurrent.TimeUnit.SECONDS));
+            }
+        } finally {
+            pool.shutdown();
+        }
+
+        assertThat(statuses).containsExactlyInAnyOrder(200, 409);
+        assertThat(jdbc.queryForObject("select approved_seq from submission where id = ?", Integer.class, nov))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from master_version where request_id = ?", Integer.class,
+                novRequest)).isEqualTo(1);
     }
 
     /** 11월 초안 → 변경 확인 → 두 항목 소명 → 제출 */

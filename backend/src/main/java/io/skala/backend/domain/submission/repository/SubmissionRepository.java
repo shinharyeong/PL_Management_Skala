@@ -6,7 +6,9 @@ import io.skala.backend.domain.submission.value.SubmissionStatus;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Limit;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -77,4 +79,12 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
     List<Submission> findSubmitted(@Param("organizationId") Long organizationId, @Param("requestId") Long requestId,
                                    @Param("type") RequestType type, @Param("year") Integer year,
                                    @Param("month") Integer month);
+
+    /**
+     * 제출본 행을 잠그고 읽는다(SELECT … FOR UPDATE). 같은 제출본을 바꾸는 명령(변경 확인·소명·제출·판단)이
+     * 동시에 들어와도 한 번에 하나씩 처리되게 한다. 트랜잭션에서 이 제출본을 처음 읽을 때 써야 최신 상태를 본다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from Submission s where s.id = :id")
+    Optional<Submission> findByIdForUpdate(@Param("id") Long id);
 }
