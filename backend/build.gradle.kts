@@ -31,6 +31,8 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("org.springframework.boot:spring-boot-starter-mail")
 	implementation("org.flywaydb:flyway-core")
+	// master 엑셀 다운로드(ARCH-05)
+	implementation("org.apache.poi:poi-ooxml:5.3.0")
 	runtimeOnly("org.flywaydb:flyway-database-postgresql")
 	runtimeOnly("org.postgresql:postgresql")
 

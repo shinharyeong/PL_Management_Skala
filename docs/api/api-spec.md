@@ -22,7 +22,7 @@
 | 상태 변경 명령 | `Idempotency-Key` 헤더와 `expectedStateToken` 본문 필드 — 0-1, 0-2 참고 |
 | 오류 형식 | RFC 9457 Problem Details(`application/problem+json`) + `code`·`requestId`·`errors` — 0-3 참고 |
 | 파일 | 업로드는 `multipart/form-data`로 backend에 보내고, backend가 형식·크기·조직을 검사한 뒤 S3에 저장(`stored_object`에는 위치·크기·해시만). 초안 파일은 `drafts/`에 두고 제출 시 `uploads/`로 복사해 보존, `drafts/`는 수명 주기 규칙으로 7일 뒤 삭제. 다운로드는 backend가 권한 확인 후 S3에서 읽어 그대로 내려줌 |
-| 버전 표기 | 조직 제출본 `YYYY-MM-NN`(제출 회차 `seq`) · 승인 버전 `ver{월}.{NN}`(`approved_seq`) · 연간 `YYYY-PLAN-NN` · master `master_ver{N}` — 모두 서버가 계산해 `label`로 내려줌 |
+| 버전 표기 | 조직 제출본 `YYYY-MM-NN`(제출 회차 `seq`) · 승인 버전 `ver{월}.{NN}`(`approved_seq`) · 연간 `YYYY-PLAN-NN` · 월간 master `master_ver{월}.{NN}` · 연간 master `master_plan{연도}.{NN}` — 모두 서버가 계산해 `label`로 내려줌 |
 
 ### 0-1. 공통 요청 헤더
 
@@ -68,7 +68,7 @@
 | --- | --- | --- |
 | `id` | string | DB ID를 문자열로 내려줌(JS 숫자 정밀도 문제 방지) |
 | `stateToken` | string | 현재 상태 지문. 수정 명령의 `expectedStateToken`에 그대로 넣음 |
-| `label` | string | 화면 표시용 버전 이름(`2026-11-01`, `ver10.01`, `master_ver10`) |
+| `label` | string | 화면 표시용 버전 이름(`2026-11-01`, `ver10.01`, `master_ver10.01`) |
 | `*At` | string | ISO-8601 UTC 시각 |
 | 금액 | string \| null | 원 단위 십진수 문자열, 값이 없으면 `null` |
 
