@@ -157,7 +157,7 @@ API별 업무 오류 코드(`REQUEST_ALREADY_EXISTS`, `PENDING_ALREADY_EXISTS`, 
 | ID | 메서드 | 경로 | 설명 | 주요 요청 | 주요 응답 | 권한 | FR | 관련 테이블 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | HOME-01 | GET | `/home/status` | 데이터 상태와 마감 진행 막대 | `year`, `month` | `dataStatus`=CONFIRMED·PROVISIONAL·NONE, `master{id,label}`, `masters[]`(이전 master 선택용), `dueAt`, `dDay`, `steps[{key: REQUESTED·SUBMITTED·GAP_REVIEW·EXPLAINED·MASTER, done, total, date}]` | P | HOME-001, 002 | master_version, submission_request, request_target, submission, review_item |
-| HOME-02 | GET | `/home/todos` | 오늘 할 일(연간/월간 탭) | `tab`=ANNUAL·MONTHLY, `year`, `month` | `items[{key, label, count, link}]` (요청 필요·미제출·검토 필요 조직) | P | HOME-003 | submission_request, request_target, submission, review_item |
+| HOME-02 | GET | `/home/todos` | 오늘 할 일(연간/월간 탭) | `tab`=ANNUAL·MONTHLY, `year`, `month` | `items[{key, label, count, link}]` (요청 필요·미제출·검토 필요 조직·소명 검토 필요 조직) | P | HOME-003 | submission_request, request_target, submission, review_item |
 | HOME-03 | GET | `/home/pnl` | 핵심 KPI 3개 + 전사 손익 요약표(답안지 행 순서) | 공통 쿼리 | `kpis[{key: REVENUE·COST·OP, actual, vsPlanRate, vsPlanAmount}]`, `rows[{reportItemId, name, level, actual, vsPlanRate, vsPlanAmount, vsPrevEstimateRate, vsPrevEstimateAmount, gapExceeded, explanation?}]` | P | HOME-001, 004, 005, 006 | master_source → financial_line/value, report_item, gap_comparison, review_explanation |
 | HOME-04 | GET | `/home/op-drivers` | 조직별 영업이익 변동 원인 Top 5 (계획 대비) | 공통 쿼리, `limit`=5 | `items[{organization, opDiff, opDiffRate}]`, `total` | P | HOME-007 | master_source, financial_value, annual_master_source |
 | HOME-05 | GET | `/home/divisions` | 사업부별 손익 표(사업부 = 제출 조직 17개) | 공통 쿼리 | `columns[{organization}]` + `total`, `rows`: 매출·영업이익·전사 영업이익 기여도·이익률·계획 대비 | P | HOME-008 | master_source, financial_value |
@@ -198,8 +198,8 @@ API별 업무 오류 코드(`REQUEST_ALREADY_EXISTS`, `PENDING_ALREADY_EXISTS`, 
 | ID | 메서드 | 경로 | 설명 | 주요 요청 | 주요 응답 | 권한 | FR | 관련 테이블 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ARCH-01 | GET | `/organizations` | 조직 검색·선택 (REQ-01과 같음) | `q` | 조직 목록 | P | ARCH-001 | organization |
-| ARCH-02 | GET | `/organizations/{organizationId}/versions` | 월별 최종 버전, 월을 고르면 그 달 버전 이력 | `year`, `month`(선택) | `months[{month, finalLabel}]`, `history[{submissionId, label, lastModifiedAt, file{name, url}}]` | P | ARCH-002 | submission |
-| ARCH-03 | GET | `/submissions/{submissionId}/change-history` | 버전의 변경 이력(변경 일자별 항목·소명 사유, 소명/재소명) | — | `dates[{changedAt, state: EXPLAINED·RE_EXPLAINED, items[{no, code, name, explanation}]}]` | P | ARCH-003 | review_item, review_explanation |
+| ARCH-02 | GET | `/organizations/{organizationId}/versions` | 월별 최종 버전, 월을 고르면 그 달 버전 이력 | `year`, `month`(선택) | `months[{month, finalLabel}]`, `history[{submissionId, label, status, lastModifiedAt, file{name, url}}]` | P | ARCH-002 | submission |
+| ARCH-03 | GET | `/submissions/{submissionId}/change-history` | 버전의 변경 이력(변경 일자별 항목·소명 사유, 소명/재소명) | — | `dates[{changedAt, state: EXPLAINED·RE_EXPLAINED, items[{no, code, name, month, scenario, explanation}]}]` | P | ARCH-003 | review_item, review_explanation |
 | ARCH-04 | GET | `/masters` | 월별 master 목록과 상태 | `year` | `items[{id, month, label, state: WAITING·CONFIRMED, createdAt}]` | P | ARCH-004 | master_version |
 | ARCH-05 | GET | `/masters/{masterId}/file` | master 엑셀 다운로드 | — | xlsx 스트림 | P | ARCH-004 | master_source |
 
