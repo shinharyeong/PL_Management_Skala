@@ -1,8 +1,5 @@
 .gradle/
-.gradle-user-home/
 build/
-out/
 !gradle/wrapper/gradle-wrapper.jar
-*.log
-.env
-application-local.yml
+out/
+bin/
