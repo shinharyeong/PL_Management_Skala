@@ -51,4 +51,10 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
 
     /** 같은 요청·조직에서 이 회차보다 뒤에 제출된 제출본이 있는지(반려본이 대체됐는지) */
     boolean existsByRequestIdAndOrganizationIdAndSeqGreaterThan(Long requestId, Long organizationId, Integer seq);
+
+    Optional<Submission> findFirstByRequestIdAndOrganizationIdAndStatusOrderByApprovedSeqDesc(
+            Long requestId, Long organizationId, SubmissionStatus status);
+
+    @Query("select coalesce(max(s.seq), 0) from Submission s where s.requestId = :requestId and s.organizationId = :organizationId")
+    int findMaxSeq(@Param("requestId") Long requestId, @Param("organizationId") Long organizationId);
 }

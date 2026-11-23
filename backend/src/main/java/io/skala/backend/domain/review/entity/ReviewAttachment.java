@@ -56,4 +56,23 @@ public class ReviewAttachment {
 
     @Column(name = "uploaded_at", nullable = false)
     private OffsetDateTime uploadedAt;
+
+    public static ReviewAttachment create(ReviewExplanation explanation, String originalFilename, StoredObject object,
+                                          AppUser uploadedBy, OffsetDateTime uploadedAt) {
+        ReviewAttachment attachment = new ReviewAttachment();
+        attachment.explanation = explanation;
+        attachment.originalFilename = originalFilename;
+        attachment.contentType = object.getContentType();
+        attachment.byteSize = object.getSizeBytes();
+        attachment.sha256 = object.getSha256();
+        attachment.storedObject = object;
+        attachment.uploadedBy = uploadedBy;
+        attachment.uploadedAt = uploadedAt;
+        return attachment;
+    }
+
+    /** 제출 시 drafts/에서 uploads/로 옮긴 파일로 바꾼다. */
+    public void moveTo(StoredObject promoted) {
+        this.storedObject = promoted;
+    }
 }

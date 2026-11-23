@@ -70,6 +70,26 @@ public class BaselineResolver {
         return Baseline.NONE;
     }
 
+    /**
+     * 화면 표시용 승인 기준. 반려본을 건너뛰고 같은 요청의 최신 승인본 → 전월 승인본 → 없음 순으로 고른다.
+     * 재제출 화면에서 '기준값'(승인본)과 '직전 제출값'(반려본)을 함께 보여 줄 때 쓴다. 예외를 던지지 않는다.
+     */
+    public Baseline resolveApproved(Submission submission, SubmissionRequest request) {
+        Optional<Submission> sameRequest = submissionRepository
+                .findFirstByRequestIdAndOrganizationIdAndStatusOrderByApprovedSeqDesc(submission.getRequestId(),
+                        submission.getOrganizationId(), SubmissionStatus.APPROVED);
+        if (sameRequest.isPresent()) {
+            return new Baseline(BaselineKind.PREV_MONTH_APPROVED, sameRequest.get());
+        }
+        if (request.getType() == RequestType.ANNUAL_PLAN || request.getMonth() == null || request.getMonth() <= 1) {
+            return Baseline.NONE;
+        }
+        return submissionRepository.findApprovedInMonth(request.getAnnualPlan().getId(), RequestType.MONTHLY_ACTUAL,
+                        request.getMonth() - 1, submission.getOrganizationId(), Limit.of(1)).stream().findFirst()
+                .map(s -> new Baseline(BaselineKind.PREV_MONTH_APPROVED, s))
+                .orElse(Baseline.NONE);
+    }
+
     private Baseline checked(Baseline baseline) {
         if (!financialLineRepository.existsBySubmissionId(baseline.submission().getId())) {
             throw SubmissionErrorCode.COMPARISON_SOURCE_UNAVAILABLE.exception();

@@ -106,4 +106,16 @@ public class Submission {
         submission.uploadedAt = uploadedAt;
         return submission;
     }
+
+    /** 제출하기(PROOF-08): DRAFT → PENDING. 회차를 정하고 원본 파일을 보존 위치로 바꾼다. */
+    public void submit(int seq, AppUser by, OffsetDateTime at, String replyMessage, Submission previous,
+                       StoredObject preservedSource) {
+        this.status = SubmissionStatus.PENDING;
+        this.seq = seq;
+        this.submittedBy = by;
+        this.submittedAt = at;
+        this.replyMessage = replyMessage;
+        this.previousSubmission = previous;
+        this.sourceObject = preservedSource;
+    }
 }

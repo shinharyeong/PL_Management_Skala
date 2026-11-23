@@ -140,6 +140,46 @@ public class ExplanationTargetService {
         return progress(active, round1);
     }
 
+    /** 아직 답을 쓰지 않은 소명 대상 항목 ID(제출 막기용, 오름차순) */
+    @Transactional(readOnly = true)
+    public List<Long> unansweredItemIds(Long submissionId) {
+        Set<Long> active = reviewItemRepository.findAllWithReportItemBySubmissionId(submissionId).stream()
+                .filter(i -> Boolean.TRUE.equals(i.getActive())).map(ReviewItem::getId).collect(Collectors.toSet());
+        return reviewExplanationRepository.findAllBySubmissionId(submissionId).stream()
+                .filter(e -> e.getRound() == ORG_ROUND && e.getVerdict() == ExplanationVerdict.PENDING
+                        && !e.isAnswered() && active.contains(e.getReviewItem().getId()))
+                .map(e -> e.getReviewItem().getId()).sorted().toList();
+    }
+
+    /** 변경 확인(PROOF-01)을 했는지: 소명 대상 항목이 만들어졌는지 */
+    @Transactional(readOnly = true)
+    public boolean prepared(Long submissionId) {
+        return !reviewItemRepository.findAllWithReportItemBySubmissionId(submissionId).isEmpty();
+    }
+
+    /**
+     * 변경 확인 뒤 비교 기준이 바뀌지 않았는지(예: 그 사이 전월 승인본이 새로 생김).
+     * 지금 기준으로 다시 계산한 맥락 지문이 저장된 값과 모두 같으면 true.
+     */
+    @Transactional(readOnly = true)
+    public boolean contextMatches(Submission submission, Submission baseline) {
+        Map<Key, Aggregate> before = baseline == null ? Map.of() : ChangeDetector.aggregate(
+                financialValueRepository.findAllWithLineBySubmissionId(baseline.getId()));
+        for (ReviewItem item : reviewItemRepository.findAllWithReportItemBySubmissionId(submission.getId())) {
+            if (!Boolean.TRUE.equals(item.getActive())) {
+                continue;
+            }
+            Key key = new Key(item.getReportItem().getId(), item.getYear(), item.getMonth(), item.getScenario());
+            Aggregate base = before.get(key);
+            String expected = ChangeDetector.contextFingerprint(item.getReportItem().getCode(), key,
+                    baseline == null ? null : baseline.getId(), base == null ? null : base.total());
+            if (!expected.equals(item.getContextFingerprint())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static Progress progress(Set<Long> activeItemIds, Map<Long, ReviewExplanation> round1) {
         int required = 0;
         int answered = 0;

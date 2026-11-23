@@ -12,14 +12,16 @@ public final class SubmissionLabels {
 
     /** 조직 제출본 YYYY-MM-NN(월간) · YYYY-PLAN-NN(연간). DRAFT는 회차가 없어 null. */
     public static String of(Submission submission, SubmissionRequest request) {
-        if (submission.getSeq() == null) {
-            return null;
-        }
+        return submission.getSeq() == null ? null : of(submission.getSeq(), request);
+    }
+
+    /** 회차로 만든 버전 이름(제출 전 '예상 제출 버전'에도 쓴다) */
+    public static String of(int seq, SubmissionRequest request) {
         int year = request.getAnnualPlan().getYear();
         if (request.getType() == RequestType.ANNUAL_PLAN) {
-            return "%d-PLAN-%02d".formatted(year, submission.getSeq());
+            return "%d-PLAN-%02d".formatted(year, seq);
         }
-        return "%d-%02d-%02d".formatted(year, request.getMonth(), submission.getSeq());
+        return "%d-%02d-%02d".formatted(year, request.getMonth(), seq);
     }
 
     /** 승인 버전 ver{월}.{NN}. 승인 전이면 null. */
