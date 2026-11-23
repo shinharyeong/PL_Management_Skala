@@ -30,4 +30,11 @@ public class RequestTarget {
 
     @Column(name = "selected", nullable = false)
     private Boolean selected = true;
+
+    public static RequestTarget of(Long requestId, Long organizationId, boolean selected) {
+        RequestTarget target = new RequestTarget();
+        target.id = new RequestTargetId(requestId, organizationId);
+        target.selected = selected;
+        return target;
+    }
 }

@@ -61,4 +61,30 @@ public class SubmissionRequest {
 
     @Column(name = "period_key", nullable = false, length = 30)
     private String periodKey;
+
+    public static SubmissionRequest open(AnnualPlan annualPlan, RequestType type, Integer month, String message,
+                                         OffsetDateTime dueAt, AppUser requestedBy, OffsetDateTime requestedAt) {
+        SubmissionRequest request = new SubmissionRequest();
+        request.annualPlan = annualPlan;
+        request.type = type;
+        request.month = month;
+        request.status = RequestStatus.OPEN;
+        request.message = message;
+        request.dueAt = dueAt;
+        request.requestedBy = requestedBy;
+        request.requestedAt = requestedAt;
+        request.periodKey = periodKey(annualPlan.getYear(), type, month);
+        return request;
+    }
+
+    /** 기간당 요청 하나를 보장하는 키. 연간 2027-PLAN, 월간 2026-10 */
+    public static String periodKey(int year, RequestType type, Integer month) {
+        return type == RequestType.ANNUAL_PLAN ? year + "-PLAN" : "%d-%02d".formatted(year, month);
+    }
+
+    /** 화면 제목. 예: 2027년 연간 계획, 2026년 10월 월간 시트 */
+    public String title() {
+        int year = annualPlan.getYear();
+        return type == RequestType.ANNUAL_PLAN ? year + "년 연간 계획" : year + "년 " + month + "월 월간 시트";
+    }
 }

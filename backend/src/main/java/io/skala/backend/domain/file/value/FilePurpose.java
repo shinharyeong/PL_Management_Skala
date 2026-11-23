@@ -16,8 +16,6 @@ public enum FilePurpose {
     SUBMISSION_EXCEL("drafts/excel/", Set.of("xlsx"), 20L * 1024 * 1024),
     /** 소명 첨부(제출 전) */
     EXPLANATION_ATTACHMENT("drafts/attachments/", Set.of(), 16L * 1024 * 1024),
-    /** 경영기획팀이 등록한 제출 양식 */
-    REQUEST_TEMPLATE("uploads/templates/", Set.of("xlsx"), 20L * 1024 * 1024),
     /** AI 보고서 틀 분석용 PDF */
     REPORT_PDF("uploads/pdf/", Set.of("pdf"), 30L * 1024 * 1024);
 

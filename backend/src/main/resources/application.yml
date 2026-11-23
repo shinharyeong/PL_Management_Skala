@@ -36,3 +36,9 @@ management:
     web:
       exposure:
         include: health
+
+app:
+  # 제출 양식(연간·월간 공통). 엑셀은 저장소에 커밋하지 않으므로 배포 환경에 파일을 둔다.
+  submission-template:
+    location: ${SUBMISSION_TEMPLATE_LOCATION:file:./templates/submission-template.xlsx}
+    filename: 제출양식.xlsx
