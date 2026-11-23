@@ -8,6 +8,7 @@ import OrgPanel from './OrgPanel.vue'
 import ManagementPanels from './ManagementPanels.vue'
 import { challengeState, clockText } from './auth-demo.js'
 import { pageTitles } from './router.js'
+import NavIcon from './NavIcon.vue'
 
 const store = usePrototypeStore()
 const route = useRoute(), router = useRouter()
@@ -97,12 +98,13 @@ function logout() { store.actor = null; changeEmail(); email.value = ''; logoutD
   <div v-else-if="store.actor" class="app-layout">
     <a class="skip-link" href="#main-content" @click.prevent="focusMain">본문으로 건너뛰기</a>
     <aside class="sidebar">
-      <a class="brand" :href="store.actor.role === 'org' ? '#/org-requests' : '#/home'">경영팀을 부탁해</a>
+      <a class="brand" :href="store.actor.role === 'org' ? '#/org-requests' : '#/home'"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>경영팀을 부탁해</a>
       <p class="role-caption">{{ store.actor.role === 'org' ? '조직 담당자' : '경영기획팀' }}</p>
       <nav aria-label="주 메뉴">
         <template v-for="menu in menus" :key="menu.id">
           <a :href="`#/${menu.id}`" class="nav-link" :class="{ active: menuSelected(menu.id) }" :aria-current="menuSelected(menu.id) ? 'page' : undefined">
             <img v-if="menu.icon" :src="`/assets/${menu.icon}${menuSelected(menu.id) ? '-active' : ''}.svg`" alt="" />
+            <NavIcon v-else :name="menu.id" />
             <span>{{ menu.label }}</span><span v-if="menu.id === 'notifications' && store.unread" class="nav-count">{{ store.unread }}</span>
           </a>
           <div v-if="menu.id === 'monthly' && store.workspaces.length" class="workspace-nav">
@@ -110,14 +112,16 @@ function logout() { store.actor = null; changeEmail(); email.value = ''; logoutD
           </div>
         </template>
       </nav>
-      <div class="sidebar-user"><strong>{{ store.actor.name }}</strong><small>{{ store.actor.department }}</small><button class="text-button" @click="logoutDialog.showModal()">로그아웃</button></div>
+      <div class="sidebar-user"><span class="user-avatar" aria-hidden="true">{{ store.actor.name.slice(0,1) }}</span><strong>{{ store.actor.name }}</strong><small>{{ store.actor.department }}</small><button class="text-button" @click="logoutDialog.showModal()">로그아웃</button></div>
     </aside>
+    <div class="workspace-shell">
     <main id="main-content" class="main-content" tabindex="-1">
       <HomePanel v-if="page === 'home'" @navigate="navigate" />
       <MonthlyPanel v-else-if="monthlyPages.includes(page)" :page="page" @navigate="navigate" />
       <OrgPanel v-else-if="page.startsWith('org-')" :page="page" @navigate="navigate" />
       <ManagementPanels v-else :page="page" @navigate="navigate" />
     </main>
+    </div>
   </div>
   <dialog ref="logoutDialog" class="confirm-dialog" aria-labelledby="logout-title"><h2 id="logout-title">로그아웃할까요?</h2><p class="muted">다시 이용하려면 회사 이메일로 로그인해 주세요.</p><div class="actions"><button class="btn" @click="logoutDialog.close()">취소</button><button class="btn primary" @click="logout">로그아웃</button></div></dialog>
 </template>

@@ -5,6 +5,7 @@ import { createPrototypeRouter } from './router.js'
 import { usePrototypeStore } from './store.js'
 import App from './PrototypeApp.vue'
 import './prototype.css'
+import './workspace.css'
 
 const pinia = createPinia()
 const router = createPrototypeRouter(createWebHashHistory(), usePrototypeStore(pinia))
