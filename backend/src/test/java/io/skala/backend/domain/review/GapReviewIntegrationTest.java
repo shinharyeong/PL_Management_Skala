@@ -180,6 +180,107 @@ class GapReviewIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.summary").doesNotExist());
     }
 
+    @Test
+    void 선택_처리와_원천_셀_버전_비교() throws Exception {
+        JsonNode current = json(mvc.perform(get("/api/v1/gap-thresholds/current").with(planner)));
+        apply(Map.of("comparison", "ACTUAL_VS_PLAN", "percentEnabled", true, "percent", "5",
+                "amountEnabled", false, "amount", "0"), current.get("stateToken").asText()).andExpect(status().isCreated());
+        long nov = monthly(11);
+        // 같은 항목에 원천 행 두 개(11행 900, 10행 400)
+        long first = draft(nov, "nov", List.of(line(11, value(11, "ACTUAL", "900", "M11")),
+                line(10, value(11, "ACTUAL", "400", "M10"))));
+        validate(first);
+        submit(first).andExpect(status().isOk());
+        JsonNode leaf = leaf(nov);
+        String itemId = leaf.get("reviewItemId").asText();
+
+        // GAP-09 원천 셀: 셀 오름차순(10행 → 11행), 계정·거래내역·금액
+        mvc.perform(get("/api/v1/review-items/{id}/evidence", itemId).with(planner))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.items[0].sourceCell").value("M10"))
+                .andExpect(jsonPath("$.items[0].amount").value("400"))
+                .andExpect(jsonPath("$.items[0].account.code").value("ACC10"))
+                .andExpect(jsonPath("$.items[1].sourceCell").value("M11"));
+
+        // GAP-07: 소명 요청은 기한·메시지 필수 → 선정 → 다시 선정 409 → 소명 요청(IN_PROGRESS) → 제외 409
+        act("REQUEST_EXPLANATION", itemId, leaf.get("stateToken").asText(), Map.of())
+                .andExpect(status().isBadRequest());
+        JsonNode selected = json(act("SELECT", itemId, leaf.get("stateToken").asText(), Map.of())
+                .andExpect(status().isOk()));
+        assertThat(selected.at("/items/0/tab").asText()).isEqualTo("SELECTED");
+        assertThat(selected.at("/tabCounts/SELECTED").asInt()).isEqualTo(1);
+        String token = selected.at("/items/0/stateToken").asText();
+        act("SELECT", itemId, token, Map.of()).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("REVIEW_STAGE_CONFLICT"));
+        JsonNode requested = json(act("REQUEST_EXPLANATION", itemId, token,
+                Map.of("dueAt", "2099-01-01T00:00:00Z", "message", "차이 원인을 적어 주세요.")).andExpect(status().isOk()));
+        assertThat(requested.at("/items/0/tab").asText()).isEqualTo("IN_PROGRESS");
+        assertThat(jdbc.queryForObject("""
+                select request_note from review_explanation where review_item_id = ? and round = 1""", String.class,
+                Long.parseLong(itemId))).isEqualTo("차이 원인을 적어 주세요.");
+        act("EXCLUDE", itemId, requested.at("/items/0/stateToken").asText(), Map.of("note", "x"))
+                .andExpect(status().isConflict());
+
+        // 첫 제출본을 승인 버전(ver11.01)으로 두고, 값을 바꾼 새 초안을 올린다
+        jdbc.update("update submission set status = 'APPROVED', approved_seq = 1, reviewed_by = ?, reviewed_at = now() where id = ?",
+                plannerId, first);
+        long second = draft(nov, "nov2", List.of(line(11, value(11, "ACTUAL", "950", "M11")),
+                line(10, value(11, "ACTUAL", "400", "M10"))));
+        validate(second);
+        String secondItem = String.valueOf(jdbc.queryForObject(
+                "select id from review_item where submission_id = ? and month = 11", Long.class, second));
+
+        // GAP-10: 현재 승인본(ver11.01) vs 새 업로드(승인 시 ver11.02)
+        mvc.perform(get("/api/v1/review-items/{id}/versions", secondItem).with(planner))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.columns[0].label").value("ver11.01"))
+                .andExpect(jsonPath("$.columns[0].state").value("CURRENT"))
+                .andExpect(jsonPath("$.columns[1].state").value("NEW"))
+                .andExpect(jsonPath("$.columns[1].nextLabelOnApproval").value("ver11.02"))
+                .andExpect(jsonPath("$.rows[0].cell").value("매출!M10"))
+                .andExpect(jsonPath("$.rows[0].changed").value(false))
+                .andExpect(jsonPath("$.rows[1].values[0]").value("900"))
+                .andExpect(jsonPath("$.rows[1].values[1]").value("950"))
+                .andExpect(jsonPath("$.rows[1].change").value("50"))
+                .andExpect(jsonPath("$.rows[1].changed").value(true));
+        mvc.perform(get("/api/v1/review-items/{id}/versions", secondItem).with(manager)).andExpect(status().isForbidden());
+
+        // GAP-01·02: 기본 기준은 최신 승인본
+        mvc.perform(get("/api/v1/submissions/{id}/comparison", second).with(planner))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.base.id").value(String.valueOf(first)))
+                .andExpect(jsonPath("$.rows[0].name").value("매출"))
+                .andExpect(jsonPath("$.rows[0].diff").value("50"));
+        mvc.perform(get("/api/v1/submissions/{id}/comparison", second).param("baseSubmissionId", String.valueOf(second))
+                .with(planner)).andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("INVALID_COMPARISON_SELECTION"));
+        byte[] xlsx = mvc.perform(get("/api/v1/submissions/{id}/comparison/file", second).with(planner))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray();
+        try (var workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook(new java.io.ByteArrayInputStream(xlsx))) {
+            var row = workbook.getSheet("Gap").getRow(1);
+            assertThat(row.getCell(0).getStringCellValue()).isEqualTo("매출 › 제품매출");
+            assertThat(row.getCell(1).getStringCellValue()).isEqualTo("11월 실적");
+            assertThat(row.getCell(4).getNumericCellValue()).isEqualTo(50.0);
+        }
+    }
+
+    private JsonNode leaf(long requestId) throws Exception {
+        JsonNode tree = json(mvc.perform(get("/api/v1/review-items").param("view", "PLANNER")
+                .param("requestId", String.valueOf(requestId)).param("organizationId", String.valueOf(orgId))
+                .param("tab", "ALL").with(planner)).andExpect(status().isOk()));
+        return tree.get("tree").get(0).get("children").get(0).get("children").get(0);
+    }
+
+    private ResultActions act(String action, String itemId, String token, Map<String, Object> extra) throws Exception {
+        Map<String, Object> body = new HashMap<>(extra);
+        body.put("action", action);
+        body.put("items", List.of(Map.of("reviewItemId", itemId, "expectedStateToken", token)));
+        return mvc.perform(post("/api/v1/review-items/actions").with(planner).header("Idempotency-Key", key())
+                .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(body)));
+    }
+
     private long monthly(int month) {
         long id = insert("""
                 insert into submission_request(annual_plan_id, type, month, status, requested_by, requested_at, period_key)

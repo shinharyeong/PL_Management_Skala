@@ -147,4 +147,20 @@ public class ReviewItem extends BaseTimeEntity {
     public void markGap(boolean exceeded) {
         this.gapExceeded = exceeded;
     }
+
+    /** 검토 대상으로 고름(GAP-07 SELECT) */
+    public void select() {
+        this.workflowState = WorkflowState.SELECTED;
+    }
+
+    /** 검토에서 제외(GAP-07 EXCLUDE). 사유를 남긴다. */
+    public void exclude(String note) {
+        this.workflowState = WorkflowState.EXCLUDED;
+        this.workflowNote = note;
+    }
+
+    /** 소명이 없던 항목에 현재 회차로 소명을 요청(GAP-07 REQUEST_EXPLANATION) */
+    public void markRequested() {
+        this.workflowState = WorkflowState.REQUESTED;
+    }
 }

@@ -2,10 +2,15 @@ package io.skala.backend.domain.review.controller;
 
 import io.skala.backend.domain.review.dto.AnswerRequest;
 import io.skala.backend.domain.review.dto.AttachmentResponse;
+import io.skala.backend.domain.review.dto.EvidenceResponse;
 import io.skala.backend.domain.review.dto.ExplanationDecisionRequest;
+import io.skala.backend.domain.review.dto.ReviewActionRequest;
+import io.skala.backend.domain.review.dto.VersionCompareResponse;
 import io.skala.backend.domain.review.dto.ReviewItemDetailResponse;
 import io.skala.backend.domain.review.service.ExplanationAnswerService;
 import io.skala.backend.domain.review.service.ExplanationDecisionService;
+import io.skala.backend.domain.review.service.ReviewActionService;
+import io.skala.backend.domain.review.service.ReviewEvidenceService;
 import io.skala.backend.domain.review.service.ReviewTreeService;
 import io.skala.backend.domain.review.value.GapComparisonType;
 import io.skala.backend.domain.review.service.ReviewItemQueryService;
@@ -43,7 +48,7 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-/** PROOF-02~06 소명 대상 목록·상세·작성·첨부, GAP-06 Gap 계층형 표, GAP-08 상세, GAP-11 소명 판단 */
+/** PROOF-02~06 소명 대상 목록·상세·작성·첨부, GAP-06~11 Gap 계층형 표·선택 처리·상세·원천 셀·버전 비교·소명 판단 */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/v1/review-items")
@@ -53,6 +58,8 @@ public class ReviewItemController {
     private final ExplanationAnswerService explanationAnswerService;
     private final ExplanationDecisionService explanationDecisionService;
     private final ReviewTreeService reviewTreeService;
+    private final ReviewActionService reviewActionService;
+    private final ReviewEvidenceService reviewEvidenceService;
     private final FileStorage fileStorage;
     private final CurrentUser currentUser;
     private final IdempotentCommandExecutor idempotency;
@@ -94,6 +101,27 @@ public class ReviewItemController {
         return idempotency.execute(user.id(), "PUT /api/v1/review-items/" + reviewItemId + "/answer", idempotencyKey,
                 request, () -> ResponseEntity.ok(explanationAnswerService.answer(reviewItemId, user, request.answer(),
                         request.expectedStateToken())));
+    }
+
+    /** GAP-07 선택 항목 처리(제외 / 선정 / 소명 요청) */
+    @PostMapping("/actions")
+    public ResponseEntity<String> act(@RequestHeader(IdempotentCommandExecutor.HEADER) String idempotencyKey,
+                                      @Valid @RequestBody ReviewActionRequest request) {
+        AuthenticatedUser user = currentUser.get();
+        return idempotency.execute(user.id(), "POST /api/v1/review-items/actions", idempotencyKey, request,
+                () -> ResponseEntity.ok(reviewActionService.act(user, request)));
+    }
+
+    /** GAP-09 원천 셀 */
+    @GetMapping("/{reviewItemId}/evidence")
+    public EvidenceResponse evidence(@PathVariable Long reviewItemId) {
+        return reviewEvidenceService.evidence(reviewItemId, currentUser.get());
+    }
+
+    /** GAP-10 셀 단위 버전 비교 */
+    @GetMapping("/{reviewItemId}/versions")
+    public VersionCompareResponse versions(@PathVariable Long reviewItemId) {
+        return reviewEvidenceService.versions(reviewItemId, currentUser.get());
     }
 
     /** GAP-11 소명 수락 / 재요청 */

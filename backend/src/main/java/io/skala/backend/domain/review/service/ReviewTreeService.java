@@ -119,7 +119,8 @@ public class ReviewTreeService {
             Aggregate base = baseline.get(new Key(item.getReportItem().getId(), item.getYear(), item.getMonth(),
                     GapRules.baselineScenarioOf(type)));
             BigDecimal plan = gap != null ? gap.getBaselineAmount() : base == null ? null : base.total();
-            leaves.add(new Leaf(item, plan, item.getCurrentAmount(), itemTab, exceeded,
+            leaves.add(new Leaf(item.getReportItem(), leafName(item.getMonth(), item.getScenario()), plan,
+                    item.getCurrentAmount(), itemTab, stage(itemTab), exceeded, String.valueOf(item.getId()),
                     ReviewItemTokens.of(item, current, submission)));
         }
         counts.put("ALL", counts.values().stream().mapToInt(Integer::intValue).sum());
@@ -130,17 +131,49 @@ public class ReviewTreeService {
                 build(leaves, comparator));
     }
 
-    private record Leaf(ReviewItem item, BigDecimal plan, BigDecimal actual, String tab, boolean exceeded,
-                        String stateToken) {
+    /** 제출본의 상태 탭 건수(비교 종류와 무관, 보이는 항목 기준). 선택 처리(GAP-07) 응답에 쓴다. */
+    @Transactional(readOnly = true)
+    public Map<String, Integer> tabCounts(Long submissionId) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        TABS.forEach(t -> counts.put(t, 0));
+        Map<Long, List<ReviewExplanation>> explanations = reviewExplanationRepository.findAllBySubmissionId(submissionId)
+                .stream().collect(Collectors.groupingBy(e -> e.getReviewItem().getId()));
+        for (ReviewItem item : reviewItemRepository.findAllWithReportItemBySubmissionId(submissionId)) {
+            if (!Boolean.TRUE.equals(item.getActive())) {
+                continue;
+            }
+            ReviewExplanation current = ReviewItemQueryService.currentExplanation(
+                    explanations.getOrDefault(item.getId(), List.of()), item);
+            if (Boolean.TRUE.equals(item.getGapExceeded()) || current != null
+                    || item.getWorkflowState() != WorkflowState.NEEDS_REVIEW) {
+                counts.merge(ReviewTabs.of(item, current), 1, Integer::sum);
+            }
+        }
+        counts.put("ALL", counts.values().stream().mapToInt(Integer::intValue).sum());
+        return counts;
+    }
+
+    /** 계층 표의 상세 행. 검토 항목이 아닌 행(버전 비교)은 tab·stage·reviewItemId·stateToken이 null */
+    record Leaf(ReportItem reportItem, String name, BigDecimal plan, BigDecimal actual, String tab, Integer stage,
+                boolean exceeded, String reviewItemId, String stateToken) {
+    }
+
+    static String leafName(int month, Scenario scenario) {
+        String label = switch (scenario) {
+            case ACTUAL -> "실적";
+            case ESTIMATE -> "추정";
+            case PLAN -> "계획";
+        };
+        return month + "월 " + label;
     }
 
     /** 보고 항목 경로를 따라 계층을 만든다. 상위 행 값은 하위 합계(값이 하나도 없으면 null). */
-    private static List<Node> build(List<Leaf> leaves, Comparator<Node> comparator) {
+    static List<Node> build(List<Leaf> leaves, Comparator<Node> comparator) {
         Map<Long, Group> groups = new LinkedHashMap<>();
         List<Group> roots = new ArrayList<>();
         for (Leaf leaf : leaves) {
             LinkedList<ReportItem> chain = new LinkedList<>();
-            for (ReportItem r = leaf.item().getReportItem(); r != null; r = r.getParent()) {
+            for (ReportItem r = leaf.reportItem(); r != null; r = r.getParent()) {
                 chain.addFirst(r);
             }
             Group parent = null;
@@ -189,12 +222,10 @@ public class ReviewTreeService {
     }
 
     private static Node leafNode(Leaf leaf, int level) {
-        ReviewItem item = leaf.item();
-        String name = item.getMonth() + "월 " + (item.getScenario() == Scenario.ACTUAL ? "실적" : "추정");
-        return new Node(String.valueOf(item.getReportItem().getId()), name, level, Amounts.money(leaf.plan()),
+        return new Node(String.valueOf(leaf.reportItem().getId()), leaf.name(), level, Amounts.money(leaf.plan()),
                 Amounts.money(leaf.actual()), Amounts.money(Amounts.diff(leaf.actual(), leaf.plan())),
-                Amounts.rate(leaf.actual(), leaf.plan()), stage(leaf.tab()), leaf.tab(), leaf.exceeded(),
-                String.valueOf(item.getId()), leaf.stateToken(), List.of());
+                Amounts.rate(leaf.actual(), leaf.plan()), leaf.stage(), leaf.tab(), leaf.exceeded(),
+                leaf.reviewItemId(), leaf.stateToken(), List.of());
     }
 
     /** 진행 단계: 1 차이 항목 확인 → 2 검토 결과 확정 → 3 조직 소명 수집 → 4 보완 내용 재검토 → 5 승인 및 확정 */
@@ -219,7 +250,7 @@ public class ReviewTreeService {
     }
 
     /** 차액(기본) 또는 차이율의 절댓값 기준 정렬, 기본 내림차순. 값이 없으면 뒤로. */
-    private static Comparator<Node> comparator(String sort, String order) {
+    static Comparator<Node> comparator(String sort, String order) {
         Function<Node, BigDecimal> key = "RATE".equals(sort)
                 ? n -> n.rate() == null ? null : new BigDecimal(n.rate()).abs()
                 : n -> n.diff() == null ? null : new BigDecimal(n.diff()).abs();
