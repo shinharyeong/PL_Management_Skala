@@ -43,4 +43,20 @@ class LocalFileStorageTest extends PostgresIntegrationTest {
         assertThatThrownBy(() -> storage.save(FilePurpose.SUBMISSION_EXCEL, "a.xlsx", null, new ByteArrayInputStream(new byte[0])))
                 .isInstanceOf(BusinessException.class).extracting("code").isEqualTo("INVALID_REQUEST");
     }
+
+    @Test
+    void savesResultJsonUnderResultsAndKeepsItOnPromote() throws Exception {
+        byte[] json = "{\"diagnostics\":[]}".getBytes(StandardCharsets.UTF_8);
+        StoredObject parser = storage.save(FilePurpose.PARSER_RESULT, "parser-result.json", "application/json", new ByteArrayInputStream(json));
+        StoredObject validation = storage.save(FilePurpose.VALIDATION_RESULT, "validation.json", "application/json", new ByteArrayInputStream(json));
+        assertThat(parser.getObjectKey()).startsWith("results/parser/").endsWith(".json");
+        assertThat(validation.getObjectKey()).startsWith("results/validation/").endsWith(".json");
+        assertThat(parser.getContentType()).isEqualTo("application/json");
+        assertThat(storage.promote(validation)).isSameAs(validation);
+        try (InputStream in = storage.open(validation)) {
+            assertThat(in.readAllBytes()).isEqualTo(json);
+        }
+        assertThatThrownBy(() -> storage.save(FilePurpose.VALIDATION_RESULT, "result.txt", "text/plain", new ByteArrayInputStream(json)))
+                .isInstanceOf(BusinessException.class).extracting("code").isEqualTo("UNSUPPORTED_FILE_TYPE");
+    }
 }
