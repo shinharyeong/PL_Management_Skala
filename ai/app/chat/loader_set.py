@@ -78,7 +78,7 @@ def _thresholds(root: Path, warns: list) -> tuple[dict, str]:
     try:
         from ..pipeline.common import load_thresholds
         t = load_thresholds()
-        return {k: {"percent": t[k]["percent"], "amount_won": t[k]["amount_won"]} for k in ("ACTUAL", "ESTIMATE")}, "docs/domain-rules.md(예시 값)"
+        return {k: {"percent": t[k]["percent"], "amount_won": t[k]["amount_won"]} for k in ("ACTUAL", "ESTIMATE")}, "ai 기본값(예시 값)"
     except Exception:  # noqa: BLE001
         warns.append({"code": "THRESHOLD_DEFAULT", "message": "임계값 문서를 읽지 못해 기본값(실적 5%·1천만원, 추정 10%·5천만원)을 썼습니다."})
         return FALLBACK, "기본값"

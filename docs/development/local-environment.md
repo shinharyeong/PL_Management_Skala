@@ -72,7 +72,7 @@ python3 -B scripts/smoke-local.py --base-url http://localhost:5173
 
 스크립트는 개발 역할 세션과 메모리 합성 양식으로 접수·멱등 재전달/충돌·권한·실제 Python 파싱·금액 문자열·원본 동일성·손상 원본 실패를 확인한다. 정상 완료 시 개발 DB에 정상·손상 초안 두 개가 추가되며, 중간 실패나 재실행 때 기존 자료를 삭제하지 않는다. 토큰·응답 본문·원본 값은 출력하지 않고 결과 이름만 콘솔에 표시한다. `Data/`와 임시 XLSX 파일은 사용하지 않는다.
 
-화면 흐름과 함수는 [프런트 안내](frontend-guide.md), 개발 전용 `/api/dev` 2개와 파싱 후보 조회는 [demo API](demo-api.md), Java 소스·테스트 함수는 [백엔드 함수 명세](backend-function-reference.md)를 따른다. 업무 API 계약 0.11-draft의 서비스 경로 56개가 구현되어 있으며 개발 전용 2개 경로는 그 집계에 포함하지 않는다.
+업무 API 계약 0.11-draft의 서비스 경로 56개가 구현되어 있으며 개발 전용 2개 경로는 그 집계에 포함하지 않는다.
 
 컨테이너의 stdout/stderr는 Docker 로그로 조회할 수 있지만 애플리케이션 안에 파일 로그를 추가하지 않는다. 파서에는 원본 바이트를 표준 입력으로 전달하고 `python3 -B`와 `PYTHONDONTWRITEBYTECODE=1`을 사용한다. nginx 프록시는 원래 요청 경로를 유지하며 업로드를 백엔드로 스트리밍한다. [nginx proxy 모듈 문서](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
 
@@ -369,7 +369,7 @@ python3 -B scripts/verify-monthly.py --apply \
 
 ## 2026-11-17 PRD·와이어프레임 재정렬 검증
 
-새 PRD v0.8과 Figma 조직 담당자 v3·경영기획 화면을 기준으로 보고서 외 주요 화면과 업무 API를 연결했다. 자세한 요구사항별 지원·한계는 [대응표](prd-wireframe-alignment.md), 함수는 [명세 인덱스](function-reference.md)를 따른다. 이전 날짜별 기록의 API 수·테스트 수는 당시 상태이며 현재 판정과 혼합하지 않는다.
+PRD ver1과 Figma 조직 담당자 v3·경영기획 화면을 기준으로 보고서 외 주요 화면과 업무 API를 연결했다. 이전 날짜별 기록의 API 수·테스트 수는 당시 상태이며 현재 판정과 혼합하지 않는다.
 
 - 최종 Java 테스트는 전체 176건 중 174건 통과·2건 선택 검사 제외, 실패·오류 0건이다. H2 메모리·기존 승인된 backend/build 및 Gradle 캐시 경로를 사용했다. SELECT로 진행 중인 소명 요청을 해제하지 못하는 보호, 기준 미달 항목의 명시 소명 요청→승인 차단→답변·수용 후 승인, 첨부·양식·로컬 인증·선택 요청·알림 의미를 포함한다.
 - 기존 PostgreSQL의 읽기 검증에서 제출101개·연간 마스터18개·월간 마스터1개를 유지했다. 원천 상세 합계와 연간/1월 마스터 API 합계도 일치했다. 검증 때문에 기존 제출을 재검증·승인·반려하거나 원본을 다시 적재하지 않았다.
@@ -390,7 +390,7 @@ python3 -B scripts/verify-monthly.py --apply \
 - Vue 5개 주요 SFC script 문법과 최종 `git diff --check`를 통과했다. 이 점검은 파일 생성 없이 메모리·콘솔로 처리했다. 브라우저는 최신 1월 실제 금액이 표시된 기획자 홈에 두었으며 서비스는 실행 중이다.
 
 
-## 2026-11-18 PRD v8.5 개발 검증
+## 2026-11-18 PRD ver1 개발 검증
 
 사용자가 backend/build/, backend/.gradle-user-home/, frontend/dist/, frontend/node_modules/.vite/의 빌드·테스트 산출물 생성을 허용했다. 그 전 검사는 메모리에서 수행했다. 원본 Data/와 기존 업무 PostgreSQL·Docker 볼륨은 변경하지 않았다. V9~V11은 소스와 격리 H2에 반영했으며 기존 실행환경에 적용한 것으로 간주하지 않는다.
 
