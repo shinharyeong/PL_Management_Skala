@@ -50,9 +50,11 @@ public class SubmissionRequestService {
                    u.id AS user_id, u.name AS user_name,
                    (SELECT count(*) FROM request_target t
                      WHERE t.request_id = r.id AND t.selected AND NOT t.excluded) AS target_count,
-                   (SELECT count(DISTINCT s.organization_id) FROM submission s
-                      JOIN request_target t ON t.request_id = s.request_id AND t.organization_id = s.organization_id
-                     WHERE s.request_id = r.id AND s.status <> 'DRAFT' AND t.selected AND NOT t.excluded) AS submitted_count
+                   (SELECT count(*) FROM request_target t
+                     WHERE t.request_id = r.id AND t.selected AND NOT t.excluded
+                       AND (SELECT s.status FROM submission s
+                             WHERE s.request_id = t.request_id AND s.organization_id = t.organization_id AND s.status <> 'DRAFT'
+                             ORDER BY s.seq DESC LIMIT 1) IN ('PENDING', 'APPROVED')) AS submitted_count
               FROM submission_request r
               JOIN annual_plan p ON p.id = r.annual_plan_id
               JOIN app_user u ON u.id = r.requested_by
@@ -158,7 +160,9 @@ public class SubmissionRequestService {
                     : new RequestDetailResponse.LatestSubmission(String.valueOf(t.submissionId()), t.submissionStatus(),
                     "REJECTED".equals(t.submissionStatus()) ? "RESUBMIT_REQUESTED" : t.submissionStatus(),
                     label(request, t.seq()));
-            String display = latest != null ? "SUBMITTED"
+            // 최신 제출본이 반려(재제출 요청)면 아직 제출하지 않은 것으로 보고 기한 기준으로 표시한다.
+            boolean submitted = latest != null && !"REJECTED".equals(t.submissionStatus());
+            String display = submitted ? "SUBMITTED"
                     : request.dueAt() != null && request.dueAt().isBefore(now) ? "OVERDUE" : "WAITING";
             return new RequestDetailResponse.Target(
                     new OrganizationResponse(String.valueOf(t.orgId()), t.code(), t.name(), managers.getOrDefault(t.orgId(), List.of())),

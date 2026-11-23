@@ -148,6 +148,29 @@ class SubmissionRequestIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void rejectedLatestSubmissionCountsAsNotSubmitted() throws Exception {
+        String id = createRequest("ANNUAL_PLAN", null, OffsetDateTime.now(ZoneOffset.UTC).plusDays(3), List.of(orgA))
+                .andReturn().getResponse().getHeader("Location").replaceAll(".*/", "");
+        insertSubmission(Long.parseLong(id), orgA, "REJECTED", 1);
+
+        JsonNode detail = read(mvc.perform(auth(get("/api/v1/submission-requests/" + id), planner)));
+        assertThat(target(detail, orgA).get("displayStatus").asText()).isEqualTo("WAITING");
+        assertThat(target(detail, orgA).at("/latestSubmission/displayStatus").asText()).isEqualTo("RESUBMIT_REQUESTED");
+        assertThat(detail.at("/request/submittedCount").asInt()).isZero();
+        mvc.perform(auth(get("/api/v1/me/badges"), managerA)).andExpect(jsonPath("$.openRequests").value(1));
+
+        jdbc.update("UPDATE submission_request SET due_at = now() - interval '1 hour' WHERE id = ?", Long.parseLong(id));
+        detail = read(mvc.perform(auth(get("/api/v1/submission-requests/" + id), planner)));
+        assertThat(target(detail, orgA).get("displayStatus").asText()).isEqualTo("OVERDUE");
+
+        insertSubmission(Long.parseLong(id), orgA, "PENDING", 2);
+        detail = read(mvc.perform(auth(get("/api/v1/submission-requests/" + id), planner)));
+        assertThat(target(detail, orgA).get("displayStatus").asText()).isEqualTo("SUBMITTED");
+        assertThat(detail.at("/request/submittedCount").asInt()).isEqualTo(1);
+        mvc.perform(auth(get("/api/v1/me/badges"), managerA)).andExpect(jsonPath("$.openRequests").value(0));
+    }
+
+    @Test
     void sharedTemplateIsDownloadedByAnyLoggedInUser() throws Exception {
         Files.deleteIfExists(TEMPLATE);
         mvc.perform(auth(get("/api/v1/submission-template/file"), managerA))
