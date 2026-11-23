@@ -4,6 +4,7 @@ import io.skala.backend.domain.file.entity.StoredObject;
 import io.skala.backend.domain.file.service.FileStorage;
 import io.skala.backend.domain.submission.dto.DiagnosticsResponse;
 import io.skala.backend.domain.submission.dto.RetryRequest;
+import io.skala.backend.domain.submission.dto.SubmissionDetailResponse;
 import io.skala.backend.domain.submission.dto.SubmissionResponse;
 import io.skala.backend.domain.submission.service.SubmissionDiagnosticsService;
 import io.skala.backend.domain.submission.service.SubmissionFileService;
@@ -75,7 +76,7 @@ public class SubmissionUploadController {
     }
 
     @GetMapping("/submissions/{submissionId}")
-    public SubmissionResponse get(@PathVariable Long submissionId) {
+    public SubmissionDetailResponse get(@PathVariable Long submissionId) {
         return submissionQueryService.get(submissionId, currentUser.get());
     }
 
