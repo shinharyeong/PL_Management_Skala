@@ -1,11 +1,14 @@
 import { defineStore } from 'pinia'
-import { gapFixtures, seoulPeriod, snapshotKey } from './domain.js'
+import { gapFixtures, seoulPeriod, snapshotKey, replyKey, createMonthlySession } from './domain.js'
 
 const period = seoulPeriod()
 const periodText = `${period.year}년 ${period.month}월`
+const initialComparison = { ...createMonthlySession().draft, compareVersion: 'v1.03' }
 export const usePrototypeStore = defineStore('figma-prototype', {
   state: () => ({
     actor: null,
+    monthlySessions: {},
+    comparisonStates: {},
     activeOrg: 'F10',
     activeRequest: 'monthly-11',
     orgReasons: {},
@@ -15,7 +18,7 @@ export const usePrototypeStore = defineStore('figma-prototype', {
     orgRequests: [
       { id: 'monthly-11', org: 'F10', type: 'monthly', title: `${period.month}월 실적·추정 제출`, period: periodText, due: `${period.year}-11-20T18:00`, status: '회신 대기', message: '월간 시트 양식에 실적과 추정을 작성해 제출해 주세요.', fileName: null },
       { id: 'annual-2027', org: 'F10', type: 'annual', title: `${period.year + 1}년 연간 계획 제출`, period: `${period.year + 1}년`, due: `${period.year}-11-27T18:00`, status: '회신 대기', message: '연간 계획 양식에 계획 금액을 작성해 제출해 주세요.', fileName: null },
-      { id: 'explanation-11', org: 'F10', type: 'explanation', title: `${period.month}월 소명 요청`, period: periodText, due: `${period.year}-11-20T18:00`, status: '회신 대기', message: '선택 항목의 차이 원인과 영향 기간을 확인해 주세요.', fileName: null, items: gapFixtures.slice(0, 2).map(item => ({ ...item, status: '소명 진행중' })) },
+      { id: 'explanation-11', org: 'F10', type: 'explanation', title: `${period.month}월 소명 요청`, period: periodText, due: `${period.year}-11-20T18:00`, status: '회신 대기', message: '선택 항목의 차이 원인과 영향 기간을 확인해 주세요.', fileName: null, items: gapFixtures.slice(0, 2).map(item => ({ ...item, key: snapshotKey('F10', periodText, initialComparison.baseVersion, initialComparison.compareVersion, initialComparison.type, item.id), conditions: { ...initialComparison }, status: '소명 진행중' })) },
     ],
     organizations: [
       { id: 'F10', name: '사업부1', code: 'F10', author: '최인프 매니저', department: '네트워크인프라부문', submissionStatus: '제출 완료', explanationStatus: '요청 없음', fileName: '월간시트_사업부1.xlsx', message: '11월 실적 및 추정을 제출합니다. 세부 변경 내역은 파일을 확인해 주세요.' },
@@ -53,6 +56,21 @@ export const usePrototypeStore = defineStore('figma-prototype', {
     },
   },
   actions: {
+    monthlySession(org) {
+      if (!this.monthlySessions[org]) this.monthlySessions[org] = createMonthlySession()
+      // Read back through Pinia so the first caller also receives Vue's reactive proxy.
+      return this.monthlySessions[org]
+    },
+    comparisonKey(org, item, conditions) {
+      return snapshotKey(org, periodText, conditions.baseVersion, conditions.compareVersion, conditions.type, item.id)
+    },
+    comparisonItems(org, conditions) {
+      if (!conditions) return []
+      return (this.items[org] || []).map(item => {
+        const key = this.comparisonKey(org, item, conditions)
+        return { ...item, key, status: '검토 필요', reason: undefined, ...this.comparisonStates[key] }
+      })
+    },
     markAllRead() { this.notifications.forEach(n => { n.read = true }) },
     readNotification(id) { const n = this.notifications.find(n => n.id === id); if (n) { n.read = true; this.activeOrg = n.code } },
     addToCart(org, items, conditions) {
@@ -63,12 +81,23 @@ export const usePrototypeStore = defineStore('figma-prototype', {
       }
       this.carts[org] = rows
       const addedIds = items.map(i => i.id)
+      items.forEach(item => { this.comparisonStates[this.comparisonKey(org, item, conditions)] = { status: '검토 완료' } })
       this.items[org]?.filter(i => addedIds.includes(i.id)).forEach(i => { i.status = '검토 완료' })
     },
-    excludeItems(org, ids) { (this.items[org] || []).filter(i => ids.includes(i.id)).forEach(i => { i.status = '제외됨' }) },
+    excludeItems(org, ids, conditions) {
+      (this.items[org] || []).filter(i => ids.includes(i.id)).forEach(i => {
+        i.status = '제외됨'
+        if (conditions) {
+          const key = this.comparisonKey(org, i, conditions)
+          this.comparisonStates[key] = { status: '제외됨' }
+          this.carts[org] = (this.carts[org] || []).filter(item => item.key !== key)
+        }
+      })
+    },
     removeCartItem(org, key) {
       const item = (this.carts[org] || []).find(i => i.key === key)
       this.carts[org] = (this.carts[org] || []).filter(i => i.key !== key)
+      if (item) this.comparisonStates[key] = { status: '제외됨' }
       if (item && !this.carts[org].some(i => i.id === item.id)) this.items[org]?.filter(i => i.id === item.id).forEach(i => { i.status = '제외됨' })
     },
     sendExplanation(org, message, due) {
@@ -83,6 +112,7 @@ export const usePrototypeStore = defineStore('figma-prototype', {
       this.explanationRequests.push(request)
       this.orgRequests.unshift({ ...request })
       this.orgDrafts[id] = {}
+      items.forEach(item => { this.comparisonStates[replyKey(item)] = { status: '소명 진행중' } })
       const ids = items.map(i => i.id)
       this.items[org]?.filter(i => ids.includes(i.id)).forEach(i => { i.status = '소명 진행중' })
       const organization = this.organizations.find(o => o.id === org)
@@ -104,15 +134,23 @@ export const usePrototypeStore = defineStore('figma-prototype', {
     submitOrgExplanations(reasons) {
       const request = this.activeOrgRequest
       const items = this.explanationItems
-      if (!request || request.type !== 'explanation' || !items.length || items.some(i => typeof reasons[i.id] !== 'string' || !reasons[i.id].trim())) return false
-      const submittedReasons = Object.fromEntries(items.map(i => [i.id, reasons[i.id].trim()]))
+      if (!request || request.type !== 'explanation' || !items.length || items.some(i => typeof reasons[replyKey(i)] !== 'string' || !reasons[replyKey(i)].trim())) return false
+      const submittedReasons = Object.fromEntries(items.map(i => [replyKey(i), reasons[replyKey(i)].trim()]))
       this.orgReasons = { ...submittedReasons }
       this.orgDrafts[request.id] = { ...submittedReasons }
       request.status = '제출 완료'
       const linked = this.explanationRequests.find(item => item.id === request.id)
       if (linked) linked.status = '제출 완료'
       const org = request.org
-      this.items[org]?.filter(i => items.some(e => e.id === i.id)).forEach(i => { i.status = '재검토 필요'; i.reason = submittedReasons[i.id] })
+      items.forEach(item => {
+        this.comparisonStates[replyKey(item)] = { status: '재검토 필요', reason: submittedReasons[replyKey(item)] }
+      })
+      this.items[org]?.filter(i => items.some(e => e.id === i.id)).forEach(i => {
+        i.status = '재검토 필요'
+        const matches = items.filter(item => item.id === i.id)
+        // A global cell cannot represent multiple comparison-specific replies.
+        i.reason = matches.length === 1 ? submittedReasons[replyKey(matches[0])] : undefined
+      })
       const organization = this.organizations.find(o => o.id === org)
       if (organization) organization.explanationStatus = '소명 회신'
       this.orgHistory.unshift({
@@ -120,7 +158,7 @@ export const usePrototypeStore = defineStore('figma-prototype', {
         title: `${period.month}월 소명 회신`, fileName: null, fileDisposition: '기존 월간 제출본 유지',
         submittedAt: new Date().toISOString(), status: '검토 대기', type: 'explanation',
         reasons: { ...submittedReasons },
-        items: items.map(item => ({ id: item.id, name: item.name, cell: item.cell, plan: item.plan, actual: item.actual, reason: submittedReasons[item.id] })),
+        items: items.map(item => ({ ...item, conditions: item.conditions ? { ...item.conditions } : undefined, reason: submittedReasons[replyKey(item)] })),
       })
       this.notifications.unshift({ id: `noti-${request.id}`, type: '소명 회신', title: `${period.month}월 선택 항목 소명 회신 도착`, org: organization?.name || '사업부1', code: org, author: this.actor?.name || '조직 담당자 회신', time: '방금', read: false, target: 'monthly' })
       return true
