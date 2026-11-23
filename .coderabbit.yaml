@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit AI 리뷰 설정. 스타 10개 미만 공개 저장소는 PR 코멘트에 `@coderabbitai review`를 적어야 리뷰가 시작된다.
+language: "ko-KR"
+tone_instructions: "한국어로 간결하게 쓴다. 버그·명세 불일치·데이터 손실·보안 문제를 먼저 지적하고, 취향 차이는 nit로 짧게 남긴다."
+early_access: false
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "develop"
+      - "main"
+  path_filters:
+    - "!**/*.svg"
+    - "!**/*.png"
+    - "!**/*.xlsx"
+    - "!**/package-lock.json"
+    - "!**/__pycache__/**"
+    - "!backend/gradle/wrapper/**"
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        팀 공통 규칙(CONTRIBUTING.md):
+        - PR은 한 가지 목적만 담는다. 관련 없는 파일 수정이 섞여 있으면 지적한다.
+        - 비밀 정보(키·토큰·비밀번호), 실제 입력 데이터, 실행 결과 파일, 디버그 코드가 없는지 확인한다.
+        - 요구사항 기준은 docs/경영팀을부탁해_PRD_ver1.xlsx, API는 docs/api/openapi.yaml, 스키마는 docs/erd/physical-erd.dbml이다.
+    - path: "backend/**/*.java"
+      instructions: |
+        Spring Boot 3 / Java 21 / JPA 백엔드. 다음을 확인한다.
+        - 요청·응답·오류 코드가 docs/api/openapi.yaml과 맞는지. 응답은 봉투 없이 리소스 JSON, 목록은 PageResponse({items, nextCursor}).
+        - 오류는 BusinessException과 명세의 오류 코드를 쓴다. 응답에 내부 예외 메시지·스택을 넣지 않는다.
+        - 상태 변경 명령(POST·PUT·PATCH·DELETE)은 Idempotency-Key(IdempotentCommandExecutor)와 expectedStateToken(StateToken.verify)을 처리한다.
+        - 금액은 BigDecimal·원 단위로 다루고 응답에서는 문자열로 내린다. double/float 사용, 빈 값을 0으로 바꾸는 코드를 지적한다.
+        - 조직 담당자(ORG_MANAGER)는 자기 조직 데이터만 조회·수정한다. 권한 확인 누락을 지적한다.
+        - Gap 기준(gap_threshold)은 조직 담당자 응답에 내려주지 않는다.
+        - ID는 응답에서 문자열로 내린다. 시각은 UTC OffsetDateTime.
+        - 트랜잭션 경계, N+1 조회, 지연 로딩 엔티티를 트랜잭션 밖에서 쓰는 코드를 확인한다.
+        - 도메인 담당 구역: A는 domain/submission·financial·review, B는 그 밖의 도메인과 global. 다른 담당 구역 수정이 섞여 있으면 알린다.
+    - path: "backend/src/main/resources/db/migration/**"
+      instructions: |
+        - V1__init_schema.sql은 수정하면 안 된다. 바뀌었으면 반드시 지적한다.
+        - 새 마이그레이션 파일명은 V{yyyyMMdd_HHmm}__설명.sql 형식이어야 한다.
+        - docs/erd/physical-erd.dbml과 컬럼·제약이 맞는지, 기존 데이터에 안전한지(NOT NULL 추가 시 기본값 등) 확인한다.
+    - path: "backend/src/test/**"
+      instructions: |
+        - 실제 DB가 필요한 테스트는 PostgresIntegrationTest를 상속하고 @EnabledIfEnvironmentVariable(named = "TEST_DB_URL")로 DB가 없으면 건너뛰어야 한다.
+        - 정상 경로뿐 아니라 실패 경로(권한·상태 충돌·검증 오류)를 확인하는지 본다.
+    - path: "frontend/**"
+      instructions: |
+        Vue 3 + Vite 프론트엔드.
+        - API 호출이 docs/api/openapi.yaml과 맞는지, 오류 분기를 detail이 아니라 code로 하는지 확인한다.
+        - 금액 문자열을 Number로 바꿔 계산하지 않는다(정밀도 손실). null 금액은 빈 값으로 표시하고 0으로 바꾸지 않는다.
+        - 토큰·개인정보를 콘솔에 찍거나 localStorage에 불필요하게 남기지 않는다.
+    - path: "parser/**/*.py"
+      instructions: |
+        - 금액은 decimal.Decimal과 십진 문자열로 다룬다. float 변환을 지적한다.
+        - 출력 형식이 parser/docs/development/output-contract.md와 맞는지, 바뀌면 문서와 계약 버전도 함께 바뀌었는지 확인한다.
+        - 원본 값·수식을 바꾸거나 빈 값을 0으로 채우지 않는다.
+    - path: "ai/**/*.py"
+      instructions: |
+        - API 키·모델 설정을 코드에 하드코딩하지 않는다.
+        - 보고서 숫자는 DB 조회 결과만 쓰고 LLM이 숫자를 만들거나 바꾸지 않게 한다.
+        - text2SQL은 읽기 전용이어야 한다. 쓰기 SQL이 실행될 수 있는 경로를 지적한다.
+
+chat:
+  auto_reply: true
