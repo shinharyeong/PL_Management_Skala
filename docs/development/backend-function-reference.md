@@ -1238,7 +1238,7 @@ V5는 `review_item`, `gap_comparison`, `review_explanation`, `gap_threshold`와 
 
 ## PRD 화면·검토 정책·인증 체험 연결 — V6~V8
 
-현재 서비스는 개발 전용 /api/dev를 제외한 56개 메서드·경로다. 신규 검증은 금융 무결성 policyVersion 1.0과 업무 reviewPolicyVersion 2.0을 구분한다. 기존 확정 객체·과거 마스터는 재작성하지 않는다. 2.0의 기준 이하 변경은 근거만 보존하며 Gap 초과 또는 담당자가 명시적으로 소명을 요청한 항목만 필수다. 제외는 우선 적용하고 단순 선정은 참고 항목을 필수로 바꾸지 않는다. 비율/금액 토글은 켠 조건만 평가하고 동시에 켜면 AND다. 같은 요청·조직의 PENDING 중복만 막고 다른 기간의 대기·반려로 현재 작업을 막지 않는다.
+V8까지의 서비스는 개발 전용 /api/dev를 제외한 56개 메서드·경로였다. V11까지의 현재 계약은 92개이며 아래 확장 문서를 함께 따른다. 신규 검증은 금융 무결성 policyVersion 1.0과 업무 reviewPolicyVersion 2.0을 구분한다. 기존 확정 객체·과거 마스터는 재작성하지 않는다. 2.0의 기준 이하 변경은 근거만 보존하며 Gap 초과 또는 담당자가 명시적으로 소명을 요청한 항목만 필수다. 제외는 우선 적용하고 단순 선정은 참고 항목을 필수로 바꾸지 않는다. 비율/금액 토글은 켠 조건만 평가하고 동시에 켜면 AND다. 같은 요청·조직의 PENDING 중복만 막고 다른 기간의 대기·반려로 현재 작업을 막지 않는다.
 
 호출 관계는 `SubmissionComparisonController → ReviewService.compareSubmissions → ReviewComparisonService.complete/cells`, `ReviewController.actions → CommandExecutor → review_item/review_explanation/review_workflow_event`, `ReviewAttachmentController → ReviewAttachmentService → ReviewService 토큰/조직 잠금 → stored_object/review_attachment`, `TemplateController → SubmissionService 요청 권한 → CommandExecutor → request_template`, `NotificationController → NotificationService → 업무 사실 및 notification_read`, `EmailCodeController → EmailCodeSessions → ActorResolver`다. 다운로드는 `WorkspaceExportController → ReportService 또는 ReviewService → ReportWorkbook.tables`이고 서버 파일 없이 메모리 ZIP을 만든다.
 
@@ -1502,3 +1502,10 @@ V5는 `review_item`, `gap_comparison`, `review_explanation`, `gap_threshold`와 
 | 함수 | 목적·Args·Returns·Raises·Side Effects | 주요 호출 |
 | --- | --- | --- |
 | `private JsonNode baseReportRows(JsonNode rows)` | 대시보드의 추가 계획 비교 필드를 제외하고 기존 보고 출력 계약을 대조한다. Args: rows 계획 비교가 추가된 행. Returns: 기존 계약 필드의 복사본. Raises: JSON 형식 오류. Side Effects: 메모리 JSON만 복사한다. | 직접 프로젝트 함수 호출 없음; 코드의 DB/JDK 경계 사용 |
+
+
+## PRD v8.5 확장 — V9~V11
+
+SettingsController/SettingsService, SubmissionRejectionService, ComparisonExplanationService, ReviewPolicyController/ReviewPolicyService 및 해당 테스트의 함수별 입력·예외·부작용·호출 관계는 [PRD 업무 API](prd-workflow-api.md)에 있다. 기존 SubmissionWorkflowService는 검증 문맥에 소명 모드를 고정하며 REJECT에서 반려 항목 저장을 같은 명령 트랜잭션으로 호출한다. ReviewService는 고정 모드·명시 요청·제외를 함께 적용한다.
+
+ReportAuthoringController → CommandExecutor → ReportAuthoringService → ReportFactService/ReportQueryEngine의 함수, ReportAiClient 및 Python AI 초안 경계, ReportMaterialExport의 함수·테스트는 [보고 작성 명세](report-authoring.md)에 있다. 기존 ReportService의 고정 월 마스터 XLSX 조회와 새 자료 작성 API는 구분한다.

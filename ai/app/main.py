@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import chat, health, pdf_structure, pipeline, report, templates, ui
+from .api import chat, health, pdf_structure, pipeline, report, report_authoring, templates, ui
 from .config import get_settings, log_key_source
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(ui.router)
     app.include_router(templates.router)
     app.include_router(pdf_structure.router)
+    app.include_router(report_authoring.router)
     return app
 
 

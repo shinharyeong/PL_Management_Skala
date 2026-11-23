@@ -29,6 +29,8 @@ const includeDrafts = ref(false)
 const historySubmissionId = ref('')
 const lifetime = new AbortController()
 let controller = new AbortController()
+let reviewController = new AbortController()
+const reviewCache = new Map()
 let generation = 0
 let reviewGeneration = 0
 let initialPeriodSelected = Number.isInteger(requestedMonth) && requestedMonth >= 0 && requestedMonth <= 12
@@ -64,30 +66,68 @@ const changeGroups = computed(function groupedChanges() {
   const versions = new Map(); for (const item of submissions.value) if (item.status !== 'DRAFT') versions.set(String(item.id), item)
   const grouped = new Map()
   for (const item of reviewItems.value) {
-    const submission = versions.get(String(item.submissionId)); if (!submission || !item.changeDetected || (historySubmissionId.value && String(item.submissionId) !== historySubmissionId.value)) continue
+    const submission = versions.get(String(item.submissionId)); if (!submission || (historySubmissionId.value && String(item.submissionId) !== historySubmissionId.value)) continue
     for (const explanation of item.explanations || []) {
       if (!explanation.answer) continue
       const time = explanation.answeredAt || submission.submittedAt || submission.uploadedAt
+      if (!time || Number.isNaN(new Date(time).getTime())) continue
       const day = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(time))
       if (!grouped.has(day)) grouped.set(day, { day, time, rows: [] })
       grouped.get(day).rows.push({ ...item, explanation, submission })
     }
   }
+  for (const group of grouped.values()) group.rows.sort(newestExplanation)
   return [...grouped.values()].sort(newestChange)
 })
 /** 변경 날짜를 최신순으로 정렬한다. Args: left/right 날짜묶음. Returns: 정렬순서. Raises: 없음. Side Effects: 없음. */
 function newestChange(left, right) { return new Date(right.time).getTime() - new Date(left.time).getTime() }
+/** 같은 날짜의 소명을 답변 시각·회차의 최신순으로 정렬한다. Args: left/right 소명행. Returns: 정렬순서. Raises: 없음. Side Effects: 없음. */
+function newestExplanation(left, right) { return new Date(right.explanation.answeredAt || right.submission.submittedAt || right.submission.uploadedAt).getTime() - new Date(left.explanation.answeredAt || left.submission.submittedAt || left.submission.uploadedAt).getTime() || right.explanation.round - left.explanation.round }
 
-/** 선택조직·기간의 소명 목록을 읽고 과거 회차는 상세 조회에서 유지한다. Args: 없음. Returns: Promise<void>. Raises: 없음(화면 표시). Side Effects: GET·소명목록교체. */
+/** 선택 제출본들의 검토를 페이지 조회하고 각 항목의 전체 소명 회차를 읽는다.
+ * Args: 없음. Returns: Promise<void>. Raises: 없음(화면 표시).
+ * Side Effects: 이전 조회 취소·GET·소명목록 교체. 제출 요청월에 포함된 미래 추정월을 누락하지 않으며 상세 동시 조회는 4개로 제한한다.
+ */
 async function loadReviews() {
+  reviewController.abort(); reviewController = new AbortController()
   const current = ++reviewGeneration
   reviewItems.value = []; reviewError.value = ''; reviewsLoading.value = true
   try {
-    const all = []; let cursor = null
-    do { const page = await session.request(`/api/v1/review-items${query({ organizationId: selectedId.value, year: year.value, month: month.value || null, limit: 100, cursor })}`, { signal: controller.signal }); if (current !== reviewGeneration) return; all.push(...page.items); cursor = page.nextCursor } while (cursor)
-    reviewItems.value = all
+    const all = []
+    for (const submission of submissions.value) {
+      if (submission.status === 'DRAFT' || (historySubmissionId.value && String(submission.id) !== historySubmissionId.value)) continue
+      let cursor = null
+      do {
+        const page = await session.request(`/api/v1/review-items${query({ submissionId: submission.id, limit: 100, cursor })}`, { signal: reviewController.signal })
+        if (current !== reviewGeneration) return
+        all.push(...page.items); cursor = page.nextCursor
+      } while (cursor)
+    }
+    const details = []
+    for (let offset = 0; offset < all.length; offset += 4) {
+      const calls = []
+      for (const item of all.slice(offset, offset + 4)) calls.push(reviewDetail(item, reviewController.signal))
+      const results = await Promise.allSettled(calls)
+      if (current !== reviewGeneration) return
+      for (const result of results) {
+        if (result.status === 'fulfilled') details.push(result.value)
+        else if (result.reason.name !== 'AbortError') reviewError.value = `일부 소명 회차를 불러오지 못했습니다. ${errorText(result.reason)}`
+      }
+      reviewItems.value = [...details]
+    }
   } catch (cause) { if (current === reviewGeneration && cause.name !== 'AbortError') reviewError.value = errorText(cause) }
   finally { if (current === reviewGeneration) reviewsLoading.value = false }
+}
+/** 상태가 같은 상세는 메모리에서 재사용하고 바뀐 검토의 전체 소명회차만 읽는다.
+ * Args: item 검토 요약, signal 취소신호. Returns: 검토 상세. Raises: HTTP 오류.
+ * Side Effects: GET·화면 수명 내 캐시 갱신. 파일이나 브라우저 저장소를 생성하지 않는다.
+ */
+async function reviewDetail(item, signal) {
+  const key = `${item.id}:${item.stateToken}`
+  if (reviewCache.has(key)) return reviewCache.get(key)
+  const result = await session.request(`/api/v1/review-items/${item.id}`, { signal })
+  if (!signal.aborted) reviewCache.set(key, result)
+  return result
 }
 
 /** 기간별 가장 높은 최종 제출 회차를 찾고 초안은 제외한다.
@@ -130,7 +170,7 @@ async function initialize() {
  * Side Effects: 이전 조회 취소·GET·현재 선택 상태 변경. 과거 선택의 응답은 폐기한다.
  */
 async function loadYear() {
-  controller.abort(); controller = new AbortController()
+  controller.abort(); controller = new AbortController(); reviewController.abort(); reviewCache.clear()
   const current = ++generation
   allSubmissions.value = []; selectedSubmissionId.value = ''; periods.value = []; annualMaster.value = null; reviewItems.value = []; reviewGeneration++
   loading.value = false; error.value = ''; masterError.value = ''
@@ -192,9 +232,9 @@ function choosePeriod(value) {
 async function selectOrganization(id) { selectedId.value = String(id); await loadYear() }
 
 /** 업로드 이력에서 전체 소명 회차와 원본 근거를 볼 대상을 선택한다.
- * Args: id 현재 기간의 제출 ID. Returns: 없음. Raises: 없음. Side Effects: 선택 상태만 변경한다.
+ * Args: id 현재 기간의 제출 ID 또는 전체 조회용 빈 문자열. Returns: 없음. Raises: 없음. Side Effects: 선택 상태·GET.
  */
-function selectSubmission(id) { selectedSubmissionId.value = String(id); historySubmissionId.value = String(id) }
+function selectSubmission(id) { if (id) selectedSubmissionId.value = String(id); historySubmissionId.value = String(id); loadReviews() }
 
 /** 연도탭을 선택하고 그 연도의 이력으로 전환한다. Args: value 연도. Returns: Promise<void>. Raises: 없음(화면 표시). Side Effects: 선택과 GET. */
 async function selectYear(value) { year.value = value; await loadYear() }
@@ -230,7 +270,7 @@ async function download(item) {
 /** 화면 이탈 이후 자료와 다운로드 응답을 폐기한다.
  * Args: 없음. Returns: 없음. Raises: 없음. Side Effects: HTTP 취소·세대 무효화.
  */
-function dispose() { generation++; reviewGeneration++; controller.abort(); lifetime.abort() }
+function dispose() { generation++; reviewGeneration++; controller.abort(); reviewController.abort(); reviewCache.clear(); lifetime.abort() }
 onMounted(initialize)
 onBeforeUnmount(dispose)
 </script>
@@ -250,7 +290,7 @@ onBeforeUnmount(dispose)
           <div class="versions-heading"><h3>{{ month ? `${month}월` : '연간 계획' }} 버전 이력</h3><label class="draft-toggle"><input v-model="includeDrafts" type="checkbox" />작성 중 포함</label></div>
           <p v-if="loading" class="notice" role="status">선택 연도의 업로드 이력을 불러오는 중…</p>
           <div class="table-scroll"><table><caption class="visually-hidden">조직의 선택 기간 저장본과 소명 확인</caption><thead><tr><th>버전</th><th>업로드 일시</th><th>상태</th><th>변경·소명</th><th class="file-column">원본</th></tr></thead><tbody><tr v-for="item in submissions" :key="item.id" :class="{ latest: String(item.id) === selectedSubmissionId }"><td><RouterLink :to="detailLink(item)" class="file-link">{{ item.versionLabel || '초안' }}<small>{{ item.originalFilename }}</small></RouterLink></td><td>{{ dateTime(item.uploadedAt) }}</td><td>{{ submissionStatus(item) }}</td><td><button class="text-button" :aria-pressed="String(item.id) === selectedSubmissionId" @click="selectSubmission(item.id)">이력 보기</button></td><td class="file-column"><button :disabled="!!downloadBusy" :aria-label="`${item.originalFilename} 원본 다운로드`" @click="download(item)">⤓</button></td></tr><tr v-if="!submissions.length"><td colspan="5" class="empty-cell">{{ loading ? '불러오는 중…' : '이 기간에 업로드한 파일이 없습니다.' }}</td></tr></tbody></table></div>
-          <div class="versions-heading"><h3>변경 이력 {{ historySubmissionId ? '· 선택 버전' : '' }}</h3><button v-if="historySubmissionId" class="text-button" @click="historySubmissionId = ''">전체 버전 보기</button></div><p v-if="reviewError" class="alert error" role="alert">{{ reviewError }}</p><div class="table-scroll"><table class="changes"><thead><tr><th>변경 일자</th><th>번호</th><th>코드</th><th>항목명</th><th>소명 사유</th></tr></thead><tbody><template v-for="group in changeGroups" :key="group.day"><tr v-for="(item, index) in group.rows" :key="`${item.id}:${item.explanation.id}`"><td v-if="index === 0" :rowspan="group.rows.length">{{ group.day }}</td><td>{{ index + 1 }}</td><td><b>{{ item.reportItem.code }}</b></td><td>{{ item.reportItem.name }}<small>{{ item.month }}월 {{ item.scenario === 'PLAN' ? '계획' : item.scenario === 'ACTUAL' ? '실적' : '추정' }} · {{ item.submission.versionLabel }}</small></td><td>{{ item.explanation.answer }}<small>{{ item.explanation.round > 1 ? '재소명' : '소명' }} {{ item.explanation.round }}차 · {{ item.explanation.verdict === 'ACCEPTED' ? '수락' : item.explanation.verdict === 'REJECTED' ? '보완 요청' : '검토 대기' }} <RouterLink :to="detailLink(item.submission)" class="text-button">전체 소명 이력 →</RouterLink></small></td></tr></template><tr v-if="!changeGroups.length"><td colspan="5" class="empty-cell">{{ reviewsLoading ? '변경 소명을 불러오는 중…' : '이 기간의 제출본에 작성된 변경 소명이 없습니다.' }}</td></tr></tbody></table></div>
+          <div class="versions-heading"><h3>변경·소명 전체 회차 {{ historySubmissionId ? '· 선택 버전' : '' }}</h3><button v-if="historySubmissionId" class="text-button" @click="selectSubmission('')">전체 버전 보기</button></div><p v-if="reviewError" class="alert error" role="alert">{{ reviewError }}</p><div class="table-scroll"><table class="changes"><thead><tr><th>변경 일자</th><th>번호</th><th>코드</th><th>항목명</th><th>소명 사유</th></tr></thead><tbody><template v-for="group in changeGroups" :key="group.day"><tr v-for="(item, index) in group.rows" :key="`${item.id}:${item.explanation.id}`"><td v-if="index === 0" :rowspan="group.rows.length">{{ group.day }}</td><td>{{ index + 1 }}</td><td><b>{{ item.reportItem.code }}</b></td><td>{{ item.reportItem.name }}<small>{{ item.month }}월 {{ item.scenario === 'PLAN' ? '계획' : item.scenario === 'ACTUAL' ? '실적' : '추정' }} · {{ item.submission.versionLabel }}</small></td><td>{{ item.explanation.answer }}<small>{{ item.explanation.round > 1 ? '재소명' : '소명' }} {{ item.explanation.round }}차 · {{ item.explanation.verdict === 'ACCEPTED' ? '수락' : item.explanation.verdict === 'REJECTED' ? '보완 요청' : '검토 대기' }} <RouterLink :to="detailLink(item.submission)" class="text-button">전체 소명 이력 →</RouterLink></small></td></tr></template><tr v-if="!changeGroups.length"><td colspan="5" class="empty-cell">{{ reviewsLoading ? '변경 소명을 불러오는 중…' : '이 기간의 제출본에 작성된 변경 소명이 없습니다.' }}</td></tr></tbody></table></div>
         </section>
       </div>
     </div>

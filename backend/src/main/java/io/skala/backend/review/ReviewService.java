@@ -32,14 +32,14 @@ public class ReviewService {
 
     /** 필수 항목의 현재 답변·수용 상태를 센다. Args: submissionId 제출. Returns: 준비 수치. Raises: DB 오류. Side Effects: 읽기. */
     public Map<String,Object> counts(long submissionId) {
-        var rows=rows("SELECT i.change_detected,i.gap_exceeded,i.review_policy_version,i.workflow_state,e.answer,e.verdict FROM review_item i JOIN review_explanation e ON e.review_item_id=i.id AND e.round=i.current_round WHERE i.submission_id=? AND i.active=TRUE",submissionId);
+        var rows=rows("SELECT i.change_detected,i.gap_exceeded,i.review_policy_version,i.requirement_mode,i.workflow_state,e.answer,e.verdict FROM review_item i JOIN review_explanation e ON e.review_item_id=i.id AND e.round=i.current_round WHERE i.submission_id=? AND i.active=TRUE",submissionId);
         int required=0,unanswered=0,pending=0;
         for(var row:rows) if(required(row)) { required++; if(row.get("answer")==null) unanswered++; if(!"ACCEPTED".equals(row.get("verdict"))) pending++; }
         return object("requiredCount",required,"unansweredCount",unanswered,"pendingReviewCount",pending);
     }
 
     /** 검토 상태를 제출 토큰에 연결할 안정적인 문자열로 만든다. Args: submissionId 제출. Returns: 현재 회차 상태. Raises: DB 오류. Side Effects: 읽기. */
-    public String revision(long submissionId) { return comparisons.json(rows("SELECT i.id AS review_item_id,i.context_fingerprint,i.current_round,i.review_policy_version,i.workflow_state,i.workflow_note,e.* FROM review_item i JOIN review_explanation e ON e.review_item_id=i.id AND e.round=i.current_round WHERE i.submission_id=? AND i.active=TRUE ORDER BY i.id",submissionId)); }
+    public String revision(long submissionId) { return comparisons.json(rows("SELECT i.id AS review_item_id,i.context_fingerprint,i.current_round,i.review_policy_version,i.requirement_mode,i.workflow_state,i.workflow_note,e.* FROM review_item i JOIN review_explanation e ON e.review_item_id=i.id AND e.round=i.current_round WHERE i.submission_id=? AND i.active=TRUE ORDER BY i.id",submissionId)); }
 
     /** 검증 응답의 검토 ID를 읽는다. Args: submissionId 제출, unanswered 미답변만. Returns: ID 목록. Raises: DB 오류. Side Effects: 읽기. */
     public List<String> ids(long submissionId,boolean unanswered) { return rows("SELECT i.id FROM review_item i JOIN review_explanation e ON e.review_item_id=i.id AND e.round=i.current_round WHERE i.submission_id=? AND i.active=TRUE"+(unanswered?" AND "+requiredSql()+" AND e.answer IS NULL":"")+" ORDER BY i.id",submissionId).stream().map(row->row.get("id").toString()).toList(); }
@@ -180,7 +180,9 @@ public class ReviewService {
             if(!"PENDING".equals(row.get("submission_status"))||explanation.get("answer")==null||!"PENDING".equals(explanation.get("verdict")))throw conflict("EXPLANATION_LOCKED","제출된 현재 답변만 검토할 수 있습니다.");
             var now=OffsetDateTime.now(ZoneOffset.UTC);boolean accept="ACCEPT".equals(input.action());
             jdbc.sql("UPDATE review_explanation SET verdict=?,reviewed_by=?,reviewed_at=?,review_note=? WHERE id=?").params(accept?"ACCEPTED":"REJECTED",id(actor.id()),now,input.note(),explanation.get("id")).update();
-            if(!accept) { int next=input.round()+1;jdbc.sql("INSERT INTO review_explanation(review_item_id,round,request_note,requested_by,requested_at,verdict) VALUES (?,?,?,?,?,'PENDING')").params(id(reviewId),next,input.note(),id(actor.id()),now).update();jdbc.sql("UPDATE review_item SET current_round=?,workflow_state='REQUESTED',workflow_note=? WHERE id=?").params(next,input.note(),id(reviewId)).update(); }
+            if(!accept) { int next=input.round()+1;jdbc.sql("INSERT INTO review_explanation(review_item_id,round,request_note,requested_by,requested_at,verdict) VALUES (?,?,?,?,?,'PENDING')").params(id(reviewId),next,input.note(),id(actor.id()),now).update();
+                if(explanation.get("request_comparison_json")!=null)jdbc.sql("UPDATE review_explanation SET request_comparison_json=? WHERE review_item_id=? AND round=?").params(explanation.get("request_comparison_json"),id(reviewId),next).update();
+                jdbc.sql("UPDATE review_item SET current_round=?,workflow_state='REQUESTED',workflow_note=? WHERE id=?").params(next,input.note(),id(reviewId)).update(); }
             return result(view(accessible(actor,reviewId),true));
         });
     }
@@ -240,13 +242,18 @@ public class ReviewService {
      */
     private boolean required(Map<String,Object> row) {
         return !"EXCLUDED".equals(row.get("workflow_state"))&&("REQUESTED".equals(row.get("workflow_state"))||Boolean.TRUE.equals(row.get("gap_exceeded"))
-                ||(!Set.of("monthly-actual/2.0","annual-plan/2.0").contains(Objects.toString(row.get("review_policy_version"),"legacy/1.0"))&&Boolean.TRUE.equals(row.get("change_detected"))));
+                ||("ALL_CHANGES".equals(requirementMode(row))&&Boolean.TRUE.equals(row.get("change_detected"))));
     }
 
     /** 목록/미답변 조회에 동일한 필수 정책을 적용한다.
      * Args: 없음. Returns: 내부 고정 SQL 조건. Raises: 없음. Side Effects: 없음.
      */
-    private String requiredSql() { return "i.workflow_state<>'EXCLUDED' AND (i.workflow_state='REQUESTED' OR i.gap_exceeded=TRUE OR (i.review_policy_version NOT IN ('monthly-actual/2.0','annual-plan/2.0') AND i.change_detected=TRUE))"; }
+    private String requiredSql() { return "i.workflow_state<>'EXCLUDED' AND (i.workflow_state='REQUESTED' OR i.gap_exceeded=TRUE OR ((i.requirement_mode='ALL_CHANGES' OR (i.requirement_mode IS NULL AND i.review_policy_version NOT IN ('monthly-actual/2.0','annual-plan/2.0'))) AND i.change_detected=TRUE))"; }
+
+    /** 저장된 모드를 우선하고 V11 이전 검토는 당시 정책으로 해석한다. Args: row 검토행. Returns: ALL_CHANGES/GAP_ONLY. Raises: 없음. Side Effects: 없음. */
+    private String requirementMode(Map<String,Object> row) {
+        return row.get("requirement_mode")!=null?row.get("requirement_mode").toString():Set.of("monthly-actual/2.0","annual-plan/2.0").contains(Objects.toString(row.get("review_policy_version"),"legacy/1.0"))?"GAP_ONLY":"ALL_CHANGES";
+    }
 
     /** 소명 회차와 담당자의 선정을 화면 진행 상태로 조합한다.
      * Args: row 검토 행, explanation 현재 회차. Returns: 공개 진행 상태. Raises: 없음. Side Effects: 없음.
@@ -275,6 +282,7 @@ public class ReviewService {
     private Map<String,Object> view(Map<String,Object> row,boolean detail) {
         var explanation=current(row);var history=detail?rows("SELECT * FROM review_explanation WHERE review_item_id=? ORDER BY round",row.get("id")):List.of(explanation);
         var result=object("id",row.get("id").toString(),"submissionId",row.get("submission_id").toString(),"organizationId",row.get("organization_id").toString(),"reportItem",object("id",row.get("report_item_id").toString(),"code",row.get("code"),"name",row.get("name"),"kind",row.get("kind")),"year",row.get("year"),"month",row.get("month"),"scenario",row.get("scenario"),"amountPresent",row.get("amount_present"),"currentAmount",row.get("current_amount")==null?null:row.get("current_amount").toString(),"changeDetected",row.get("change_detected"),"gapExceeded",row.get("gap_exceeded"),"required",required(row),"reviewPolicyVersion",row.get("review_policy_version"),"workflowState",workflowState(row,explanation),"workflowNote",row.get("workflow_note"),"requestDueAt",instant(explanation.get("due_at")),"explanationState",explanation.get("answer")==null?"UNANSWERED":"ACCEPTED".equals(explanation.get("verdict"))?"ACCEPTED":"DRAFT".equals(row.get("submission_status"))?"ANSWERED":"IN_REVIEW","currentRound",row.get("current_round"),"stateToken",token(row),"explanations",history.stream().map(this::explanation).toList());
+        result.put("requirementMode",requirementMode(row));
         if(detail) result.put("workflowHistory",rows("SELECT * FROM review_workflow_event WHERE review_item_id=? ORDER BY id",row.get("id")).stream().map(event->object("id",event.get("id").toString(),"action",event.get("action"),"round",event.get("explanation_round"),"note",event.get("note"),"dueAt",instant(event.get("due_at")),"actedBy",actor(event.get("acted_by")),"actedAt",instant(event.get("acted_at")))).toList());
         result.put("comparisons",rows("SELECT c.*,t.scenario,t.percent,t.amount,t.percent_enabled,t.amount_enabled FROM gap_comparison c JOIN gap_threshold t ON t.id=c.threshold_id WHERE c.review_item_id=? ORDER BY c.id",row.get("id")).stream().map(c->object("basis",c.get("basis"),"baselineSubmissionId",c.get("baseline_submission_id").toString(),"baselineScenario",c.get("baseline_scenario"),"baselineAmount",c.get("baseline_amount").toString(),"currentAmount",c.get("current_amount").toString(),"gapAmount",c.get("gap_amount").toString(),"gapRate",c.get("gap_rate")==null?null:c.get("gap_rate").toString(),"threshold",object("id",c.get("threshold_id").toString(),"scenario",c.get("scenario"),"percent",c.get("percent").toString(),"amount",c.get("amount").toString(),"percentEnabled",c.get("percent_enabled"),"amountEnabled",c.get("amount_enabled")),"exceeded",c.get("exceeded"))).toList());return result;
     }
@@ -283,7 +291,7 @@ public class ReviewService {
     private Map<String,Object> explanation(Map<String,Object> e) {
         Map<String,Object> inherited=null;
         if(e.get("inherited_from_id")!=null) { var old=rows("SELECT e.id,i.id AS review_id,i.submission_id,s.seq,r.type,r.month,p.year FROM review_explanation e JOIN review_item i ON i.id=e.review_item_id JOIN submission s ON s.id=i.submission_id JOIN submission_request r ON r.id=s.request_id JOIN annual_plan p ON p.id=r.annual_plan_id WHERE e.id=?",e.get("inherited_from_id")).getFirst();inherited=object("explanationId",old.get("id").toString(),"reviewItemId",old.get("review_id").toString(),"submissionId",old.get("submission_id").toString(),"versionLabel",old.get("year")+"-"+("ANNUAL_PLAN".equals(old.get("type"))?"PLAN":String.format("%02d",number(old.get("month"))))+"-"+String.format("%02d",number(old.get("seq")))); }
-        return object("id",e.get("id").toString(),"round",e.get("round"),"requestNote",e.get("request_note"),"requestedBy",actor(e.get("requested_by")),"requestedAt",instant(e.get("requested_at")),"dueAt",instant(e.get("due_at")),"answer",e.get("answer"),"answeredBy",actor(e.get("answered_by")),"answeredAt",instant(e.get("answered_at")),"verdict",e.get("verdict"),"reviewedBy",actor(e.get("reviewed_by")),"reviewedAt",instant(e.get("reviewed_at")),"reviewNote",e.get("review_note"),"inheritedFromId",e.get("inherited_from_id")==null?null:e.get("inherited_from_id").toString(),"inheritedFrom",inherited);
+        return object("id",e.get("id").toString(),"round",e.get("round"),"requestNote",e.get("request_note"),"requestedBy",actor(e.get("requested_by")),"requestedAt",instant(e.get("requested_at")),"dueAt",instant(e.get("due_at")),"answer",e.get("answer"),"answeredBy",actor(e.get("answered_by")),"answeredAt",instant(e.get("answered_at")),"verdict",e.get("verdict"),"reviewedBy",actor(e.get("reviewed_by")),"reviewedAt",instant(e.get("reviewed_at")),"reviewNote",e.get("review_note"),"inheritedFromId",e.get("inherited_from_id")==null?null:e.get("inherited_from_id").toString(),"inheritedFrom",inherited,"requestComparison",comparisons.requestComparison(e.get("request_comparison_json")));
     }
 
     /** 행위자 표시 정보를 읽는다. Args: id nullable 사용자. Returns: ActorRef/null. Raises: DB 오류. Side Effects: 읽기. */

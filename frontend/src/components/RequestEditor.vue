@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useSession } from '../stores/session'
 import { dateTime, errorText, saveBlob } from '../lib/display'
+import MessageTemplateSelect from './MessageTemplateSelect.vue'
 
 const props = defineProps({ request: { type: Object, required: true } })
 const emit = defineEmits(['updated', 'refresh'])
@@ -124,6 +125,7 @@ onMounted(loadTemplate)
     <form @submit.prevent="save">
       <p class="muted">마감하면 새 업로드·최종 제출을 막습니다. 기존 제출본 검토와 소명 보완은 계속할 수 있습니다. 회신 기한은 안내용이며 자동 마감하지 않습니다.</p>
       <div class="filters"><label>회신 기한<input v-model="form.dueAt" type="datetime-local" :disabled="busy" /></label><label>접수 상태<select v-model="form.status" :disabled="busy"><option value="OPEN">접수 중</option><option value="CLOSED">마감</option></select></label></div>
+      <MessageTemplateSelect :type="request.type" :disabled="busy" @select="form.message = $event" />
       <label>요청 안내<textarea v-model="form.message" maxlength="5000" rows="3" :disabled="busy"></textarea></label>
       <fieldset v-if="request.targets?.some(target => target.selected === false)" class="additional-organizations"><legend>아직 발송하지 않은 조직에 추가 요청</legend><label v-for="target in request.targets.filter(target => target.selected === false)" :key="target.organization.id"><input v-model="additionalOrganizations" type="checkbox" :value="String(target.organization.id)" :disabled="busy" />{{ target.organization.name }}</label></fieldset>
       <p class="muted">연도·월과 기존 제출본은 유지합니다. 확정된 연간 계획 요청은 다시 열 수 없습니다.</p>

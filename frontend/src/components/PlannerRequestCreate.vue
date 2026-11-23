@@ -3,6 +3,7 @@ import { computed, reactive, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSession } from '../stores/session'
 import { query, errorText } from '../lib/display'
+import MessageTemplateSelect from './MessageTemplateSelect.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -163,6 +164,7 @@ onBeforeUnmount(dispose)
             <input id="annual-due" v-model="form.dueAt" type="datetime-local" />
           </label>
 
+          <MessageTemplateSelect type="ANNUAL_PLAN" :disabled="saving" @select="form.message = $event" />
           <label class="message-field" for="annual-message">
             요청 메시지 (템플릿)
             <textarea id="annual-message" v-model="form.message" maxlength="5000" rows="4"></textarea>

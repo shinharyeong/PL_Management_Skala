@@ -5,6 +5,8 @@ import { useSession } from '../stores/session'
 import { query, requestTitle, submissionStatus, dateTime, amount, errorText, saveBlob } from '../lib/display'
 import SubmissionData from './SubmissionData.vue'
 import SubmissionReviews from './SubmissionReviews.vue'
+import SubmissionRejectionItems from './SubmissionRejectionItems.vue'
+import SubmissionExplanationPolicy from './SubmissionExplanationPolicy.vue'
 import ValidationIssue from './ValidationIssue.vue'
 import OrgSubmissionWorkflow from './OrgSubmissionWorkflow.vue'
 
@@ -18,6 +20,7 @@ const actionMessage = ref('')
 const masterEffects = ref([])
 const decisionAction = ref('')
 const rejectNote = ref('')
+const rejectionItems = ref([])
 const diagnostics = ref([])
 const diagnosticCursor = ref(null)
 const records = ref([])
@@ -155,7 +158,7 @@ async function load() {
     if (current !== generation || lifetime.signal.aborted) return
     if (submission.value?.parsing.attemptNo !== item.parsing.attemptNo || ['QUEUED', 'RUNNING'].includes(item.parsing.status)) closeCell()
     submission.value = item
-    if (item.status !== 'PENDING') { decisionAction.value = ''; rejectNote.value = '' }
+    if (item.status !== 'PENDING') { decisionAction.value = ''; rejectNote.value = ''; rejectionItems.value = [] }
     if (parsing.value) {
       diagnostics.value = []; records.value = []; summary.value = null
       diagnosticCursor.value = null; recordCursor.value = null
@@ -239,7 +242,7 @@ async function decide() {
     return
   }
   const payload = { expectedStateToken: submission.value.stateToken, action }
-  if (action === 'REJECT') payload.note = note
+  if (action === 'REJECT') { payload.note = note; payload.rejectionItems = rejectionItems.value }
   const fingerprint = `decisions:${JSON.stringify(payload)}`
   if (!commandKeys.has(fingerprint)) commandKeys.set(fingerprint, crypto.randomUUID())
   busy.value = 'decisions'; error.value = ''; actionMessage.value = ''; masterEffects.value = []
@@ -248,7 +251,7 @@ async function decide() {
     if (lifetime.signal.aborted) return
     submission.value = result.submission
     commandKeys.delete(fingerprint)
-    decisionAction.value = ''; rejectNote.value = ''
+    decisionAction.value = ''; rejectNote.value = ''; rejectionItems.value = []
     actionMessage.value = action === 'APPROVE' ? '제출본을 승인했습니다.' : '제출본을 반려했습니다. 조직 담당자가 반려 사유를 확인할 수 있습니다.'
     masterEffects.value = result.masterEffects || []
     await load()
@@ -328,13 +331,14 @@ onBeforeUnmount(dispose)
   <div v-for="effect in masterEffects" :key="`${effect.kind}:${effect.year}:${effect.month}`" class="notice master-outcome" role="status"><span>{{ describeMasterEffect(effect) }}</span><RouterLink v-if="effect.masterId" :to="`/planning/${effect.kind === 'ANNUAL_PLAN' ? 'annual-masters' : 'masters'}/${effect.masterId}`" class="text-button">마스터 확인 →</RouterLink></div>
   <p v-if="!submission && loading" class="panel empty" role="status">제출본을 불러오고 있습니다…</p>
   <template v-if="submission">
+    <SubmissionExplanationPolicy :submission="submission" />
     <section class="panel">
       <div class="section-heading"><h2>파일 처리 상태</h2><span :class="['badge', { green: submission.status === 'PENDING' || submission.status === 'APPROVED', red: submission.status === 'REJECTED' || submission.parsing.status === 'FAILED' }]">{{ submissionStatus(submission) }}</span></div>
       <div class="progress-steps"><div class="done"><b>1</b><span>파일 업로드</span></div><span class="step-line"></span><div :class="{ current: parsing, done: ['SUCCEEDED', 'NEEDS_REVIEW'].includes(submission.parsing.status), failed: submission.parsing.status === 'FAILED' }"><b>2</b><span>엑셀 파싱</span></div><span class="step-line"></span><div :class="{ current: !parsing && submission.status === 'DRAFT', done: submission.status !== 'DRAFT' }"><b>3</b><span>검증 및 최종 제출</span></div></div>
       <div v-if="parsing" class="notice" role="status"><span class="spinner"></span>엑셀을 읽고 있습니다. 처리 결과를 자동으로 확인합니다.</div><p v-else class="notice">{{ stateMessage }}</p>
       <dl class="file-meta"><div><dt>파일명</dt><dd>{{ submission.originalFilename }}</dd></div><div><dt>업로드</dt><dd>{{ submission.uploadedBy?.name }} · {{ dateTime(submission.uploadedAt) }}</dd></div><div><dt>저장본</dt><dd>{{ submission.versionLabel || '초안 · 제출 회차 없음' }}</dd></div><div><dt>파싱 시도</dt><dd>{{ submission.parsing.attemptNo }}회</dd></div><div v-if="submission.submittedAt"><dt>제출</dt><dd>{{ submission.submittedBy?.name }} · {{ dateTime(submission.submittedAt) }}</dd></div><div v-if="submission.reviewedAt"><dt>검토</dt><dd>{{ submission.reviewedBy?.name }} · {{ dateTime(submission.reviewedAt) }}</dd></div></dl>
       <div v-if="submission.rejectReason" class="alert warning reject-reason"><strong>반려 사유</strong><p>{{ submission.rejectReason }}</p></div>
-      <p v-if="submission.status === 'REJECTED' && session.actor.role === 'ORG_MANAGER'" class="notice">반려 사유를 반영한 전체 파일을 새 초안으로 올려 주세요. 파일 검증 후 Gap 기준을 넘는 변경 항목의 필수 소명을 작성해 제출합니다.</p>
+      <SubmissionRejectionItems :submission="submission" /><p v-if="submission.status === 'REJECTED' && session.actor.role === 'ORG_MANAGER'" class="notice">반려 사유를 반영한 전체 파일을 새 초안으로 올려 주세요. 파일 검증 후 적용된 정책에 따라 필수 소명을 작성해 제출합니다.</p>
       <div v-if="showCorrectionGuide" class="notice correction-guide"><strong>원본 확인 후 다시 올리는 순서</strong><ol><li>안내된 시트·행·월·셀을 본인 원본 엑셀에서 확인하고 필요한 내용을 수정합니다.</li><li>변경하지 않은 항목도 포함한 전체 파일을 저장하고 다시 업로드합니다.</li><li>새 초안에서 업무 검증을 실행하고 필수 소명을 작성한 뒤 최종 제출합니다.</li></ol></div>
       <div v-if="submission.status === 'DRAFT' && !parsing && submission.readiness.blockers?.length" class="readiness"><h3>최종 제출 전 확인</h3><ValidationIssue v-for="(blocker, index) in submission.readiness.blockers" :key="index" :issue="{ ...blocker, message: blockerMessage(blocker) }" :parsing-status="submission.parsing.status" @open-cell="openCell" /></div>
       <div class="panel-footer"><button class="button" :disabled="!!busy || loading" @click="download">{{ busy === 'download' ? '다운로드 중…' : '원본 다운로드' }}</button><div v-if="session.actor.role === 'ORG_MANAGER'" class="button-row"><button v-if="submission.parsing.retryAllowed" class="button" :disabled="!!busy || loading" @click="command('parsing-retries')">같은 파일 다시 파싱</button><RouterLink v-if="canReupload" :to="reuploadLink" class="button">{{ submission.parsing.status === 'FAILED' ? '전체 파일 다시 업로드' : '수정한 전체 파일 업로드' }}</RouterLink><button v-if="submission.status === 'DRAFT'" class="button" :disabled="!!busy || loading || !canValidate" @click="command('validation')">{{ busy === 'validation' ? '검증 중…' : submission.readiness.validationState === 'CURRENT' ? '업무 검증 다시 실행' : '업무 검증' }}</button><button v-if="submission.status === 'DRAFT'" class="button primary" :disabled="!!busy || loading || !canSubmit" @click="command('submit')">{{ busy === 'submit' ? '제출 중…' : '최종 제출' }}</button></div></div>
@@ -345,7 +349,7 @@ onBeforeUnmount(dispose)
       <p v-if="submission.readiness.canApprove !== true" class="notice">승인 조건을 확인해 주세요. 필수 소명 {{ submission.readiness.requiredCount ?? '—' }}건 · 미답변 {{ submission.readiness.unansweredCount ?? '—' }}건 · 수용 대기 {{ submission.readiness.pendingReviewCount ?? '—' }}건</p>
       <div v-if="!decisionAction" class="button-row decision-actions"><button class="button" :disabled="!!busy || loading" @click="chooseDecision('REJECT')">반려</button><button class="button primary" :disabled="!!busy || loading || submission.readiness.canApprove !== true" @click="chooseDecision('APPROVE')">승인</button></div>
       <form v-else class="decision-form" @submit.prevent="decide">
-        <template v-if="decisionAction === 'REJECT'"><label for="reject-note">반려 사유 <span class="muted">필수 · 최대 2,000자</span></label><textarea id="reject-note" v-model="rejectNote" :disabled="!!busy || loading" maxlength="2000" required aria-describedby="reject-note-help" placeholder="조직 담당자가 수정해야 할 내용과 근거를 적어 주세요."></textarea><p id="reject-note-help" class="muted">사유는 조직 담당자에게 표시되며, 기존 제출본과 적재 금액은 이력에 보존됩니다.</p></template>
+        <template v-if="decisionAction === 'REJECT'"><label for="reject-note">반려 사유 <span class="muted">필수 · 최대 2,000자</span></label><textarea id="reject-note" v-model="rejectNote" :disabled="!!busy || loading" maxlength="2000" required aria-describedby="reject-note-help" placeholder="조직 담당자가 수정해야 할 내용과 근거를 적어 주세요."></textarea><p id="reject-note-help" class="muted">사유는 조직 담당자에게 표시되며, 기존 제출본과 적재 금액은 이력에 보존됩니다.</p><SubmissionRejectionItems v-model="rejectionItems" :submission="submission" editable :disabled="!!busy || loading" /></template>
         <p v-else class="notice">{{ submission.versionLabel }} 제출본을 승인하시겠습니까? 검토자와 검토 시각이 기록됩니다.</p>
         <div class="button-row decision-actions"><button type="button" class="button" :disabled="!!busy || loading" @click="chooseDecision('')">취소</button><button type="submit" class="button primary" :disabled="!!busy || loading || (decisionAction === 'APPROVE' && submission.readiness.canApprove !== true) || (decisionAction === 'REJECT' && !rejectNote.trim())">{{ busy === 'decisions' ? '처리 중…' : decisionAction === 'APPROVE' ? '승인 확정' : '반려 확정' }}</button></div>
       </form>

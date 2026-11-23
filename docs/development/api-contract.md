@@ -4,12 +4,12 @@
 
 | 항목 | 내용 |
 | --- | --- |
-| 문서 버전 | 0.11-draft · PRD 화면·보고 항목 Gap·선택 요청·검토 업무 연결 |
-| 상태 | V1~V8 기반 서비스 56개 메서드·경로 구현. PRD 검토·소명 첨부·비교·양식·인앱 알림·로컬 이메일 코드 연결 |
+| 문서 버전 | 0.12-draft · PRD v8.5 설정·소명 정책·보고 작성 |
+| 상태 | V1~V11 기반 서비스 92개 메서드·경로 구현. 설정·최초 확인·반려 항목·명시 비교 요청·두 소명 정책·보고 작성 연결 |
 | 기준 | [논리 ERD](https://github.com/shinharyeong/skala_final_project/blob/8c84d2783c9beb2f876810387baa7f9e3f503a50/docs/development/erd.md), [ERD PR #16](https://github.com/shinharyeong/skala_final_project/pull/16), [PR 기준 스키마](https://github.com/shinharyeong/skala_final_project/blob/8c84d2783c9beb2f876810387baa7f9e3f503a50/docs/development/erd.md) |
 | 확인한 백엔드 | Spring Boot 3.4.1 · Java 21 · JDBC/Flyway · PostgreSQL, 테스트만 H2 |
 | 범위 | 요청, 연간 계획, 전체 파일 제출, 파싱·검증, 보고 항목 Gap 소명과 변경 근거, 승인·반려, 공식 마스터, 보고 데이터 |
-| 범위 밖 | 운영 이메일 발송·SSO 제공자·회원 관리, 조직/보고 항목 관리 화면, 외부 알림 발송, PPT·PNG 출력, 미지원 Excel 양식 |
+| 범위 밖 | 운영 이메일 발송·SSO 제공자, 보고 항목 원천 분류 편집, 외부 알림 발송, PPT·PNG 출력, 미지원 Excel 양식 |
 | 관련 문서 | [현재 DB 매핑](db-mapping.md), [로컬 파서 출력 계약](../../parser/docs/development/output-contract.md), [연결·실행 범위](backend-integration.md) |
 
 기존 `POST /api/v1/excel/parse`와 `proposal-0.1` 예시는 이 서비스 명세로 대체한다. 파서 함수를 외부에 직접 노출하는 API는 두지 않는다. 기존 파서 출력 계약은 변경하지 않는다. 이 문서의 예시 ID·금액·이름은 모두 가상이다.
@@ -17,7 +17,7 @@
 PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설계 커밋을 기준으로 하며, 합의한 업무 규칙·전체 API 설계와 현재 실행 가능한 구현 범위를 구분한다. 실제 구현과 검증 기록은 백엔드 연결 문서와 로컬 실행 환경 문서를 따른다.
 
 
-현재 구현은 총 56개 서비스 메서드·경로다: 기존 41개에 AUTH 3개, NOTI 2개, TEMPLATE 3개, REV 일괄 명령 1개, ATTACH 3개, COMPARE 1개, EXPORT 2개를 추가했다. 컨트롤러의 메서드·경로 기준이며 개발 전용 `/api/dev/session`, `/api/dev/template`는 제외한다. 경로 구현 수는 운영 인증·브라우저 검증 완료를 뜻하지 않는다.
+현재 구현은 총 92개 서비스 메서드·경로다. 기존 56개에 V9 설정·최초 확인 12개와 비교 소명 요청 1개, V10 보고 작성 20개, V11 소명 정책 3개를 추가했다. 동적 `/report-authoring/ai/{operation}`은 하나의 매핑으로 센다. 컨트롤러의 메서드·경로 기준이며 개발 전용 `/api/dev/session`, `/api/dev/template`는 제외한다. 경로 구현 수는 운영 인증·브라우저 검증 완료를 뜻하지 않는다.
 
 파싱 성공 후에는 검증 전 `DRAFT + NOT_RUN + canSubmit=false`이며, 담당자가 validation·필수 소명 답변·submit을 실행해야 `PENDING`이 된다. 연간 PLAN 1~12월과 월간 요청의 1~요청월 ACTUAL·이후 ESTIMATE 전체 범위를 검증한다. 기획자는 소명을 수용 또는 재요청하고 모든 필수 소명이 수용된 제출본을 승인한다. 연간·월간 마스터는 승인 트랜잭션에서 발행하며, 연간 계획·Contingency 확정은 별도 PLAN-02 명령이다. 구현 경로 수가 실제 원본·동시성·브라우저 검증 완료 건수를 뜻하지는 않으며 실행 결과는 [로컬 환경](local-environment.md)에 별도로 기록한다.
 
@@ -30,7 +30,7 @@ PR #16은 develop에 병합되었다. 이 문서는 해당 PR의 고정된 설�
 ### 합의한 업무 규칙
 
 - 최초 제출·재제출 모두 조직의 전체 스냅샷이다. 파일·금액을 일부 PATCH하는 API는 없다.
-- 새 PRD의 `reviewPolicyVersion=annual-plan/2.0 또는 monthly-actual/2.0`에서는 Gap 기준을 초과했거나 담당자가 명시적으로 소명을 요청한 보고 항목이 필수다. 기준 이하 변경·증감 상쇄는 근거로 남지만 자동 필수가 아니다. 기존 1.0 검증의 모든 금액 변경 필수 정책은 보존한다.
+- 새 PRD의 `reviewPolicyVersion=annual-plan/2.0 또는 monthly-actual/2.0`에서는 Gap 기준을 초과했거나 담당자가 명시적으로 소명을 요청한 보고 항목이 필수다. `GAP_ONLY`는 기준 이하 변경·증감 상쇄를 참고 근거로 남긴다. `ALL_CHANGES`는 원천 금액 변경도 필수로 한다. 두 모드는 검증 스냅샷에 고정하며 제외 항목은 필수에서 뺀다. 기존 1.0 검증의 모든 금액 변경 필수 정책은 보존한다.
 - 보고 집계 키는 조직·보고 항목·연월·시나리오다. 매출은 관리분류, 비용은 실적집계기준으로 연결하며 팀·과제·셀 좌표는 상세 근거다.
 - 신규 월간 Gap은 답안지에 매핑된 매출·비용 보고 항목과 OP를 각각 판정한다. 실적/계획·추정/추정·추정/계획을 구분하고 원본 셀은 근거로 연결한다. 매출·비용 계정을 임의로 짝짓지 않는다. 과거 OP 전용 비교는 덮어쓰지 않는다.
 - 소명 보완은 같은 제출본의 새 소명 회차다. 제출 회차·금융값·마스터를 바꾸지 않는다.
@@ -160,7 +160,7 @@ local+demo에서는 등록된 이메일의 3분 코드·1분 재요청 제한·8
 | EXPORT-01 | GET /masters/{masterId}/file | P | 200 | 고정 월 마스터 메모리 XLSX |
 | EXPORT-02 | GET /submissions/{submissionId}/comparison/file | B | 200 | 명시한 버전 비교의 메모리 XLSX |
 
-마스터 임의 생성·금융값 수정·임의 소명 수용 상태 PATCH·외부 메시지 발송 API는 노출하지 않는다. Gap 제외·선정·일괄 소명 요청은 REV-06의 잠금·이력 명령만 사용한다. 기존 REP 경로는 호환을 위해 유지하고 이번 PRD 프런트 범위에서는 보고서 메뉴를 제외한다.
+마스터 임의 생성·금융값 수정·임의 소명 수용 상태 PATCH·외부 메시지 발송 API는 노출하지 않는다. Gap 제외·선정·일괄 소명 요청은 REV-06의 잠금·이력 명령만 사용한다. 기존 REP 경로는 유지하고 보고서 메뉴는 신규 report-authoring 경로에 연결한다.
 
 ### 화면별 호출 순서
 
@@ -724,7 +724,7 @@ errors는 `{field,code}` 목록이며 비어 있을 수 있다. 업무 오류는
 | Contingency 표시 | 연간 확정값은 고정. 월별/누적 실적 보고에 적용할 표시·배분 정책 |
 | 내보내기 | XLSX는 서버 메모리 생성 구현. PPT·PNG·자동 보고 메시지는 후속 범위 |
 | 파서 실행 | 내부 프로세스·DB 작업 큐로 초기 구현. 컨테이너 자원 제한·운영 모니터링은 후속 설정 |
-| 계약 구현 | 56개 서비스 메서드·경로. OpenAPI 산출물·운영 인증·조직/권한 관리·외부 알림 발송·PPT/PNG는 후속 작업 |
+| 계약 구현 | 92개 서비스 메서드·경로. OpenAPI 산출물·운영 인증·외부 알림 발송·PPT/PNG는 별도 |
 
 HTTP 메서드·상태 의미는 [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html), 오류 표현은 [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html), 파일 전송 형식은 [RFC 7578](https://www.rfc-editor.org/rfc/rfc7578.html)을 참고한다. 경로·오류 code·멱등키·stateToken은 이 프로젝트가 제안한 계약이다.
 
@@ -770,3 +770,17 @@ POST /notifications/read의 `{eventIds:string[]}`는 1~1000개 실제 접근 가
 local+demo 프로필에만 존재하며 등록된 활성 사용자 계정과 DB 역할을 사용한다. POST 코드/세션은 설정된 루프백 HTTP Origin·Host를 요구한다. `POST /auth/codes {email}` → `{challengeId,email,expiresAt,resendAt,delivery:"LOCAL_PREVIEW",localCode}`다. 유효기간 3분, 재발급 제한 1분이다. 실제 메일 전송은 구현 범위 밖이다.
 
 `POST /auth/sessions {challengeId,code}`는 6자리 일회용 코드를 검증하고 `{token,actor,expiresAt,organizations:[]}`를 반환한다. 실패 5회 또는 만료 시 challenge를 폐기한다. 토큰은 메모리의 해시 키로 관리하고 8시간 후 만료하며 서버 재시작 시 소멸한다. 인증 후 요청마다 DB 활성 계정·역할을 재확인한다. `DELETE /auth/session`은 현재 Bearer 세션을 폐기한다. 이 계약은 운영 이메일·SSO 통합이나 회원/역할 관리 기능이 아니다.
+
+
+## 2026-11-18 PRD v8.5 확장 계약
+
+최신 기준은 [사용자가 지정한 PRD](https://docs.google.com/spreadsheets/d/1v87p2E0FlJAqv8VsS_sH_f8sCaQhGsPb/edit?gid=1734192708#gid=1734192708)다. V9~V11의 입력·응답·상태 충돌과 함수 계약은 다음 문서가 이 명세의 일부다.
+
+| 영역 | 추가 계약 |
+| --- | --- |
+| 조직·담당자·역할·메시지, 최초 소속 확인, 반려 항목, 임의 비교 소명 요청, 소명 필수 모드 | [PRD 업무 API 상세](prd-workflow-api.md) |
+| PDF 구성 확인, 수동/저장 틀, 보고 블록·지표·SQL·사유계층, 미리보기/적용/취소/복원/HTML, 읽기 전용 MCP | [보고 작성 API 상세](report-authoring.md) |
+
+`GET /review-policy/current`, `POST /review-policy`, `POST /review-policy/preview`는 전역 `GAP_ONLY`/`ALL_CHANGES`를 읽고 변경·미리보기한다. 모드 저장은 상태 토큰과 멱등키를 요구한다. ACTUAL·ESTIMATE 임계값과 별개이며, PLAN 변경도 ALL_CHANGES에서 필수다. 기존 제출 완료본은 당시 규칙을 유지하고 초안은 새 정책으로 재검증한다.
+
+보고 작성의 숫자는 승인/잠정 원천에서 십진수로 조회한다. AI는 구성·SQL·편집 초안을 제안하며 금융 숫자를 작성하지 않는다. 제안은 사용자가 적용해야 자료의 새 불변 버전이 된다. `preview`도 제안 보존 명령이므로 `Idempotency-Key`가 필요하다. SQL은 승인된 report_view의 제한 SELECT 문법만 평가하며 DB SQL 문자열을 직접 실행하지 않는다.

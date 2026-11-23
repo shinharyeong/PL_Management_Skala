@@ -4,6 +4,7 @@ import { useSession } from '../stores/session'
 import { dateTime, errorText, query } from '../lib/display'
 import { chartGeometry, formatMoney } from '../lib/decimal-display'
 import { amountTone, dashboardMoney, difference, gapRate, moneyString, moneyUnits } from '../lib/dashboard-values'
+import ProfitFlowChart from './ProfitFlowChart.vue'
 
 const session = useSession()
 const year = ref(Number(new Intl.DateTimeFormat('en', { timeZone: 'Asia/Seoul', year: 'numeric' }).format(new Date())))
@@ -21,6 +22,7 @@ const forecast = ref(null)
 const previousForecast = ref(null)
 const periods = ref([])
 const reports = ref([])
+const previousReportValues = ref(new Map())
 const reviews = ref([])
 const recentVersions = ref([])
 const versionsError = ref('')
@@ -76,7 +78,8 @@ async function loadYear() {
 async function loadMonth(parent) {
   const current = typeof parent === 'number' ? parent : ++generation
   if (typeof parent !== 'number') { controller.abort(); controller = new AbortController() }
-  loading.value = true; master.value = null; forecast.value = null; previousForecast.value = null; monthlyRequest.value = null; reports.value = []; reviews.value = []; recentVersions.value = []; detailError.value = ''; versionsError.value = ''
+  rowsController.abort(); rowsGeneration++
+  loading.value = true; master.value = null; forecast.value = null; previousForecast.value = null; monthlyRequest.value = null; reports.value = []; previousReportValues.value = new Map(); reviews.value = []; recentVersions.value = []; detailError.value = ''; versionsError.value = ''
   try {
     let selectedPeriod = null; let latest = null; let previous = null
     for (const item of periods.value) if (item.month === month.value) selectedPeriod = item
@@ -95,12 +98,51 @@ async function loadMonth(parent) {
 }
 /** 병렬 호출의 Promise를 반환한다. Args: job 이름/Promise. Returns: Promise. Raises: 없음. Side Effects: 없음. */
 function jobPromise(job) { return job[1] }
-/** 선택조직의 고정 보고행을 읽는다. Args: 없음. Returns: Promise<void>. Raises: 없음(화면 표시). Side Effects: GET·보고행 교체. */
+/** 선택조직의 고정 보고행과 전월 승인본이 추정했던 당월 보고값을 읽는다.
+ * Args: 없음. Returns: Promise<void>. Raises: 없음(화면 표시).
+ * Side Effects: GET·보고행 교체. 전사 필수원천이 모두 준비된 범위만 합산하고 없는 값을 0으로 보정하지 않는다.
+ */
 async function loadRows() {
-  rowsController.abort(); rowsController = new AbortController(); const current = ++rowsGeneration; reports.value = []
+  rowsController.abort(); rowsController = new AbortController(); const current = ++rowsGeneration; reports.value = []; previousReportValues.value = new Map()
   if (!master.value) return
-  try { const rows = await pages(`/api/v1/masters/${master.value.id}/report-values`, { organizationId: organization.value }, rowsController.signal); if (current === rowsGeneration) reports.value = rows }
+  try {
+    const rows = await pages(`/api/v1/masters/${master.value.id}/report-values`, { organizationId: organization.value }, rowsController.signal)
+    if (current !== rowsGeneration) return
+    reports.value = rows
+    if (!entity(previousForecast.value)?.ready) return
+    const sources = []
+    for (const source of previousForecast.value?.sources || []) if (!organization.value || String(source.organizationId) === organization.value) sources.push(source)
+    if (!sources.length) return
+    const sourceRows = []
+    for (let offset = 0; offset < sources.length; offset += 4) {
+      const calls = []
+      for (const source of sources.slice(offset, offset + 4)) calls.push(pages(`/api/v1/submissions/${source.submissionId}/report-values`, { year: year.value, month: month.value, scenario: 'ESTIMATE' }, rowsController.signal))
+      const results = await Promise.all(calls)
+      if (current !== rowsGeneration) return
+      sourceRows.push(...results)
+    }
+    previousReportValues.value = aggregatePreviousReports(rows, sourceRows)
+  }
   catch (cause) { if (current === rowsGeneration && cause.name !== 'AbortError') detailError.value = errorText(cause) }
+}
+/** 모든 승인원천에 실제로 존재하는 동일 보고항목만 정밀한 십진 합계로 제공한다.
+ * Args: rows 현재 고정 보고항목, sourceRows 승인원천별 전월 추정값 배열. Returns: 보고항목 ID별 금액 Map.
+ * Raises: 없음. Side Effects: 없음. 누락·미확정·중복 값이 있으면 해당 항목의 합계를 만들지 않는다.
+ */
+function aggregatePreviousReports(rows, sourceRows) {
+  const totals = new Map()
+  for (const row of rows) {
+    let amount = 0n; let complete = sourceRows.length > 0
+    for (const values of sourceRows) {
+      let matched = null; let count = 0
+      for (const value of values) if (String(value.reportItemId) === String(row.reportItemId)) { matched = value; count++ }
+      const value = matched?.valueStatus === 'AVAILABLE' ? moneyUnits(matched.amount) : null
+      if (count !== 1 || value === null) { complete = false; break }
+      amount += value
+    }
+    if (complete) totals.set(String(row.reportItemId), moneyString(amount))
+  }
+  return totals
 }
 /** 전사 또는 선택조직 DTO를 찾는다. Args: source 집계. Returns: 선택 DTO/null. Raises: 없음. Side Effects: 없음. */
 function entity(source) { if (!organization.value) return source; for (const item of source?.organizations || []) if (String(item.organizationId) === organization.value) return item; return null }
@@ -126,7 +168,7 @@ const stages = computed(function closingStages() { const request = monthlyReques
 /** 남은 기한을 D-day로 표시한다. Args: 없음. Returns: 기한표시. Raises: 없음. Side Effects: 없음. */
 const deadline = computed(function deadlineLabel() { if (!monthlyRequest.value?.dueAt) return '기한 미지정'; const days = Math.ceil((new Date(monthlyRequest.value.dueAt).getTime() - Date.now()) / 86400000); return days < 0 ? `기한 ${-days}일 경과` : days === 0 ? '오늘 마감' : `마감 D-${days}` })
 /** 실제 보고행을 6열 손익표로 구성한다. Args: 없음. Returns: 요약행. Raises: 없음. Side Effects: 없음. */
-const summaryRows = computed(function profitRows() { const result = []; for (const item of metrics) { result.push({ ...item, amount: selected.value.current?.[item.key], plan: selected.value.plan?.[item.key], previous: selected.value.previous?.[item.key], group: item.key === 'cost', total: item.key === 'operatingProfit' }); if (item.key === 'cost' && costOpen.value && scope.value === 'MONTH') for (const row of reports.value) if (row.kind === 'COST') result.push({ key: row.reportItemCode, code: row.reportItemCode, name: row.reportItemName, amount: row.amount, plan: row.planAmount, previous: null, child: true }) } return result })
+const summaryRows = computed(function profitRows() { const result = []; for (const item of metrics) { result.push({ ...item, amount: selected.value.current?.[item.key], plan: selected.value.plan?.[item.key], previous: selected.value.previous?.[item.key], group: item.key === 'cost', total: item.key === 'operatingProfit' }); if (item.key === 'cost' && costOpen.value && scope.value === 'MONTH') for (const row of reports.value) if (row.kind === 'COST') result.push({ key: row.reportItemCode, code: row.reportItemCode, name: row.reportItemName, amount: row.amount, plan: row.planAmount, previous: previousReportValues.value.get(String(row.reportItemId)) ?? null, child: true }) } return result })
 /** 고정 승인원천의 수락소명을 항목 툴팁으로 제공한다. Args: row 보고행. Returns: 소명/안내문. Raises: 없음. Side Effects: 없음. */
 function reason(row) { const ids = new Set(); for (const source of master.value?.sources || []) if (!organization.value || String(source.organizationId) === organization.value) ids.add(String(source.submissionId)); const answers = []; for (const item of reviews.value) if (ids.has(String(item.submissionId)) && item.month === month.value && item.scenario === 'ACTUAL' && item.reportItem.code === row.code) for (const explanation of item.explanations || []) if (explanation.verdict === 'ACCEPTED' && explanation.answer) answers.push(explanation.answer); return answers.join('\n') || '수락된 소명이 없습니다. 월간 시트 관리에서 확인할 수 있습니다.' }
 /** 동일범위 조직별 손익을 제공한다. Args: 없음. Returns: 조직별집계. Raises: 없음. Side Effects: 없음. */
@@ -178,7 +220,7 @@ onBeforeUnmount(dispose)
 
 <template>
   <div class="profit-home">
-    <header class="home-heading"><h1>전사 손익 현황</h1><div class="home-filters"><select v-model.number="year" aria-label="연도" :disabled="loading" @change="loadYear"><option v-for="value in years" :key="value" :value="value">{{ value }}년</option></select><select v-model.number="month" aria-label="월" :disabled="loading" @change="loadMonth()"><option v-for="value in 12" :key="value" :value="value">{{ value }}월</option></select><select v-model="organization" aria-label="조직 범위" :disabled="loading" @change="loadRows"><option value="">전사 기준</option><option v-for="item in organizations" :key="item.organizationId" :value="String(item.organizationId)">{{ item.organizationName }}</option></select><button class="button" :disabled="loading" @click="initialize">새로고침</button></div></header>
+    <header class="home-heading"><h1>전사 손익 현황</h1><div class="home-filters"><select v-model.number="year" aria-label="연도" :disabled="loading" @change="loadYear"><option v-for="value in years" :key="value" :value="value">{{ value }}년</option></select><select v-model.number="month" aria-label="월" :disabled="loading" @change="loadMonth()"><option v-for="value in 12" :key="value" :value="value">{{ value }}월</option></select><select v-model="organization" aria-label="조직 범위" :disabled="loading" @change="loadRows"><option value="">전사 기준</option><option v-for="item in organizations" :key="item.organizationId" :value="String(item.organizationId)">{{ item.organizationName }}</option></select><RouterLink :to="{ path: '/planning/reports', query: { year, month, masterId: master?.id } }" class="button">월말 보고서 추출</RouterLink><button class="button" :disabled="loading" @click="initialize">새로고침</button></div></header>
     <p v-if="error" class="alert error" role="alert">{{ error }}</p><p v-if="loading" class="panel empty" role="status">계획·실적·마감 현황을 불러오고 있습니다…</p>
     <template v-else>
       <section class="home-card closing" data-figma-node="168:1903"><div class="closing-left"><div class="card-head"><h2>{{ month }}월 마감 현황</h2><span class="due-pill">{{ deadline }}</span></div><ol class="closing-stages"><li v-for="(stage, index) in stages" :key="stage.name" :class="{ complete: stage.done }"><RouterLink :to="monthlyLink()"><b>{{ stage.done ? '✓' : index + 1 }}</b><strong>{{ stage.name }}</strong><small>{{ stage.count }}</small></RouterLink></li></ol><progress :value="stages.filter(stage => stage.done).length" max="5" aria-label="마감 단계 완료"></progress></div><div class="home-divider" aria-hidden="true"><img src="/assets/planner-home-divider.svg" alt="" /></div><div class="todo"><h2>To Do</h2><div class="todo-columns"><section><h3>연간</h3><RouterLink to="/planning/annual-plan/new"><span>연간 계획 제출 요청</span><b>→</b></RouterLink><RouterLink :to="{ path: '/planning/annual-plan', query: { requestId: annualRequest?.id } }"><span>연간 계획 미제출</span><em>{{ tasks(annualRequest).missing }}곳</em><b>→</b></RouterLink><RouterLink to="/planning/annual-plan"><span>계획 검토 필요 조직</span><em>{{ tasks(annualRequest).pending }}곳</em><b>→</b></RouterLink><RouterLink to="/planning/annual-plan"><span>반려 후 재제출</span><em>{{ tasks(annualRequest).rejected }}곳</em><b>→</b></RouterLink></section><section><h3>월간</h3><RouterLink :to="monthlyLink()"><span>월간 시트 제출 요청</span><b>→</b></RouterLink><RouterLink :to="monthlyLink()"><span>월간 시트 미제출</span><em>{{ tasks(monthlyRequest).missing }}곳</em><b>→</b></RouterLink><RouterLink :to="monthlyLink()"><span>시트 검토 필요 조직</span><em>{{ tasks(monthlyRequest).pending }}곳</em><b>→</b></RouterLink><RouterLink :to="monthlyLink()"><span>소명 검토 필요 항목</span><em>{{ activeReviews.filter(item => item.explanationState === 'IN_REVIEW').length }}건</em><b>→</b></RouterLink></section></div></div></section>
@@ -186,7 +228,7 @@ onBeforeUnmount(dispose)
       <section class="home-kpis" data-figma-node="167:242"><article v-for="item in metrics" :key="item.key" class="home-card kpi"><div class="card-head"><h2>{{ item.name }}</h2><span v-if="item.key === 'operatingProfit' && selected.current?.operatingMargin != null" class="margin-tag">이익률 {{ rate(selected.current.operatingMargin) }}</span></div><p :title="`${formatMoney(selected.current?.[item.key])}원`"><strong>{{ money(selected.current?.[item.key]) }}</strong><small>{{ unit === 'KRW' ? '원' : '억원' }}</small></p><dl><div><dt>계획 대비</dt><dd :class="amountTone(difference(selected.current?.[item.key], selected.plan?.[item.key]))">{{ rate(gapRate(selected.current?.[item.key], selected.plan?.[item.key])) }}</dd></div><div><dt>전월 추정 대비</dt><dd :class="amountTone(difference(selected.current?.[item.key], selected.previous?.[item.key]))">{{ rate(gapRate(selected.current?.[item.key], selected.previous?.[item.key])) }}</dd></div></dl></article></section>
       <p v-if="!selected.current" class="notice">선택 기간의 승인 실적·추정이 아직 없습니다. 월간 시트 관리에서 제출·승인 상태를 확인해 주세요.</p><p v-if="detailError" class="alert error" role="alert">일부 비교 자료를 불러오지 못했습니다. {{ detailError }}</p>
       <div class="profit-grid"><section class="home-card summary" data-figma-node="168:2031"><div class="card-head"><div><h2>{{ scopeName }} 손익 요약</h2><p>{{ year }}년 {{ selected.label }}</p></div><span>단위 {{ unit === 'KRW' ? '원' : '억원' }}</span></div><div class="table-scroll"><table class="profit-table"><thead><tr><th>손익 항목</th><th class="number">{{ scope === 'MONTH' ? '당월 실적' : selected.isPlan ? '연간 계획' : '연간 전망' }}</th><th class="number">계획 대비</th><th class="number">계획 차이액</th><th class="number">전월 추정 대비</th><th class="number">전월 차이액</th></tr></thead><tbody><tr v-for="row in summaryRows" :key="row.key" :class="{ total: row.total, child: row.child }"><th><button v-if="row.group" class="cost-toggle" :aria-expanded="costOpen" @click="costOpen = !costOpen">{{ costOpen ? '▾' : '▸' }} {{ row.name }}</button><span v-else>{{ row.name }}</span></th><td class="number" :title="`${formatMoney(row.amount)}원`">{{ money(row.amount) }}</td><td class="number" :class="amountTone(difference(row.amount, row.plan))" :title="reason(row)">{{ rate(gapRate(row.amount, row.plan)) }}</td><td class="number" :class="amountTone(difference(row.amount, row.plan))" :title="reason(row)">{{ money(difference(row.amount, row.plan)) }}</td><td class="number" :class="amountTone(difference(row.amount, row.previous))">{{ rate(gapRate(row.amount, row.previous)) }}</td><td class="number" :class="amountTone(difference(row.amount, row.previous))">{{ money(difference(row.amount, row.previous)) }}</td></tr><tr><th>영업이익률</th><td class="number">{{ rate(selected.current?.operatingMargin) }}</td><td colspan="4" class="number muted">계획 {{ rate(selected.plan?.operatingMargin) }}</td></tr></tbody></table></div><p class="card-note">비교 기준이 없거나 기준 금액이 0인 비율은 —로 표시합니다. 차이값 위에서 수락된 소명을 확인할 수 있습니다.</p></section><section class="home-card drivers" data-figma-node="167:372"><h2>손익 변동 원인 Top 5</h2><p class="driver-total">계획 대비 <strong :class="amountTone(difference(selected.current?.operatingProfit, selected.plan?.operatingProfit))">{{ money(difference(selected.current?.operatingProfit, selected.plan?.operatingProfit)) }}</strong><small>{{ unit === 'KRW' ? '원' : '억원' }}</small></p><p v-if="!topFive.length" class="empty compact">승인 실적·계획이 모이면 표시됩니다.</p><ol v-else><li v-for="item in topFive" :key="item.reportItemId || item.organizationId"><RouterLink :to="topFiveLink(item)"><strong>{{ item.organizationName }}</strong><span :class="amountTone(item.gap)">{{ money(item.gap) }}</span></RouterLink><div class="driver-track"><i :class="amountTone(item.gap)" :style="{ width: `${item.width}%` }"></i></div></li></ol><RouterLink :to="monthlyLink()" class="text-button">항목별 Gap · 소명 확인 →</RouterLink></section></div>
-      <section class="home-card divisions"><div class="card-head"><h2>사업부별 손익</h2><span>단위 {{ unit === 'KRW' ? '원' : '억원' }}</span></div><div class="table-scroll"><table><thead><tr><th>사업부</th><th class="number">매출</th><th class="number">영업비용</th><th class="number">영업이익</th><th class="number">계획 차이액</th></tr></thead><tbody><tr v-for="item in departments" :key="item.organizationId"><th><button class="text-button" @click="organization = String(item.organizationId); loadRows()">{{ item.organizationName }}</button></th><td class="number">{{ money(item.totals?.revenue) }}</td><td class="number">{{ money(item.totals?.cost) }}</td><td class="number">{{ money(item.totals?.operatingProfit) }}</td><td class="number" :class="amountTone(item.gap)">{{ money(item.gap) }}</td></tr><tr v-if="!departments.length"><td colspan="5" class="empty compact">발행한 마스터가 없습니다.</td></tr></tbody></table></div></section>
+      <ProfitFlowChart :totals="selected.current" :unit="unit" :label="`${scopeName} · ${year}년 ${selected.label}`" /><section class="home-card divisions"><div class="card-head"><h2>사업부별 손익</h2><span>단위 {{ unit === 'KRW' ? '원' : '억원' }}</span></div><div class="table-scroll"><table><thead><tr><th>사업부</th><th class="number">매출</th><th class="number">영업비용</th><th class="number">영업이익</th><th class="number">계획 차이액</th></tr></thead><tbody><tr v-for="item in departments" :key="item.organizationId"><th><button class="text-button" @click="organization = String(item.organizationId); loadRows()">{{ item.organizationName }}</button></th><td class="number">{{ money(item.totals?.revenue) }}</td><td class="number">{{ money(item.totals?.cost) }}</td><td class="number">{{ money(item.totals?.operatingProfit) }}</td><td class="number" :class="amountTone(item.gap)">{{ money(item.gap) }}</td></tr><tr v-if="!departments.length"><td colspan="5" class="empty compact">발행한 마스터가 없습니다.</td></tr></tbody></table></div></section>
       <section class="home-card trend" data-figma-node="168:2097"><div class="card-head"><div><h2>월별 {{ metric === 'operatingProfit' ? '영업이익' : '매출' }} 추이</h2><p>실적 · 최신 추정 vs 연간 계획</p></div><div class="segmented"><button :class="{ active: metric === 'operatingProfit' }" @click="metric = 'operatingProfit'">영업이익</button><button :class="{ active: metric === 'revenue' }" @click="metric = 'revenue'">매출</button></div></div><div class="trend-legend"><span><i></i>실적</span><span><i class="estimate"></i>추정</span><span><i class="plan"></i>계획</span></div><div class="trend-plot"><div class="zero-line" :style="{ top: `${trend.zero}%` }"></div><svg class="plan-line" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline v-if="trend.points" :points="trend.points" fill="none" stroke="#b58c56" stroke-width="1.6" vector-effect="non-scaling-stroke" /></svg><div v-for="item in trend.rows" :key="item.month" class="trend-column"><span v-if="item.amount != null" :class="['trend-bar', { estimate: item.scenario === 'ESTIMATE', selected: item.month === month }]" :style="{ top: `${item.top}%`, height: `${item.height}%` }" :title="`${item.month}월 ${money(item.amount)}`"></span><img v-if="item.plan != null" class="plan-point" src="/assets/planner-trend-point.svg" alt="" :style="{ top: `${item.planY}%` }" /></div></div><div class="trend-labels"><button v-for="item in trend.rows" :key="item.month" :class="{ selected: item.month === month }" @click="chooseMonth(item.month)">{{ item.month }}월</button></div></section>
       <section class="home-card recent-versions" aria-labelledby="recent-versions-title"><div class="card-head"><div><h2 id="recent-versions-title">최근 버전 변경 내역</h2><p>{{ year }}년 {{ month }}월 · 공식 마스터 최근 3개</p></div><RouterLink v-if="master" :to="`/planning/masters/${master.id}`" class="text-button">전체 버전 보기 →</RouterLink></div><p v-if="versionsError" class="alert error" role="alert">{{ versionsError }}</p><div v-if="recentVersions.length" class="version-cards"><article v-for="version in recentVersions" :key="version.id" class="version-card"><div><span class="version-kind">{{ version.previousMasterId ? '승인 원천 반영' : '최초 발행' }}</span><time :datetime="version.createdAt">{{ dateTime(version.createdAt) }}</time></div><RouterLink :to="`/planning/masters/${version.id}`" class="version-title">{{ version.versionLabel }} <span>→</span></RouterLink><p>{{ version.previousMasterId ? '조직 승인본을 반영한 고정 버전입니다.' : '전사 필수 조직의 승인본으로 발행했습니다.' }}</p><div class="version-links"><RouterLink v-if="version.previousMasterId" :to="`/planning/masters/${version.previousMasterId}`">이전 버전</RouterLink><RouterLink v-if="version.triggerSubmissionId" :to="{ path: `/submissions/${version.triggerSubmissionId}`, query: { from: 'gap', requestId: version.requestId } }">수락 원천 확인</RouterLink></div></article></div><p v-else-if="!versionsError" class="empty compact">선택 월에 발행한 마스터가 없습니다.</p></section>
       <details class="data-basis"><summary>집계 기준 · 마스터 버전</summary><p>공식 실적은 발행한 월간 마스터, 연간 전망은 해당 월의 최신 승인본을 사용합니다. 원본과 이전 버전은 보존됩니다.</p><p v-if="master">{{ master.versionLabel }} · {{ dateTime(master.createdAt) }} 발행 <RouterLink :to="`/planning/masters/${master.id}`" class="text-button">마스터 원천 확인 →</RouterLink></p><p v-if="annualMaster">{{ annualMaster.versionLabel }} <RouterLink :to="`/planning/annual-masters/${annualMaster.id}`" class="text-button">연간 계획 마스터 →</RouterLink></p></details>
