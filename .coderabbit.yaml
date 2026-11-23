@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "ko-KR"
+
+reviews:
+  path_instructions:
+    - path: "backend/src/main/resources/db/migration/V1__init_schema.sql"
+      instructions: |
+        V1__init_schema.sql은 수정하면 안 되는 파일이에요.
+        이 파일에 변경이 있으면 반드시 지적하고, 새 마이그레이션 파일(V{yyyyMMdd_HHmm}__설명.sql)로 옮기라고 안내해 주세요.
+
+    - path: "backend/src/main/resources/db/migration/**"
+      instructions: |
+        기존 마이그레이션 파일을 고치지 말고 새 파일로 추가해야 해요.
+        금액 컬럼은 numeric 타입을 쓰고, float·double 같은 부동소수점 타입은 쓰면 안 돼요.
+
+    - path: "docs/api/openapi.yaml"
+      instructions: |
+        이 파일이 API의 기준이에요.
+        금액 필드는 숫자가 아니라 문자열(원 단위 십진수)로 정의되어 있는지 확인해 주세요.
+        값이 없을 때 null을 허용하는지도 확인해 주세요.
+
+    - path: "backend/**/*.java"
+      instructions: |
+        금액 처리 규칙을 확인해 주세요.
+        - 금액 계산에 float·double을 쓰면 안 돼요. BigDecimal을 써야 해요.
+        - API로 주고받는 금액은 원 단위 십진수 문자열이에요.
+        - 값이 없거나 계산할 수 없을 때는 null이고, 0으로 바꾸면 안 돼요.
+        컨트롤러·DTO가 바뀌었다면 docs/api/openapi.yaml의 내용과 맞는지 확인해 주세요.
+
+    - path: "parser/**/*.py"
+      instructions: |
+        금액 계산에 float을 쓰면 안 돼요. decimal.Decimal을 써야 해요.
+        값이 비어 있거나 계산할 수 없을 때 0으로 바꾸지 말고 None으로 두어야 해요.
