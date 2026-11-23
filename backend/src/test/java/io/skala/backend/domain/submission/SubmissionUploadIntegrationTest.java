@@ -17,6 +17,7 @@ import io.skala.backend.support.PostgresIntegrationTest;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -120,6 +121,26 @@ class SubmissionUploadIntegrationTest extends PostgresIntegrationTest {
         assertThat(done.at("/parsingJob/errorCode").asText()).isEqualTo("VALIDATION_FAILED");
         assertThat(done.at("/validation/canSubmit").asBoolean()).isFalse();
 
+        // UP-05: 오류 목록은 검증 결과 파일에서 읽고, UP-04의 errorCount와 같다
+        JsonNode diagnostics = objectMapper.readTree(mvc.perform(get("/api/v1/submissions/{id}/diagnostics", id)
+                .with(manager)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(diagnostics.get("errorCount").asInt()).isPositive()
+                .isEqualTo(done.at("/validation/errorCount").asInt())
+                .isEqualTo(diagnostics.get("items").size());
+        assertThat(diagnostics.at("/file/name").asText()).isEqualTo(code + "_2026-11.xlsx");
+        assertThat(diagnostics.findValuesAsText("rule")).contains("조직 일치").doesNotContainNull();
+        assertThat(diagnostics.findValuesAsText("guide")).allSatisfy(guide -> assertThat(guide).isNotBlank());
+        Map<String, Object> record = jdbc.queryForMap("""
+                select v.attempt_no, v.policy_version, v.parser_result_object_key, v.validation_result_object_key,
+                       j.result_object_key
+                from submission_validation v join parsing_job j on j.submission_id = v.submission_id
+                where v.submission_id = ?
+                """, Long.parseLong(id));
+        assertThat(record).containsEntry("attempt_no", 1).containsEntry("policy_version", "submission-validation/1.0");
+        assertThat((String) record.get("parser_result_object_key")).startsWith("results/parser/")
+                .isEqualTo(record.get("result_object_key"));
+        assertThat((String) record.get("validation_result_object_key")).startsWith("results/validation/");
+
         // 실패한 작업만 재시도할 수 있다
         mvc.perform(post("/api/v1/submissions/{id}/parsing-retries", id).with(manager)
                         .header("Idempotency-Key", "it-" + UUID.randomUUID())
@@ -144,6 +165,10 @@ class SubmissionUploadIntegrationTest extends PostgresIntegrationTest {
         waitForParsing(id);
         jdbc.update("update parsing_job set status = 'FAILED', error_code = 'PARSER_TIMEOUT' where submission_id = ?",
                 Long.parseLong(id));
+        mvc.perform(get("/api/v1/submissions/{id}/diagnostics", id).with(manager))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.errorCount").value(1))
+                .andExpect(jsonPath("$.items[0].rule").value("파일 읽기"));
         String token = objectMapper.readTree(mvc.perform(get("/api/v1/submissions/{id}", id).with(manager))
                 .andReturn().getResponse().getContentAsString()).get("stateToken").asText();
 
@@ -157,6 +182,14 @@ class SubmissionUploadIntegrationTest extends PostgresIntegrationTest {
         JsonNode again = waitForParsing(id);
         assertThat(again.at("/parsingJob/attemptNo").asInt()).isEqualTo(2);
         assertThat(again.at("/parsingJob/status").asText()).isEqualTo("SUCCEEDED");
+    }
+
+    @Test
+    void 요청을_보내지_않은_조직은_업로드할_수_없다() throws Exception {
+        jdbc.update("update request_target set selected = false where request_id = ? and organization_id = ?",
+                requestId, orgId);
+        upload(code + "_2026-11.xlsx", PRD_XLSX).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("REQUEST_TARGET_EXCLUDED"));
     }
 
     private JsonNode waitForParsing(String id) throws Exception {

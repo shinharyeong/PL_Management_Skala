@@ -31,7 +31,7 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
                                          @Param("month") int month, @Param("organizationId") Long organizationId,
                                          Limit limit);
 
-    /** 지정 월 월간 요청이 이 조직을 대상으로 했는지 */
+    /** 지정 월 월간 요청을 이 조직에 실제로 보냈는지(selected, 제외 안 됨) */
     @Query("""
             select count(t) > 0 from RequestTarget t, SubmissionRequest r
             where r.id = t.id.requestId
@@ -40,6 +40,7 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
               and r.month = :month
               and t.id.organizationId = :organizationId
               and t.excluded = false
+              and t.selected = true
             """)
     boolean existsTargetInMonth(@Param("annualPlanId") Long annualPlanId, @Param("type") RequestType type,
                                 @Param("month") int month, @Param("organizationId") Long organizationId);

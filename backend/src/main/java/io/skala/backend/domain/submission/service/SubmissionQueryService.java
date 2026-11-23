@@ -45,6 +45,7 @@ public class SubmissionQueryService {
     private final ReviewItemRepository reviewItemRepository;
     private final ExplanationTargetService explanationTargetService;
     private final BaselineResolver baselineResolver;
+    private final SubmissionDiagnosticsService submissionDiagnosticsService;
 
     @Transactional(readOnly = true)
     public SubmissionResponse get(Long submissionId, AuthenticatedUser user) {
@@ -95,7 +96,8 @@ public class SubmissionQueryService {
             return new Validation(false, null);
         }
         if (!job.passed()) {
-            return new Validation(false, null);
+            return new Validation(false, submissionDiagnosticsService.report(submission.getId(), job)
+                    .map(ValidationReport::errorCount).orElse(null));
         }
         boolean validated = !reviewItemRepository.findAllWithReportItemBySubmissionId(submission.getId()).isEmpty();
         boolean canSubmit = submission.getStatus() == SubmissionStatus.DRAFT && validated

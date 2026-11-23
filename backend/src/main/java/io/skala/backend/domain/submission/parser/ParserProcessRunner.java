@@ -42,7 +42,7 @@ public class ParserProcessRunner {
     }
 
     /** 실패해도 예외 대신 FAILED 결과를 돌려준다. errorCode: PARSER_TIMEOUT, PARSER_UNAVAILABLE, PARSER_OUTPUT_INVALID 등 */
-    public ParserBridgeResponse run(String filename, InputStream content) {
+    public ParserRun run(String filename, InputStream content) {
         ProcessBuilder builder = new ProcessBuilder(List.of(python, "-B", "-m", "excel_parser.service_bridge",
                 "--filename", filename));
         builder.environment().put("PYTHONPATH", sourceDirectory.toString());
@@ -73,7 +73,7 @@ public class ParserProcessRunner {
                         new String(stderr.get(10, TimeUnit.SECONDS), StandardCharsets.UTF_8).strip());
                 return failed("PARSER_INTERNAL_ERROR");
             }
-            return objectMapper.readValue(out, ParserBridgeResponse.class);
+            return new ParserRun(objectMapper.readValue(out, ParserBridgeResponse.class), out);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             process.destroyForcibly();
@@ -104,7 +104,11 @@ public class ParserProcessRunner {
         }
     }
 
-    private static ParserBridgeResponse failed(String code) {
-        return new ParserBridgeResponse(null, null, null, "FAILED", code, List.of(), null);
+    private static ParserRun failed(String code) {
+        return new ParserRun(new ParserBridgeResponse(null, null, null, "FAILED", code, List.of(), null), null);
+    }
+
+    /** 해석한 응답과 원본 JSON 바이트(결과 파일 보관용). 실행 실패면 raw는 null. */
+    public record ParserRun(ParserBridgeResponse response, byte[] raw) {
     }
 }
