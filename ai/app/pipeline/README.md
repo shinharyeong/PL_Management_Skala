@@ -1,7 +1,7 @@
 # pipeline — 07 보고서 자료 배치 파이프라인
 
 엑셀 제출본 → 파싱(`parser/` 룰 파서) → Gap → 소명 연결 → master → 07 자료 → 사실 목록·핵심 메시지 문장까지를 한 번에 만든다.
-업무 규칙은 `docs/domain-rules.md`, `docs/development/erd.md`, `docs/development/db-mapping.md` 만 따른다.
+업무 규칙은 `docs/`의 PRD를 따른다.
 
 실행(`ai/` 에서, 입력 경로는 설정으로 지정: `ai/.env` 또는 환경변수 INPUT_DIR, EXPLANATIONS_PATH, APPROVALS_PATH, SCENARIO_DIR, SCENARIO_CSV_PATH):
 

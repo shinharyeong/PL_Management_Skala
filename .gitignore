@@ -37,6 +37,9 @@ logs/
 *.sqlite3
 *.db
 
+# 기준 요구사항 문서(PRD)는 원본 데이터가 아니므로 예외로 추적한다.
+!docs/경영팀을부탁해_PRD_ver1.xlsx
+
 # Python 실행 캐시
 __pycache__/
 *.py[cod]

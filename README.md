@@ -31,12 +31,7 @@ Compose는 Vue 정적 프런트, Java 21·Python 3.11 백엔드, PostgreSQL을 �
 
 홈은 연간 PLAN과 월간 ACTUAL을 구분하고 실적은 고정된 확정 계획과 비교합니다. Contingency는 명시적으로 입력한 전사 연간 값으로 별도 표시하며 월별 배분·차감은 하지 않습니다. 보고 항목 목록·요청 수정·별도 보고 데이터 구성 3개 API는 후속 범위이고 `/api/dev` 역할 선택·합성 양식 2개는 별도 개발 기능입니다. 구현 범위와 실제 실행 검증 결과는 구분하며 [로컬 실행 환경](docs/development/local-environment.md)의 기록을 따릅니다.
 
-- [프런트 구현과 함수 명세](docs/development/frontend-guide.md)
-- [서비스 API 명세](docs/development/api-contract.md)
-- [demo API와 파싱 후보 미리보기](docs/development/demo-api.md)
-- [백엔드·파서 연결](docs/development/backend-integration.md)
-- [백엔드 함수 명세](docs/development/backend-function-reference.md)
-- [문서 목록](docs/README.md)
+- [문서 목록](docs/README.md) — PRD·인프라 구성·로컬 실행 환경
 
 ## 협업 규칙
 
