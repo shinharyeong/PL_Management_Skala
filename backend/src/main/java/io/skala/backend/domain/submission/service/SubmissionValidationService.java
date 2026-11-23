@@ -14,9 +14,9 @@ import io.skala.backend.domain.submission.support.SubmissionAccess;
 import io.skala.backend.domain.submission.value.BaselineKind;
 import io.skala.backend.domain.submission.value.ParsingJobStatus;
 import io.skala.backend.domain.submission.value.SubmissionStatus;
-import io.skala.backend.domain.user.entity.AppUser;
 import io.skala.backend.global.exception.BusinessException;
 import io.skala.backend.global.exception.ErrorCode;
+import io.skala.backend.global.security.AuthenticatedUser;
 import io.skala.backend.global.util.StateToken;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -34,7 +34,7 @@ public class SubmissionValidationService {
     private final ExplanationTargetService explanationTargetService;
 
     @Transactional
-    public ValidationResponse validate(Long submissionId, String expectedStateToken, AppUser actor) {
+    public ValidationResponse validate(Long submissionId, String expectedStateToken, AuthenticatedUser actor) {
         Submission submission = submissionAccess.loadForOrgManager(submissionId, actor);
         ParsingJob job = parsingJobRepository.findBySubmissionId(submissionId).orElse(null);
         StateToken.verify(expectedStateToken, SubmissionStateToken.of(submission, job));

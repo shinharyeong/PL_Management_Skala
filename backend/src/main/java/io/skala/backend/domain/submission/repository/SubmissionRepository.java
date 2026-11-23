@@ -43,4 +43,11 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
             """)
     boolean existsTargetInMonth(@Param("annualPlanId") Long annualPlanId, @Param("type") RequestType type,
                                 @Param("month") int month, @Param("organizationId") Long organizationId);
+
+    boolean existsByRequestIdAndOrganizationIdAndStatus(Long requestId, Long organizationId, SubmissionStatus status);
+
+    Optional<Submission> findFirstByPreviousSubmissionIdOrderByIdDesc(Long previousSubmissionId);
+
+    /** 같은 요청·조직에서 이 회차보다 뒤에 제출된 제출본이 있는지(반려본이 대체됐는지) */
+    boolean existsByRequestIdAndOrganizationIdAndSeqGreaterThan(Long requestId, Long organizationId, Integer seq);
 }

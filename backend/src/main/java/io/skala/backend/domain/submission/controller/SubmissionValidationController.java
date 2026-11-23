@@ -2,9 +2,9 @@ package io.skala.backend.domain.submission.controller;
 
 import io.skala.backend.domain.submission.dto.ValidationRequest;
 import io.skala.backend.domain.submission.service.SubmissionValidationService;
-import io.skala.backend.domain.submission.support.CurrentActor;
-import io.skala.backend.domain.user.entity.AppUser;
 import io.skala.backend.global.idempotency.IdempotentCommandExecutor;
+import io.skala.backend.global.security.AuthenticatedUser;
+import io.skala.backend.global.security.CurrentUser;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class SubmissionValidationController {
 
     private final SubmissionValidationService submissionValidationService;
-    private final CurrentActor currentActor;
+    private final CurrentUser currentUser;
     private final IdempotentCommandExecutor idempotency;
 
     /** PROOF-01 비교 기준 대비 변경 감지·소명 대상 생성 */
@@ -29,8 +29,8 @@ public class SubmissionValidationController {
     public ResponseEntity<String> validate(@PathVariable Long submissionId,
                                            @RequestHeader(IdempotentCommandExecutor.HEADER) String idempotencyKey,
                                            @Valid @RequestBody ValidationRequest request) {
-        AppUser actor = currentActor.get();
-        return idempotency.execute(actor.getId(), "POST /api/v1/submissions/" + submissionId + "/validation",
+        AuthenticatedUser actor = currentUser.get();
+        return idempotency.execute(actor.id(), "POST /api/v1/submissions/" + submissionId + "/validation",
                 idempotencyKey, request, () -> ResponseEntity.ok(
                         submissionValidationService.validate(submissionId, request.expectedStateToken(), actor)));
     }
