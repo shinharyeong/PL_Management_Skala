@@ -139,4 +139,22 @@ public class ReviewExplanation {
     public void touchAttachments() {
         this.attachmentRevision = attachmentRevision + 1;
     }
+
+    /** 경영기획팀이 소명을 요청한 새 회차(GAP-07·11) */
+    public static ReviewExplanation requested(ReviewItem reviewItem, int round, String note, AppUser by,
+                                              OffsetDateTime at, OffsetDateTime dueAt) {
+        ReviewExplanation explanation = pending(reviewItem, round, note);
+        explanation.requestedBy = by;
+        explanation.requestedAt = at;
+        explanation.dueAt = dueAt;
+        return explanation;
+    }
+
+    /** 소명 판단(GAP-11): 수락이면 ACCEPTED, 재요청이면 REJECTED */
+    public void decide(ExplanationVerdict verdict, String note, AppUser by, OffsetDateTime at) {
+        this.verdict = verdict;
+        this.reviewNote = note;
+        this.reviewedBy = by;
+        this.reviewedAt = at;
+    }
 }
