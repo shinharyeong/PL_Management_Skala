@@ -130,4 +130,16 @@ public class ReviewItem extends BaseTimeEntity {
     public void deactivate() {
         this.active = false;
     }
+
+    /** 재제출 요청 때 경영기획팀이 고른 반려 항목 */
+    public void markRejected() {
+        this.rejected = true;
+    }
+
+    /** 소명을 다시 요청해 새 회차를 연다. */
+    public int openNextRound() {
+        this.currentRound = currentRound + 1;
+        this.workflowState = WorkflowState.REQUESTED;
+        return currentRound;
+    }
 }

@@ -28,6 +28,8 @@ import io.skala.backend.domain.user.repository.OrganizationRepository;
 import io.skala.backend.global.exception.BusinessException;
 import io.skala.backend.global.exception.ErrorCode;
 import io.skala.backend.global.security.AuthenticatedUser;
+import io.skala.backend.global.util.OffsetCursor;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,6 +52,40 @@ public class SubmissionQueryService {
     @Transactional(readOnly = true)
     public SubmissionResponse get(Long submissionId, AuthenticatedUser user) {
         return toResponse(submissionAccess.loadForRead(submissionId, user));
+    }
+
+    /**
+     * HIST-01 · REQ-05 제출본 목록(초안 제외, 최근 제출 순).
+     * 조직 담당자는 자기 조직만(organizationId를 넘기면 자기 조직이어야 함), 경영기획팀은 requestId·organizationId 필수.
+     */
+    @Transactional(readOnly = true)
+    public SubmissionPage list(AuthenticatedUser user, RequestType type, Integer year, Integer month,
+                               String displayStatus, Long requestId, Long organizationId, String cursor, Integer limit) {
+        Long organization;
+        if (user.isPlanner()) {
+            if (requestId == null || organizationId == null) {
+                throw new BusinessException(ErrorCode.INVALID_REQUEST, "requestId와 organizationId가 필요합니다.");
+            }
+            organization = organizationId;
+        } else {
+            if (organizationId != null) {
+                user.requireOrganizationAccess(organizationId);
+            }
+            organization = user.organizationId();
+        }
+        String scope = "subs|" + organization + "|" + requestId + "|" + type + "|" + year + "|" + month + "|" + displayStatus;
+        int size = OffsetCursor.limit(limit);
+        int offset = OffsetCursor.decode(cursor, scope);
+        List<Submission> matched = submissionRepository.findSubmitted(organization, requestId, type, year, month).stream()
+                .filter(s -> displayStatus == null || displayStatus.equals(displayStatus(s)))
+                .toList();
+        List<SubmissionResponse> page = matched.stream().skip(offset).limit(size).map(this::toResponse).toList();
+        return new SubmissionPage(matched.size(), page,
+                OffsetCursor.next(matched.size() > offset + size, offset, size, scope));
+    }
+
+    /** 목록 응답(PageResponse + total) */
+    public record SubmissionPage(int total, List<SubmissionResponse> items, String nextCursor) {
     }
 
     /** 호출한 쪽 트랜잭션 안에서 쓴다. */

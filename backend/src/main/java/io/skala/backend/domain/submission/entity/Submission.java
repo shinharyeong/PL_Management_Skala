@@ -118,4 +118,20 @@ public class Submission {
         this.previousSubmission = previous;
         this.sourceObject = preservedSource;
     }
+
+    /** 회신 수락(REQ-06): PENDING → APPROVED, 승인 순번(ver{월}.{NN})을 붙인다. */
+    public void approve(int approvedSeq, AppUser by, OffsetDateTime at) {
+        this.status = SubmissionStatus.APPROVED;
+        this.approvedSeq = approvedSeq;
+        this.reviewedBy = by;
+        this.reviewedAt = at;
+    }
+
+    /** 재제출 요청(REQ-06): PENDING → REJECTED, 코멘트 필수 */
+    public void reject(String reason, AppUser by, OffsetDateTime at) {
+        this.status = SubmissionStatus.REJECTED;
+        this.rejectReason = reason;
+        this.reviewedBy = by;
+        this.reviewedAt = at;
+    }
 }

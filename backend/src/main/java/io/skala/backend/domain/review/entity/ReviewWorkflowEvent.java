@@ -52,4 +52,17 @@ public class ReviewWorkflowEvent {
 
     @Column(name = "acted_at", nullable = false)
     private OffsetDateTime actedAt;
+
+    public static ReviewWorkflowEvent of(ReviewItem item, WorkflowAction action, int explanationRound, String note,
+                                         OffsetDateTime dueAt, AppUser by, OffsetDateTime at) {
+        ReviewWorkflowEvent event = new ReviewWorkflowEvent();
+        event.reviewItem = item;
+        event.action = action;
+        event.explanationRound = explanationRound;
+        event.note = note;
+        event.dueAt = dueAt;
+        event.actedBy = by;
+        event.actedAt = at;
+        return event;
+    }
 }

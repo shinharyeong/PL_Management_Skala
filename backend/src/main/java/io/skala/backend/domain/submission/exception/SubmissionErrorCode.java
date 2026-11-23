@@ -22,6 +22,9 @@ public enum SubmissionErrorCode {
     VALIDATION_REQUIRED(HttpStatus.CONFLICT, "변경 확인을 먼저 진행해 주세요."),
     REVIEW_CONTEXT_CHANGED(HttpStatus.CONFLICT, "비교 기준이 바뀌었습니다. 변경 확인을 다시 진행해 주세요."),
     ANSWER_REQUIRED(HttpStatus.UNPROCESSABLE_ENTITY, "소명을 작성하지 않은 항목이 있습니다."),
+    INVALID_SUBMISSION_STATE(HttpStatus.CONFLICT, "검토 대기 중인 제출본만 처리할 수 있습니다."),
+    EXPLANATIONS_NOT_ACCEPTED(HttpStatus.CONFLICT, "수락하지 않은 소명이 있습니다. 소명을 먼저 검토해 주세요."),
+    COMMENT_REQUIRED(HttpStatus.UNPROCESSABLE_ENTITY, "재제출 요청 사유를 입력해 주세요."),
     VALIDATION_FAILED(HttpStatus.UNPROCESSABLE_ENTITY, "파일 검증에서 수정할 항목이 있습니다. 검증 결과를 확인해 주세요.");
 
     private final HttpStatus status;

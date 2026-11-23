@@ -57,4 +57,24 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
 
     @Query("select coalesce(max(s.seq), 0) from Submission s where s.requestId = :requestId and s.organizationId = :organizationId")
     int findMaxSeq(@Param("requestId") Long requestId, @Param("organizationId") Long organizationId);
+
+    @Query("select coalesce(max(s.approvedSeq), 0) from Submission s "
+            + "where s.requestId = :requestId and s.organizationId = :organizationId")
+    int findMaxApprovedSeq(@Param("requestId") Long requestId, @Param("organizationId") Long organizationId);
+
+    /** 조직의 제출본(초안 제외) 목록. 조건이 null이면 거르지 않는다. 최근 제출 순. */
+    @Query("""
+            select s from Submission s, SubmissionRequest r
+            where r.id = s.requestId
+              and s.organizationId = :organizationId
+              and s.status <> io.skala.backend.domain.submission.value.SubmissionStatus.DRAFT
+              and (:requestId is null or s.requestId = :requestId)
+              and (:type is null or r.type = :type)
+              and (:year is null or r.annualPlan.year = :year)
+              and (:month is null or r.month = :month)
+            order by s.submittedAt desc nulls last, s.id desc
+            """)
+    List<Submission> findSubmitted(@Param("organizationId") Long organizationId, @Param("requestId") Long requestId,
+                                   @Param("type") RequestType type, @Param("year") Integer year,
+                                   @Param("month") Integer month);
 }

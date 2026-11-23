@@ -190,6 +190,11 @@ public class ReviewItemQueryService {
         return toResponse(source, attachmentsOf(List.of(source)).getOrDefault(source.getId(), List.of()));
     }
 
+    /** 소명 한 건을 첨부와 함께 응답으로 */
+    ExplanationResponse toResponse(ReviewExplanation e) {
+        return toResponse(e, attachmentsOf(List.of(e)).getOrDefault(e.getId(), List.of()));
+    }
+
     ExplanationResponse toResponse(ReviewExplanation e, List<ReviewAttachment> attachments) {
         Submission owner = e.getReviewItem().getSubmission();
         String approvedLabel = e.getVerdict() == ExplanationVerdict.ACCEPTED && owner.getStatus() == SubmissionStatus.APPROVED

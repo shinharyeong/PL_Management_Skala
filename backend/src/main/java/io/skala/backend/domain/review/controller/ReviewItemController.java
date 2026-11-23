@@ -2,9 +2,11 @@ package io.skala.backend.domain.review.controller;
 
 import io.skala.backend.domain.review.dto.AnswerRequest;
 import io.skala.backend.domain.review.dto.AttachmentResponse;
+import io.skala.backend.domain.review.dto.ExplanationDecisionRequest;
 import io.skala.backend.domain.review.dto.OrgReviewListResponse;
 import io.skala.backend.domain.review.dto.ReviewItemDetailResponse;
 import io.skala.backend.domain.review.service.ExplanationAnswerService;
+import io.skala.backend.domain.review.service.ExplanationDecisionService;
 import io.skala.backend.domain.review.service.ReviewItemQueryService;
 import io.skala.backend.domain.file.entity.StoredObject;
 import io.skala.backend.domain.file.service.FileStorage;
@@ -40,7 +42,7 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-/** PROOF-02~06 소명 대상 목록·상세·작성·첨부 (GAP-06·08 경영기획 보기는 Gap 검토에서 추가) */
+/** PROOF-02~06 소명 대상 목록·상세·작성·첨부, GAP-11 소명 판단 (GAP-06·08 경영기획 보기는 Gap 검토에서 추가) */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/v1/review-items")
@@ -48,6 +50,7 @@ public class ReviewItemController {
 
     private final ReviewItemQueryService reviewItemQueryService;
     private final ExplanationAnswerService explanationAnswerService;
+    private final ExplanationDecisionService explanationDecisionService;
     private final FileStorage fileStorage;
     private final CurrentUser currentUser;
     private final IdempotentCommandExecutor idempotency;
@@ -78,6 +81,17 @@ public class ReviewItemController {
         return idempotency.execute(user.id(), "PUT /api/v1/review-items/" + reviewItemId + "/answer", idempotencyKey,
                 request, () -> ResponseEntity.ok(explanationAnswerService.answer(reviewItemId, user, request.answer(),
                         request.expectedStateToken())));
+    }
+
+    /** GAP-11 소명 수락 / 재요청 */
+    @PostMapping("/{reviewItemId}/decisions")
+    public ResponseEntity<String> decide(@PathVariable Long reviewItemId,
+                                         @RequestHeader(IdempotentCommandExecutor.HEADER) String idempotencyKey,
+                                         @Valid @RequestBody ExplanationDecisionRequest request) {
+        AuthenticatedUser user = currentUser.get();
+        return idempotency.execute(user.id(), "POST /api/v1/review-items/" + reviewItemId + "/decisions",
+                idempotencyKey, request,
+                () -> ResponseEntity.ok(explanationDecisionService.decide(reviewItemId, user, request)));
     }
 
     @GetMapping("/{reviewItemId}/attachments")
