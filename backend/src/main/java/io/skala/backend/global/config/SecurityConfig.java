@@ -1,27 +1,47 @@
 package io.skala.backend.global.config;
 
+import io.skala.backend.domain.user.repository.AppUserRepository;
+import io.skala.backend.global.exception.ErrorCode;
+import io.skala.backend.global.exception.ProblemResponseWriter;
+import io.skala.backend.global.security.BearerTokenAuthenticationFilter;
+import io.skala.backend.global.security.SessionTokenStore;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- * 스켈레톤 단계의 보안 설정. 세션 없이(Bearer 토큰) 동작한다.
- * TODO(auth): 이메일 인증코드 로그인·토큰 필터를 붙이고 /api/v1/auth/** 외 경로에 인증을 요구한다.
+ * 세션 없이 Bearer 토큰으로 인증한다. 로그인 API·health 외에는 로그인이 필요하다.
+ * 인증 실패는 401 UNAUTHENTICATED, 권한 부족은 403 FORBIDDEN을 Problem 형식으로 내려준다.
  */
 @Configuration
 public class SecurityConfig {
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, SessionTokenStore sessionTokenStore,
+                                                   AppUserRepository appUserRepository,
+                                                   ProblemResponseWriter problemWriter) throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
+                .logout(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/codes", "/api/v1/auth/sessions").permitAll()
+                        .requestMatchers("/actuator/health", "/error").permitAll()
+                        .anyRequest().authenticated())
+                .exceptionHandling(handling -> handling
+                        .authenticationEntryPoint((request, response, e) ->
+                                problemWriter.write(request, response, ErrorCode.UNAUTHENTICATED))
+                        .accessDeniedHandler((request, response, e) ->
+                                problemWriter.write(request, response, ErrorCode.FORBIDDEN)))
+                .addFilterBefore(new BearerTokenAuthenticationFilter(sessionTokenStore, appUserRepository),
+                        UsernamePasswordAuthenticationFilter.class)
                 .build();
     }
 }
