@@ -1,0 +1,28 @@
+{
+  "_note": "값 채우기 정답. 기대값은 파일에 적지 않고 조회 DB 를 SQL 로 직접 읽어 비교한다(기준월은 DB 최신월). no_data=true 인 칸에 값이 들어가면 '추측 채움'(⑤).",
+  "신규2_다단머리_합계표.pdf": [
+    {"type": "table", "header_has": ["매출", "영업이익", "판정"], "default_metric": "영업이익",
+     "cols": [{"header": "매출 계획", "metric": "매출", "kind": "PLAN"}, {"header": "매출 실적", "metric": "매출", "kind": "ACTUAL"}, {"header": "매출 차이", "metric": "매출", "kind": "DIFF"},
+              {"header": "영업이익 계획", "metric": "영업이익", "kind": "PLAN"}, {"header": "영업이익 실적", "metric": "영업이익", "kind": "ACTUAL"}, {"header": "영업이익 차이", "metric": "영업이익", "kind": "DIFF"}],
+     "no_data_headers": ["판정"], "check_totals": true}
+  ],
+  "신규3_카드_차트.pdf": [
+    {"type": "card", "label": "매출", "metric": "매출", "kind": "ACTUAL"},
+    {"type": "card", "label": "영업이익", "metric": "영업이익", "kind": "ACTUAL"},
+    {"type": "card_no_data", "label": "소명 완료율"}
+  ],
+  "신규5_2쪽_표넘김.pdf": [
+    {"type": "table", "header_has": ["조직", "계획", "실적", "Gap"], "default_metric": "영업이익",
+     "cols": [{"header": "계획", "metric": "영업이익", "kind": "PLAN"}, {"header": "실적", "metric": "영업이익", "kind": "ACTUAL"}, {"header": "Gap", "metric": "영업이익", "kind": "DIFF"}]}
+  ],
+  "어려운1_신문형_3단_가로제목.pdf": [
+    {"type": "chart_no_data", "title_has": "지연 건수"},
+    {"type": "table_no_data", "header_has": ["원인", "건수"]}
+  ],
+  "어려운2_대시보드_카드차트병합표.pdf": [
+    {"type": "chart_months", "title_has": "영업이익", "metric": "영업이익", "months": [6, 7, 8, 9, 10, 11]},
+    {"type": "table", "header_has": ["구분", "조직", "계획", "실적"], "default_metric": "영업이익", "check_totals": true,
+     "cols": [{"header": "계획", "metric": "영업이익", "kind": "PLAN"}, {"header": "실적", "metric": "영업이익", "kind": "ACTUAL"}]},
+    {"type": "card_no_data", "label": "이익률"}
+  ]
+}

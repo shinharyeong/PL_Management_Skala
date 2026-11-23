@@ -137,6 +137,8 @@ def gaps(year: int, month: int) -> dict:
 # ===================================================================== 5단계: 보고서 값 채우기(코드 계산)
 from decimal import ROUND_HALF_UP, Decimal
 
+from . import table_header as TH
+
 METRIC_COL = {"매출": "revenue_won", "영업비용": "cost_won", "영업이익": "op_won"}     # DB 지표 이름 → v_op 컬럼
 _KEYWORD = re.compile(r"전년|전월|지난달|계획|추정")
 _DATE = re.compile(r"'?(\d{2})\.(\d{1,2})월")
@@ -167,6 +169,11 @@ def retime(text: str, orig: tuple[int, int] | None, base: dict) -> str:
     oy, om = orig
     yy = f"{base['year'] % 100:02d}"
     text = _DATE.sub(lambda m: f"'{yy}.{base['month']}월" if (int(m.group(1)), int(m.group(2))) == (oy, om) else m.group(0), text)
+    def ym(m):                                                         # '2026.11' 같은 연.월 표기(월 글자 없음)
+        if int(m.group(1)) % 100 == oy and int(m.group(2)) == om:
+            return f"{base['year']}.{base['month']:02d}" if len(m.group(2)) == 2 else f"{base['year']}.{base['month']}"
+        return m.group(0)
+    text = re.sub(r"(?<![\d.])(20\d{2})\.(\d{1,2})(?![\d.]|월)", ym, text)
     return re.sub(rf"(?<![\d.'→]){om}월(?!→)", f"{base['month']}월", text)
 
 
@@ -254,7 +261,12 @@ def fill_report(base: dict, blocks: list[dict], orig: tuple[int, int] | None = N
                 res["rows"], res["missing"] = fill_spec_table(con, info, bmeta, b.get("spec") or {"rows": [], "cols": []}, cause, b.get("guess"))
                 res["spec"] = b.get("spec")
             elif kind == "chart":
-                res["rows"], res["missing"] = _chart(con, info, bmeta, b.get("metric") or "영업이익", b.get("limit") or 10, b.get("chart_type") or "bar", b.get("scope"), b.get("months_n"), b.get("months"))
+                cats = [str(c) for c in (b.get("categories") or [])]
+                ms = [int(m.group(1)) for m in (re.fullmatch(r"\s*(\d{1,2})월\s*", c) for c in cats) if m and 1 <= int(m.group(1)) <= 12]
+                known = [k for k in metrics if k in METRIC_COL]
+                metric = b.get("metric") or _metric_in(" ".join([str(b.get("title") or "")] + [str(x) for x in (b.get("series") or [])] + cats), known)      # 지표를 글자에서 못 찾으면 '데이터 없음'(영업이익 같은 기본값으로 메우지 않는다)
+                month_axis = len(ms) >= 2 and len(ms) == len(cats) and not b.get("months")                                                                # 축이 월(6월…11월)이면 그 월의 추이
+                res["rows"], res["missing"] = _chart(con, info, bmeta, metric, b.get("limit") or 10, "line" if month_axis else (b.get("chart_type") or "bar"), b.get("scope"), b.get("months_n"), ms if month_axis else b.get("months"))
                 res["chart_type"] = b.get("chart_type") or "bar"
             elif kind == "numbercard":
                 res["cards"], res["missing"] = _numbercards(con, info, bmeta, b.get("cards") or [], metrics)
@@ -265,11 +277,13 @@ def fill_report(base: dict, blocks: list[dict], orig: tuple[int, int] | None = N
                 res["text"], res["table"], res["missing"] = r["text"], r.get("table"), "데이터 없음" in r["text"]
             elif kind == "table":
                 res["rows"], res["missing"] = _fill_table(con, info, bmeta, b, metrics, orgs, cause, orig)
-                res["spec"] = derive_spec(b.get("rows") or [], int(b.get("header_rows") or 0), metrics, orgs)
+                res["spec"] = derive_spec(b.get("rows") or [], int(b.get("header_rows") or 0), metrics, orgs, b.get("header_spans"))
             elif kind == "breakdown":
                 res["rows"], res["missing"] = _breakdown(con, info, bmeta, b.get("metric") or "영업비용")
             elif kind == "metric_table":
                 res["rows"], res["missing"] = _metric_table(con, info, bmeta, b.get("metrics") or [], b.get("compare") or [])
+            if isinstance(res.get("rows"), list) and kind in ("table", "spec_table"):
+                res["header_rows"] = sum(1 for r in res["rows"] if r and isinstance(r[0], dict) and r[0].get("hdr"))       # 머리 줄 수(병합 머리는 2줄 이상)
             if UNIT.get() != "억원" and isinstance(res.get("rows"), list) and kind in ("table", "spec_table", "breakdown", "metric_table"):
                 for r in res["rows"][:2]:
                     for c in r:
@@ -277,7 +291,7 @@ def fill_report(base: dict, blocks: list[dict], orig: tuple[int, int] | None = N
                             c["text"] = c["text"].replace("억원", UNIT.get())
                 res["unit"] = UNIT.get()
             if res["missing"] and kind in ("table", "spec_table"):
-                res["empty"] = len(res["rows"]) > 1 and all(c.get("missing") for r in res["rows"][int(b.get("header_rows") or 1):] for c in r[1:])
+                res["empty"] = len(res["rows"]) > 1 and all(c.get("missing") for r in res["rows"][int(res.get("header_rows") or 1):] for c in r[1:])
             if res["missing"]:
                 res["why"] = _why(kind, res, b, metrics, orgs)
             out["blocks"].append(res)
@@ -299,8 +313,8 @@ def _why(kind, res, b, metrics, orgs) -> list[str]:
             out.append("비교 말(계획·전월·전년·추정)에 해당하는 값이 DB 에 없거나, 숫자 자리가 비교 말보다 많아 어느 값인지 정할 수 없는 자리입니다")
     elif kind in ("table", "spec_table", "breakdown", "metric_table"):
         rows = res.get("rows") or []
-        hr = int(b.get("header_rows") or 1) if kind == "table" else 1
-        heads = [str(c.get("text") or "") for c in (rows[0] if rows else [])]
+        hr = int(res.get("header_rows") or 1)
+        heads = [" ".join(t for t in (str((rows[i][j] if j < len(rows[i]) else {}).get("text") or "") for i in range(min(hr, len(rows)))) if t) for j in range(max((len(r) for r in rows), default=0))]       # 열 이름 = 머리줄 글자를 위에서 아래로 이은 것(병합으로 가려진 칸은 빈 글자)
         no_row, no_cmp, no_cause = [], set(), False
         for r in rows[hr:]:
             cells = r[1:]
@@ -357,6 +371,101 @@ def _fill_sentence(con, info, base, txt, metrics):
     return re.sub(r"\{수치\}", lambda _: next(it), txt), missing
 
 
+def _label_col(rows, hr, metrics, orgs) -> int:
+    """표에서 조직·지표 이름이 가장 많이 들어 있는 열(앞 3열 중). 첫 열이 '구분(본부)' 같은 묶음 열이면 그 오른쪽 열이 라벨 열이다. 못 찾으면 0."""
+    ncol = max((len(r) for r in rows), default=0)
+    best, bj = 0, 0
+    for j in range(min(3, ncol)):
+        hits = 0
+        for r in rows[hr:]:
+            t = str(r[j].get("text") or "") if len(r) > j and r[j]["type"] == "text" else ""
+            hits += bool(t and (match_org(t, orgs) or _metric_in(t, metrics)))
+        if hits > bj:
+            best, bj = j, hits
+    return best
+
+
+def _cell_text(row, j) -> str:
+    return str(row[j].get("text") or "") if len(row) > j and row[j]["type"] == "text" else ""
+
+
+_TOTAL = re.compile(r"^(소\s*계|합\s*계|총\s*계|계)(?=$|[\s(:：])")
+SUMMABLE = ("current", "cmp", "cmpval", "gap")
+
+
+def _row_kind(label: str) -> str | None:
+    """행 이름이 소계/합계/총계/계 로 시작하면 subtotal/total('계획' 같은 말은 해당 없음)."""
+    m = _TOTAL.match(str(label or "").strip())
+    return None if not m else ("subtotal" if m.group(1).replace(" ", "") == "소계" else "total")
+
+
+class _Acc:
+    """소계·합계 누적기. 사업부(조직) 행의 값(원)만 더한다. 하나라도 값이 없거나, 범위 필터가 걸려 있거나, 조직이 아닌 행이 섞여 있으면 합계도 '데이터 없음'(일부만 더하지 않는다)."""
+
+    def __init__(self):
+        self.grp, self.all, self.bad, self.bad_grp = [], [], False, False
+
+    def org(self, raws):
+        self.grp.append(raws)
+        self.all.append(raws)
+
+    def other(self):
+        self.bad = self.bad_grp = True
+
+    def _sum(self, cols, rows, bad):
+        out = []
+        for k, c in enumerate(cols):
+            if c["t"] in SUMMABLE and rows and not bad and not SCOPE_ORGS.get() and all(len(r) > k and r[k] is not None for r in rows):
+                v = sum((Decimal(str(r[k])) for r in rows), Decimal(0))
+                out.append({"text": eok(v, diff=c["t"] in ("cmp", "gap")), "missing": False, "sum": True})
+            else:
+                out.append({"text": "데이터 없음", "missing": True})
+        return out
+
+    def sub(self, cols):
+        r = self._sum(cols, self.grp, self.bad_grp)
+        self.grp, self.bad_grp = [], False
+        return r
+
+    def total(self, cols):
+        return self._sum(cols, self.all, self.bad)
+
+
+def _metric_for(col: dict, row_metric: str | None, row_is_metric: bool) -> str | None:
+    """칸의 지표: 열에 지표가 있으면 그 지표(조직 행). 행 자체가 지표 행이면 행 지표(열 지표와 다르면 None: 섞어 채우지 않는다)."""
+    cm = col.get("metric")
+    if row_is_metric:
+        return row_metric if cm in (None, row_metric) else None
+    return cm or row_metric
+
+
+def _calc(con, info, base, cache, col: dict, metric: str | None, org):
+    """열 하나의 칸 값. 반환 (글자, 없음 여부, 원 단위 값 또는 None). 지표가 DB 에 없거나 값이 None 이면 '데이터 없음'(다른 지표로 대신 채우지 않는다)."""
+    ct = col.get("t")
+    if ct not in SUMMABLE or metric not in METRIC_COL:
+        return "데이터 없음", True, None
+    key = (metric, org or SCOPE_ORG.get())
+    if key not in cache:
+        cache[key] = _bases(con, info, base["year"], base["month"], METRIC_COL[metric], key[1])
+    bs = cache[key]
+    cur = bs["현재"]
+    if ct == "current":
+        v = cur
+    elif ct == "cmpval":
+        v = bs.get(col.get("name"))
+    elif ct == "cmp":
+        v = cur - bs[col["name"]] if cur is not None and bs.get(col.get("name")) is not None else None
+    else:
+        v = cur - bs["계획"] if cur is not None and bs["계획"] is not None else None
+    if v is None:
+        return "데이터 없음", True, None
+    return eok(v, diff=ct in ("cmp", "gap")), False, v
+
+
+def _hdr(text, **kw):
+    return {"text": text, "hdr": True, **kw}
+
+
 def _fill_table(con, info, base, b, metrics, orgs, cause, orig):
     rows = b.get("rows") or []
     hr = int(b.get("header_rows") or 0)
@@ -367,55 +476,73 @@ def _fill_table(con, info, base, b, metrics, orgs, cause, orig):
             break
         lead += 1
     hr = max(hr, min(lead, max(1, len(rows) - 1)))
-    heads = [" ".join(str(rows[i][j].get("text") or "") for i in range(hr) if j < len(rows[i])) for j in range(ncol)]
-    explicit_current = any("실적" in h for h in heads)           # '실적' 열이 있으면 계획 같은 열은 값, 없으면 현재 값과의 차이
-    out, any_missing = [], False
+    spans = b.get("header_spans")
+    lay = TH.header_layout(rows, hr, spans)
+    cols = derive_spec(rows, hr, metrics, orgs, spans)["cols"]
+    lc = _label_col(rows, hr, metrics, orgs)
     extra = [x for x in (b.get("extra_cols") or []) if x in ("계획", "직전 월", "전년 동월", "직전 추정")]
-    for ri, row in enumerate(rows):
-        if ri < hr:
-            out.append([{"text": retime(str(c.get("text") or ""), orig, base)} if c["type"] == "text" else {"text": "—"} for c in row] + ([{"text": f"{x} 대비"} for x in extra] if ri == 0 else []))
+    out, any_missing, cache, acc = [], False, {}, _Acc()
+    for i in range(hr):                              # 머리: 병합(colspan/rowspan)까지 격자 그대로
+        row = []
+        for c in lay["cells"][i]:
+            d = _hdr(retime(c["text"], orig, base) if not c.get("hide") else "")
+            d.update({k: c[k] for k in ("colspan", "rowspan", "hide") if k in c})
+            row.append(d)
+        for x in extra:
+            row.append(_hdr(f"{x} 대비", **({"rowspan": hr} if i == 0 and hr > 1 else {}), **({"hide": True} if i else {})))
+        out.append(row)
+    for row in rows[hr:]:
+        label = _cell_text(row, lc).replace("{수치}", "[값]") if not match_org(_cell_text(row, lc), orgs) else _cell_text(row, lc)
+        lead = [_cell_text(row, j).replace("{수치}", "[값]") for j in range(lc)]       # 라벨 열 왼쪽의 묶음 열(본부A 같은 구분)은 글자 그대로
+        rk = next((k for k in (_row_kind(t) for t in lead + [label]) if k), None)
+        if rk:                                       # 소계·합계: 같은 열의 사업부 행 값을 코드가 더한다
+            sums = acc.sub(cols) if rk == "subtotal" else acc.total(cols)
+            sums = sums[:ncol - 1 - lc] + [{"text": "데이터 없음", "missing": True}] * max(0, ncol - 1 - lc - len(sums))
+            out.append([{"text": t} for t in lead] + [{"text": label}] + sums + [{"text": "데이터 없음", "missing": True} for _ in extra])
+            any_missing |= any(c["missing"] for c in sums) or bool(extra)
             continue
-        label = str(row[0].get("text") or "") if row and row[0]["type"] == "text" else ""
         org = match_org(label, orgs)
         if org and SCOPE_ORGS.get() and org not in SCOPE_ORGS.get():                       # 범위로 고른 조직이 아닌 조직 행은 뺀다
             continue
-        metric = _metric_in(label, metrics) or ("영업이익" if org else None)
+        metric = _metric_in(label, metrics)
+        row_is_metric = bool(metric)
+        if metric is None and org:
+            metric = "영업이익"
         gm = None
         if metric is None and (b.get("guess") or {}).get(label) in METRIC_COL:           # AI 가 추측한 지표(5단계 ⓘ 로 추측임을 표시)
             metric = gm = b["guess"][label]
-        bs = _bases(con, info, base["year"], base["month"], METRIC_COL[metric], org or SCOPE_ORG.get()) if metric else None
-        cells = [{"text": label, **({"guess": gm} if gm else {})}]
-        for j in range(1, len(row)):
-            c = row[j]
-            h = heads[j] if j < len(heads) else ""
-            txt, miss = "[값]", True
-            if bs is not None:
-                kw = _KEYWORD.search(h)
-                if "원인" in h or "소명" in h:
-                    t = cause.get(org) if org else None
-                    txt, miss = (t, False) if t else ("—", True)
-                elif "Gap" in h and bs["현재"] is not None and bs["계획"] is not None:
-                    txt, miss = eok(bs["현재"] - bs["계획"], diff=True), False
-                elif "실적" in h or (not kw and c["type"] == "number"):
-                    v = bs["현재"]
-                    txt, miss = (eok(v), False) if v is not None else ("데이터 없음", True)
-                elif kw:
-                    name = _cname(kw.group(0))
-                    v = bs.get(name)
-                    if v is None or bs["현재"] is None:
-                        txt, miss = "데이터 없음", True
-                    elif explicit_current:
-                        txt, miss = eok(v), False
-                    else:
-                        txt, miss = eok(bs["현재"] - v, diff=True), False
+            row_is_metric = True
+        resolved = bool(org or row_is_metric)
+        cells, raws = [{"text": t} for t in lead] + [{"text": label, **({"guess": gm} if gm else {})}], []
+        for j in range(lc + 1, ncol):
+            c = row[j] if j < len(row) else {"type": "number"}
+            col = cols[j - lc - 1] if j - lc - 1 < len(cols) else {"t": "unknown"}
+            raw = None
+            if col["t"] == "cause" and resolved:
+                t = cause.get(org) if org else None
+                txt, miss = (t, False) if t else ("—", True)
+            elif resolved:
+                txt, miss, raw = _calc(con, info, base, cache, col, _metric_for(col, metric, row_is_metric), org)
             elif c["type"] == "text":
-                txt, miss = str(c.get("text") or ""), False
+                txt = str(c.get("text") or "")
+                miss = "{수치}" in txt                                         # 가려 둔 숫자 자리가 화면에 그대로 새지 않게 [값] 으로
+                txt = txt.replace("{수치}", "[값]")
+            else:
+                txt, miss = "[값]", True
+            raws.append(raw)
             cells.append({"text": txt, "missing": miss})
             any_missing |= miss
         for x in extra:                                       # AI 편집으로 더한 '○○ 대비' 열: 같은 행의 현재 값과 비교 값의 차이(코드 계산)
+            bs = cache.get((metric, org or SCOPE_ORG.get())) if resolved else None
+            if resolved and bs is None and metric in METRIC_COL:
+                bs = cache[(metric, org or SCOPE_ORG.get())] = _bases(con, info, base["year"], base["month"], METRIC_COL[metric], org or SCOPE_ORG.get())
             ok = bs is not None and bs["현재"] is not None and bs.get(x) is not None
             cells.append({"text": eok(bs["현재"] - bs[x], diff=True) if ok else "데이터 없음", "missing": not ok})
             any_missing |= not ok
+        if org:
+            acc.org(raws)
+        else:
+            acc.other()
         out.append(cells)
     return out, any_missing
 
@@ -706,8 +833,22 @@ def q_unexplained(base):
 COL_KINDS = ("current", "cmp", "cmpval", "gap", "cause", "unknown")
 
 
-def derive_spec(rows, hr, metrics, orgs) -> dict:
-    """PDF 에서 읽은 표를 편집 가능한 스펙(행=지표/조직, 열=현재/비교)으로 바꾼다. 알 수 없는 행·열은 unknown 으로 두어 '데이터 없음' 칸이 된다."""
+def _classify(h: str, has_num: bool, explicit_current: bool) -> dict | None:
+    kw = _KEYWORD.search(h)
+    if "원인" in h or "소명" in h or "사유" in h:
+        return {"t": "cause"}
+    if "Gap" in h or "차이" in h or "증감" in h:
+        return {"t": "gap"}
+    if "실적" in h or (not kw and has_num):
+        return {"t": "current"}
+    if kw:
+        return {"t": "cmpval" if explicit_current else "cmp", "name": _cname(kw.group(0))}
+    return None
+
+
+def derive_spec(rows, hr, metrics, orgs, spans=None) -> dict:
+    """PDF 에서 읽은 표를 편집 가능한 스펙(행=지표/조직/소계/합계, 열=종류+지표)으로 바꾼다. 알 수 없는 행·열은 unknown 으로 두어 '데이터 없음' 칸이 된다.
+    머리가 여러 줄·병합이면 header_grid 로 열마다 경로(예: ['매출','계획'])를 만들고, 종류는 경로의 아랫칸, 지표는 경로의 글자에서 찾는다(키 metric: 없으면 행 지표를 쓰는 기존 동작)."""
     ncol = max((len(r) for r in rows), default=0)
     lead = 0
     for r in rows:
@@ -715,35 +856,55 @@ def derive_spec(rows, hr, metrics, orgs) -> dict:
             break
         lead += 1
     hr = max(hr, min(lead, max(1, len(rows) - 1)))
-    heads = [" ".join(str(rows[i][j].get("text") or "") for i in range(hr) if j < len(rows[i])) for j in range(ncol)]
-    explicit_current = any("실적" in h for h in heads)
+    lay = TH.header_layout(rows, hr, spans)
+    paths, amb = lay["paths"], lay["amb_cols"]
+    lc = _label_col(rows, hr, metrics, orgs)
+    explicit_current = any("실적" in " ".join(p) for p in paths)
     cols = []
-    for j in range(1, ncol):
-        h = heads[j] if j < len(heads) else ""
-        kw = _KEYWORD.search(h)
-        has_num = any(len(r) > j and r[j]["type"] == "number" for r in rows[hr:])
-        if "원인" in h or "소명" in h:
-            cols.append({"t": "cause"})
-        elif "Gap" in h or "차이" in h or "증감" in h:
-            cols.append({"t": "gap"})
-        elif "실적" in h or (not kw and has_num):
-            cols.append({"t": "current"})
-        elif kw:
-            cols.append({"t": "cmpval" if explicit_current else "cmp", "name": _cname(kw.group(0))})
-        else:
-            cols.append({"t": "unknown", "label": h or "열"})
+    for j in range(lc + 1, ncol):
+        path = paths[j] if j < len(paths) else []
+        h_all = " ".join(path)
+        body = [r for r in rows[hr:] if not _row_kind(str(r[0].get("text") or "") if r and r[0]["type"] == "text" else "")]      # 소계·합계 행은 빈 칸이 많아 판정에서 뺀다
+        has_num = bool(body) and sum(1 for r in body if len(r) > j and r[j]["type"] == "number") * 2 >= len(body)        # 절반 이상이 숫자 칸일 때만 숫자 열(글자 열에 null 이 섞여도 숫자 열로 오판하지 않는다)
+        if j in amb:                                         # 병합 범위를 모르는 머리 칸: 어느 지표 아래 열인지 추측하지 않는다(값 대신 '데이터 없음')
+            cols.append({"t": "unknown", "label": h_all or "열", "ambiguous": True})
+            continue
+        col = _classify(path[-1] if path else "", has_num, explicit_current)
+        if col is None and len(path) > 1:
+            col = _classify(h_all, has_num, explicit_current)
+        if col is None:
+            cols.append({"t": "unknown", "label": h_all or "열"})
+            continue
+        mt = _metric_in(h_all, metrics)
+        if mt and col["t"] != "cause":
+            col["metric"], col["label"] = mt, (path[-1] if path else "")
+        cols.append(col)
     out_rows = []
     for r in rows[hr:]:
-        label = str(r[0].get("text") or "") if r and r[0]["type"] == "text" else ""
+        label = _cell_text(r, lc)
+        lead = [_cell_text(r, j) for j in range(lc)]
+        rk = next((k for k in (_row_kind(t) for t in lead + [label]) if k), None)
+        if rk:
+            out_rows.append({"t": rk, "label": label or next((t for t in lead if t), ""), **({"texts": lead + [label]} if lc else {})})
+            continue
         org = match_org(label, orgs)
         mt = _metric_in(label, metrics)
-        out_rows.append({"t": "org", "code": org} if org else ({"t": "metric", "metric": mt} if mt else {"t": "unknown", "label": label}))
+        row = {"t": "org", "code": org} if org else ({"t": "metric", "metric": mt} if mt else {"t": "unknown", "label": label})
+        if lc:
+            row["lead"] = lead
+        out_rows.append(row)
     corner = str(rows[0][0].get("text") or "") if rows and hr and rows[0] and rows[0][0]["type"] == "text" else ""
-    return {"corner": corner, "rows": out_rows, "cols": cols}
+    spec = {"corner": corner, "rows": out_rows, "cols": cols}
+    if lc:                                                       # 라벨 열 왼쪽의 묶음 열(구분 등): 머리 글자와 행별 글자를 그대로 가진다
+        spec["lead_heads"] = [" ".join(paths[j]) if j < len(paths) else "" for j in range(lc)]
+        spec["corner"] = " ".join(paths[lc]) if lc < len(paths) else ""
+    return spec
 
 
 def _col_label(c, base):
     t = c.get("t")
+    if c.get("metric") and c.get("label"):
+        return str(c["label"])                               # 지표 묶음 아래의 열 이름은 PDF 에 적힌 글자(계획·실적·차이)
     if t == "current":
         return f"{base['month']}월"
     if t == "cmp":
@@ -757,42 +918,72 @@ def _col_label(c, base):
     return str(c.get("label") or "열")
 
 
+def _spec_header(spec, cols, base):
+    """열에 지표가 있으면 머리를 두 줄(지표 묶음 colspan / 열 이름)로, 없으면 한 줄로."""
+    corner = spec.get("corner") or ""
+    leads = spec.get("lead_heads") or []
+    if not any(c.get("metric") for c in cols):
+        return [[_hdr(h) for h in leads] + [_hdr(corner)] + [_hdr(_col_label(c, base)) for c in cols]]
+    top, bot, j = [_hdr(h, rowspan=2) for h in leads] + [_hdr(corner, rowspan=2)], [_hdr("", hide=True) for _ in leads] + [_hdr("", hide=True)], 0
+    while j < len(cols):
+        c = cols[j]
+        mt = c.get("metric")
+        if not mt:
+            top.append(_hdr(_col_label({**c, "metric": None}, base), rowspan=2))
+            bot.append(_hdr("", hide=True))
+            j += 1
+            continue
+        k = j
+        while k + 1 < len(cols) and cols[k + 1].get("metric") == mt:
+            k += 1
+        top.append(_hdr(mt, **({"colspan": k - j + 1} if k > j else {})))
+        top += [_hdr("", hide=True) for _ in range(j + 1, k + 1)]
+        bot += [_hdr(_col_label(cols[x], base)) for x in range(j, k + 1)]
+        j = k + 1
+    return [top, bot]
+
+
 def fill_spec_table(con, info, base, spec, cause, guess=None):
-    """스펙대로 표를 그린다. 칸 값은 전부 조회 DB 에서 코드가 계산한 값이고, 계산할 수 없으면 '데이터 없음'."""
+    """스펙대로 표를 그린다. 칸 값은 전부 조회 DB 에서 코드가 계산한 값이고, 계산할 수 없으면 '데이터 없음'. 열에 지표가 있으면 그 지표로 계산하고, 소계·합계는 사업부 행 값을 더한다."""
     orgs = info["orgs"]
     cols = [c for c in (spec.get("cols") or []) if c.get("t") in COL_KINDS]
-    header = [{"text": spec.get("corner") or ""}] + [{"text": _col_label(c, base)} for c in cols]
-    out, miss_any = [header], False
-    y, m = base["year"], base["month"]
+    out, miss_any, cache, acc = list(_spec_header(spec, cols, base)), False, {}, _Acc()
     for r in spec.get("rows") or []:
         t = r.get("t")
+        if t in ("subtotal", "total"):
+            sums = acc.sub(cols) if t == "subtotal" else acc.total(cols)
+            texts = r.get("texts") or [r.get("label") or ("소계" if t == "subtotal" else "합계")]
+            out.append([{"text": x} for x in texts] + sums)
+            miss_any |= any(c["missing"] for c in sums)
+            continue
         org = r.get("code") if t == "org" and any(o["code"] == r.get("code") for o in orgs) else None
         if org and SCOPE_ORGS.get() and org not in SCOPE_ORGS.get():
             continue
-        metric = r.get("metric") if t == "metric" and r.get("metric") in METRIC_COL else ("영업이익" if org else None)
+        row_is_metric = t == "metric" and r.get("metric") in METRIC_COL
+        metric = r.get("metric") if row_is_metric else ("영업이익" if org else None)
         label = (next((o["name"] for o in orgs if o["code"] == org), "") if org else (r.get("metric") if t == "metric" else r.get("label"))) or "—"
         gm = None
         if metric is None and (guess or {}).get(r.get("label")) in METRIC_COL:           # AI 가 추측한 지표
             metric = gm = guess[r.get("label")]
-        bs = _bases(con, info, y, m, METRIC_COL[metric], org or SCOPE_ORG.get()) if metric else None
-        cells = [{"text": str(label), **({"guess": gm} if gm else {})}]
+            row_is_metric = True
+        resolved = bool(org or row_is_metric)
+        cells, raws = [{"text": str(x)} for x in (r.get("lead") or [])] + [{"text": str(label), **({"guess": gm} if gm else {})}], []
         for c in cols:
-            ct = c["t"]
-            txt, miss = "데이터 없음", True
-            if bs is not None:
-                if ct == "current" and bs["현재"] is not None:
-                    txt, miss = eok(bs["현재"]), False
-                elif ct == "cmp" and bs["현재"] is not None and bs.get(c.get("name")) is not None:
-                    txt, miss = eok(bs["현재"] - bs[c["name"]], diff=True), False
-                elif ct == "cmpval" and bs.get(c.get("name")) is not None:
-                    txt, miss = eok(bs[c["name"]]), False
-                elif ct == "gap" and bs["현재"] is not None and bs["계획"] is not None:
-                    txt, miss = eok(bs["현재"] - bs["계획"], diff=True), False
-                elif ct == "cause":
-                    v = cause.get(org) if org else None
-                    txt, miss = (v, False) if v else ("—", True)
+            raw = None
+            if c["t"] == "cause":
+                v = cause.get(org) if org else None
+                txt, miss = (v, False) if (v and resolved) else ("—", True)
+            elif resolved:
+                txt, miss, raw = _calc(con, info, base, cache, c, _metric_for(c, metric, row_is_metric), org)
+            else:
+                txt, miss = "데이터 없음", True
+            raws.append(raw)
             cells.append({"text": txt, "missing": miss})
             miss_any |= miss
+        if org:
+            acc.org(raws)
+        else:
+            acc.other()
         out.append(cells)
     return out, miss_any
 

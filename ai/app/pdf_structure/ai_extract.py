@@ -58,7 +58,7 @@ def _ready(s) -> None:
 
 
 def _line_rows(lines) -> list[dict]:
-    return [{"id": l.lid, "text": X.mask(l.raw)[0], "cells": len(l.cells), "size": l.size, "bold": l.all_bold, "x": round(l.x0), "top": round(l.top)} for l in lines]
+    return [{"id": l.lid, "text": X.mask(l.raw)[0], "cells": len(l.cells), "size": l.size, "bold": l.all_bold, "x": round(l.x0), "x1": round(l.x1), "top": round(l.top)} for l in lines]
 
 
 def _call(s, image_png: bytes, lines) -> tuple[dict, int, int]:
@@ -146,17 +146,24 @@ def _compare(ai_blocks: list[dict], rule_blocks: list[dict]) -> None:
             b["needs_review"].append(X._flag("ai_rule_mismatch", f"AI 는 {b['kind']}, 코드 규칙은 {r['kind']} 로 봤습니다"))
 
 
-def _vision_call(s, png: bytes, system: str | None = None, task: str = "pdf_structure_vision", max_tokens: int = 4000) -> tuple[dict, int, int]:
+def _vision_call(s, png: bytes, system: str | None = None, task: str = "pdf_structure_vision", max_tokens: int = 4000, lines=None) -> tuple[dict, int, int]:
+    """그림(숫자 가림)을 보낸다. lines 가 있으면 번호 붙은 줄 목록(숫자는 {수치} 로 가린 글자)도 함께 보낸다."""
     _ready(s)
     log = CallLog(s.log_dir or s.output_dir)
     model = (getattr(s, "vlm_model", "") or s.openai_model) if task == "pdf_structure_vlm" else s.openai_model
-    meta = {"task": task, "status": "-", "model": model, "prompt_version": PROMPT_VERSION, "facts_hash": hashlib.sha256(png).hexdigest()[:12]}
+    rows = json.dumps(_line_rows(lines), ensure_ascii=False) if lines else ""
+    pv = PROMPT_VERSION
+    if task == "pdf_structure_vlm":
+        from . import vlm as V
+        pv = V.PROMPT_VERSION
+    meta = {"task": task, "status": "-", "model": model, "prompt_version": pv, "facts_hash": hashlib.sha256(png + rows.encode("utf-8")).hexdigest()[:12]}      # 그림 + 줄 목록 해시
     data_url = "data:image/png;base64," + base64.b64encode(png).decode()
+    ask = ("줄 목록:\n" + rows + "\n이 페이지의 구성을 읽어 주세요. 박스는 줄 id 로만 알려 주세요.") if rows else "이 페이지의 구성을 읽어 주세요. (줄 목록 없음)"
     try:
         client = openai_client.make_client(s)
         resp = client.chat.completions.create(
             model=model, temperature=0, max_tokens=max_tokens, response_format={"type": "json_object"},
-            messages=[{"role": "system", "content": system or VISION_SYSTEM}, {"role": "user", "content": [{"type": "text", "text": "이 페이지의 구성을 읽어 주세요."}, {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}}]}])
+            messages=[{"role": "system", "content": system or VISION_SYSTEM}, {"role": "user", "content": [{"type": "text", "text": ask}, {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}}]}])
         out = json.loads(resp.choices[0].message.content)
         if not isinstance(out, dict):
             raise ValueError("JSON object expected")
@@ -333,7 +340,7 @@ def vlm_primary(pages: list[dict], all_lines: list[list], rule_blocks: list[dict
         info0["note"] = str(e)
         return rule_blocks, info0
     imgs = images if images is not None else X.read_pdf(pdf_bytes, masked_images=True)[3]
-    blocks, info = V.extract_pages(s, pages, all_lines, imgs, rule_blocks, call=lambda png: _vision_call(s, png, V.SYSTEM, "pdf_structure_vlm", 6000),
+    blocks, info = V.extract_pages(s, pages, all_lines, imgs, rule_blocks, call=lambda png, ls: _vision_call(s, png, V.SYSTEM, "pdf_structure_vlm", 6000, lines=ls),
                                    allow_raw_image=allow_raw_image, max_pages=MAX_AI_PAGES, ready=lambda: _ready(s))
     if not info["used"]:
         info["note"] = info["note"] or "VLM 호출 없음"
@@ -345,7 +352,13 @@ def vlm_primary(pages: list[dict], all_lines: list[list], rule_blocks: list[dict
             if b["kind"] == "footnote":
                 t = b.get("_tgt")
                 b["_tgt"] = pl[t] if isinstance(t, int) and 0 <= t < len(pl) and pl[t] is not b else None
-    added = V.add_missed(vb0, rule_blocks, {p["page"]: (p["width"], p["height"]) for p in pages}) if all_lines and any(all_lines) else []
+    filled = V.fill_missing_lines(info.get("missing_lines") or {}, {i + 1: ls for i, ls in enumerate(all_lines)}, rule_blocks)       # VLM 이 블록에 넣지 않은 줄
+    filled_src = {tuple(f["line_ids"]) for f in filled}
+    added = V.add_missed(vb0, [r for r in rule_blocks if tuple(r.get("line_ids") or ()) not in filled_src], {p["page"]: (p["width"], p["height"]) for p in pages}) if all_lines and any(all_lines) else []
+    added = filled + added
+    if filled:
+        info["lines_missing_filled"] = len(filled)
+    info.pop("missing_lines", None)
     if added:
         blocks = sorted(blocks + added, key=lambda b: (b["page"], round(b["bbox"][1] / 6), b["bbox"][0]))
         info["added_from_rules"] = len(added)
@@ -357,6 +370,7 @@ def vlm_primary(pages: list[dict], all_lines: list[list], rule_blocks: list[dict
     V.repair_words(vb, {i + 1: ls for i, ls in enumerate(all_lines)})
     V.cross_check(vb, {i + 1: ls for i, ls in enumerate(all_lines)})
     info["boxes_snapped"] = V.snap_bboxes(vb, {i + 1: ls for i, ls in enumerate(all_lines)}, {p["page"]: (p["width"], p["height"]) for p in pages}, rule_blocks)
+    info["boxes_unresolved"] = sum(1 for b in vb if any(f["code"] == "box_unresolved" for f in b["needs_review"]))
     V.semantic_flags(blocks, known or {})
     info["coverage"] = V.coverage([b for b in blocks if b.get("from_vlm")], rule_blocks)
     X._link(blocks, body)
