@@ -373,7 +373,7 @@ components:
       example: st_3f9a1c
     Label:
       type: string
-      description: 화면 표시용 버전 이름(`2026-11-01`, `ver10.01`, `2027-PLAN-01`, `master_ver10`)
+      description: 화면 표시용 버전 이름(`2026-11-01`, `ver10.01`, `2027-PLAN-01`, `master_ver10.01`, `master_plan2027.01`)
       example: '2026-11-01'
     Scenario:
       type: string
@@ -1074,10 +1074,14 @@ components:
         month:
           type: integer
         seq:
-          type: integer
+          type:
+          - integer
+          - 'null'
+          description: 같은 월 안의 master 회차. 생성 대기면 null
         label:
           type: string
-          example: master_ver10
+          description: 생성 대기면 처음 만들어질 이름
+          example: master_ver10.01
         state:
           type: string
           enum:
@@ -3271,15 +3275,15 @@ paths:
                 - id: null
                   year: 2026
                   month: 10
-                  seq: 10
-                  label: master_ver10
+                  seq: null
+                  label: master_ver10.01
                   state: WAITING
                   createdAt: null
                 - id: '9'
                   year: 2026
                   month: 9
-                  seq: 9
-                  label: master_ver9
+                  seq: 1
+                  label: master_ver9.01
                   state: CONFIRMED
                   createdAt: '2026-10-12T03:00:00Z'
         '401':
