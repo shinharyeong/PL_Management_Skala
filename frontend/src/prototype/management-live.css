@@ -1,0 +1,38 @@
+/* Match the prototype surfaces while containing API titles and real filenames. */
+.live-management .mg-heading > div,.live-management .mg-notification-body { min-width:0; }
+.live-management .mg-notification-meta,.live-management .mg-filter-row,.live-management .mg-actions { flex-wrap:wrap; }
+.live-management .mg-notification h3,.live-management .mg-notification p { overflow-wrap:anywhere; }
+.live-management .mg-notification-action { flex-shrink:0; }
+.live-management .mg-table-scroll { min-width:0; max-width:100%; overflow:auto; }
+.live-management .mg-table { min-width:760px; }
+.live-management .mg-expanded .mg-reply { white-space:normal; }
+.live-management .mg-file-btn { white-space:normal; overflow-wrap:anywhere; text-align:left; }
+.live-management .mg-org-picker small,.live-management .mg-submission-state { display:block; margin-top:6px; color:var(--muted); font-size:12px; }
+.live-management .mg-org-picker button { overflow-wrap:anywhere; }
+.live-management .mg-back-link { align-self:flex-start; }
+.live-management .mg-field input[type=number] { max-width:140px; }
+.live-management .mg-unavailable,.live-management button:disabled { cursor:not-allowed; }
+.live-management .mg-unavailable:hover { border-color:#a8bee0; background:#f1f6fe; }
+.live-management .mg-text-button:disabled { opacity:.45; }
+@media(max-width:760px){
+ .live-management .mg-notification-action { min-width:0; flex-wrap:wrap; }
+ .live-management .mg-notification-meta { gap:8px; }
+ .live-management .mg-tabs { width:100%; }
+ .live-management .mg-tabs .btn { flex:1 1 120px; min-width:0; }
+ .live-management .mg-stat strong { font-size:30px; }
+ .live-management .mg-report-grid { grid-template-columns:minmax(0,1fr); }
+}
+.live-management .badge.mg-status-blue { background:#eaf2ff; color:#245fdb; }
+.live-management .badge.mg-status-purple { background:#f2eafe; color:#7435b6; }
+.live-management .badge.mg-status-red { background:#fff0f2; color:#c23246; }
+.live-management .badge.mg-status-gray { background:#eff2f6; color:#526174; }
+
+.live-management .mg-unread { background:#f1f6ff; border:2px solid #8cafe9; border-left:6px solid #245fdb; }
+.live-management .mg-read { background:#f8fafc; border:1px solid #dce3ed; border-left:4px solid #b8c3d3; }
+.live-management .notification-read-label { display:inline-flex; padding:3px 9px; border-radius:6px; font-weight:700; }
+.live-management .is-unread { background:#245fdb; color:#fff; }
+.live-management .is-read { background:#e4e9ef; color:#526176; }
+.live-management .badge.mg-status-amber { background:#fff0bd; color:#805200; border:1px solid #e7c469; }
+.live-management .badge.mg-status-blue { background:#dceeff; color:#17458f; border:1px solid #a5c7ee; font-weight:700; }
+.live-management .badge.mg-status-red { background:#ffe1dc; color:#a52d20; border:1px solid #e69c91; font-weight:700; }
+.live-management .mg-heading { flex-wrap:wrap; }

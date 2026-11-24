@@ -6,6 +6,20 @@ import { usePrototypeStore } from './store.js'
 import { createPrototypeRouter } from './router.js'
 import { challengeState } from './auth-demo.js'
 
+test('connected calculator opens before fetching results; cell and workspace still require context', async () => {
+  const store = {live:true,actor:{role:'planner'},activeOrg:'1',items:{},carts:{}}
+  const router=createPrototypeRouter(createMemoryHistory(),store)
+  await router.push('/calculator')
+  assert.equal(router.currentRoute.value.name,'calculator')
+  await router.push('/cell')
+  assert.equal(router.currentRoute.value.name,'monthly')
+  await router.push('/workspace')
+  assert.equal(router.currentRoute.value.name,'monthly')
+  store.items['1']=[{id:'2'}];store.carts['1']=[{id:'2'}]
+  await router.push('/workspace')
+  assert.equal(router.currentRoute.value.name,'workspace')
+})
+
 test('code expiry and resend use elapsed wall time, including inactive tabs', () => {
   assert.deepEqual(challengeState(null, 1000), { remaining: 0, resendIn: 0, expired: true })
   assert.deepEqual(challengeState(1000, 1000), { remaining: 180, resendIn: 60, expired: false })

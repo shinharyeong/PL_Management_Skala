@@ -1,9 +1,10 @@
 <script setup>
-import { onBeforeUnmount, onMounted, reactive, ref, computed } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSession } from '../stores/session'
 import { dateTime, errorText, query, saveBlob } from '../lib/display'
 import { formatMoney } from '../lib/decimal-display'
+import { gapFilterSnapshot, matchesGapFilter } from '../lib/gap-result-filter'
 import SubmissionReviews from './SubmissionReviews.vue'
 import RequestEditor from './RequestEditor.vue'
 import GapReviewTable from './GapReviewTable.vue'
@@ -26,14 +27,14 @@ const thresholds = ref(null)
 const loading = ref(false)
 const detailLoading = ref(false)
 const saving = ref(false)
-const thresholdBusy = ref('')
 const error = ref('')
 const thresholdError = ref('')
 const message = ref('')
 const thresholdMessage = ref('')
 const preview = ref(null)
-const create = reactive({ year: Number(route.query.year) || new Date().getFullYear(), month: Number(route.query.month) || 1, dueAt: '', message: '', organizationIds: [] })
+const create = reactive({ year: Number(route.query.year) || new Date().getFullYear(), month: Number(route.query.month) || new Date().getMonth() + 1, dueAt: '', message: '', organizationIds: [] })
 const criterion = reactive({ scenario: 'ACTUAL', percent: '', amount: '', percentEnabled: true, amountEnabled: true })
+const appliedCriterion = ref(null)
 const controller = new AbortController()
 let detailController = new AbortController()
 let generation = 0
@@ -182,7 +183,9 @@ async function loadThresholds() {
  * Side Effects: 기준 입력·미리보기 초기화. 명시된 값의 끝 소수 0·천 단위 구분자만 제거하며 미설정·빈 값은 빈칸으로 유지한다.
  */
 function changeScenario() {
-  const current = thresholds.value?.[criterion.scenario === 'ACTUAL' ? 'actual' : 'estimate']
+  const comparison = { ACTUAL_PLAN: 'ACTUAL_VS_PLAN', ESTIMATE_PREVIOUS: 'ESTIMATE_VS_PREVIOUS', ESTIMATE_PLAN: 'ESTIMATE_VS_PLAN' }[comparisonType.value]
+  const current = thresholds.value?.items?.find(item => item.comparison === comparison) || thresholds.value?.[criterion.scenario === 'ACTUAL' ? 'actual' : 'estimate']
+  if (!current) return
   criterion.percent = current?.percent != null && current.percent !== '' ? formatMoney(current.percent).replaceAll(',', '') : ''
   criterion.percentEnabled = current?.percentEnabled !== false
   criterion.amountEnabled = current?.amountEnabled !== false
@@ -190,28 +193,17 @@ function changeScenario() {
   preview.value = null
 }
 
-/** 명시 입력한 기준을 영향 미리보기 또는 새 유효 기준으로 요청한다.
- * Args: apply 저장 여부. Returns: Promise<void>. Raises: 없음(영역 표시).
- * Side Effects: preview POST 또는 기준 생성 POST·최신 기준 조회; 저장과 미리보기를 구분한다.
- */
-async function thresholdCommand(apply = false) {
-  if (thresholdBusy.value || !thresholds.value || (!apply && !selected.value)) return
-  if (!/^\d+(\.\d+)?$/.test(criterion.percent.trim()) || !/^\d+(\.\d+)?$/.test(criterion.amount.trim())) { thresholdError.value = '차이율과 최소 금액을 0 이상의 숫자로 직접 입력해 주세요.'; return }
-  const payload = { scenario: criterion.scenario, percent: criterion.percent.trim(), amount: criterion.amount.trim(), percentEnabled: criterion.percentEnabled, amountEnabled: criterion.amountEnabled }
-  const requestGeneration = generation
-  if (apply) payload.expectedStateToken = thresholds.value.stateToken
-  else payload.requestId = selected.value.id
-  const body = JSON.stringify(payload); const path = `/api/v1/gap-thresholds${apply ? '' : '/preview'}`
-  if (!keys.has(body)) keys.set(body, crypto.randomUUID())
-  thresholdBusy.value = apply ? 'apply' : 'preview'; thresholdError.value = ''; thresholdMessage.value = ''
+/** 입력 중인 조건을 미리 보거나 현재 표에 적용한다. 서버 기준·소명 상태는 변경하지 않는다. */
+function thresholdCommand(apply = false) {
+  thresholdError.value = ''; thresholdMessage.value = ''
   try {
-    const result = await session.request(path, { method: 'POST', body, headers: apply ? { 'Idempotency-Key': keys.get(body) } : {}, signal: controller.signal })
-    if (controller.signal.aborted) return
-    keys.delete(body)
-    if (apply) { thresholdMessage.value = '새 기준을 적용했습니다. 작성 중인 초안은 재검증하고, 이미 제출한 소명의 고정 기준은 유지됩니다.'; await loadThresholds() }
-    else if (requestGeneration === generation && selected.value?.id === payload.requestId) preview.value = { ...result, percent: payload.percent, amount: payload.amount }
-  } catch (cause) { if (cause.name !== 'AbortError' && (apply || requestGeneration === generation)) thresholdError.value = errorText(cause) }
-  finally { if (!controller.signal.aborted) thresholdBusy.value = '' }
+    const snapshot = gapFilterSnapshot(criterion)
+    if (apply) {
+      appliedCriterion.value = snapshot; selectedReviews.value = []; preview.value = null
+      if (!criteriaRows.value.some(row => row.workflowState === activeTab.value)) activeTab.value = 'ALL'
+      thresholdMessage.value = '표시 조건을 적용했습니다. 소명 요청 대상은 항목을 선택해 정합니다.'
+    } else preview.value = { evaluatedItemCount: displayRows.value.length, matchedItemCount: displayRows.value.filter(row => matchesGapFilter(row, snapshot)).length }
+  } catch (cause) { thresholdError.value = errorText(cause) }
 }
 
 /** 조직의 최신 제출본 또는 요청별 이력으로 이동하는 경로를 만든다.
@@ -314,8 +306,23 @@ const displayRows = computed(() => {
     return { ...value, review, selectionId: customComparison ? `compare:${value.reportItem.id}` : review?.id, customComparison, workflowState: review?.workflowState || 'OPTIONAL', actionable: canAct.value && (customComparison ? baseline?.status !== 'DRAFT' && value.valueStatus === 'AVAILABLE' : !!review) }
   })
 })
-const tabCounts = computed(() => Object.fromEntries(tabs.map(tab => [tab.key, displayRows.value.filter(row => tab.key === 'ALL' || row.workflowState === tab.key).length])))
-const filteredRows = computed(() => displayRows.value.filter(row => (!workspace.value || workspace.value.reviewItemIds.includes(row.review?.id)) && (!focusedReportItemId.value || row.reportItem.id === focusedReportItemId.value) && (activeTab.value === 'ALL' || row.workflowState === activeTab.value) && (!search.value || row.reportItem.name.includes(search.value) || row.reportItem.code.includes(search.value))))
+const criteriaRows = computed(() => displayRows.value.filter(row => (!appliedCriterion.value || matchesGapFilter(row, appliedCriterion.value)) && (!workspace.value || workspace.value.reviewItemIds.includes(row.review?.id)) && (!focusedReportItemId.value || row.reportItem.id === focusedReportItemId.value)))
+const tabCounts = computed(() => Object.fromEntries(tabs.map(tab => [tab.key, criteriaRows.value.filter(row => tab.key === 'ALL' || row.workflowState === tab.key).length])))
+const filteredRows = computed(() => criteriaRows.value.filter(row => (activeTab.value === 'ALL' || row.workflowState === activeTab.value) && (!search.value || row.reportItem.name.includes(search.value) || row.reportItem.code.includes(search.value))))
+const appliedCriteriaLabel = computed(() => {
+  const current = appliedCriterion.value
+  if (!current) return '표시 조건 미적용 · 기준 적용을 눌러 조회 결과를 거르세요.'
+  const parts = []
+  if (current.percentEnabled) parts.push(`차이율 절댓값 ${formatMoney(current.percent)}% 이상`)
+  if (current.amountEnabled) parts.push(`차액 절댓값 ${formatMoney(current.amount)}원 이상`)
+  return `적용된 표시 조건: ${parts.length ? parts.join(' · ') : '필터 끔 · 금액이 바뀐 전체 항목'}`
+})
+/** 탭·검색·조회 조건으로 감춰진 항목은 일괄 처리에 포함하지 않는다. */
+watch(filteredRows, rows => {
+  const visible = new Set(rows.map(row => row.selectionId || row.review?.id).filter(Boolean))
+  selectedReviews.value = selectedReviews.value.filter(id => visible.has(id))
+}, { flush: 'sync' })
+watch(criterion, () => { preview.value = null })
 const targetName = computed(() => target.value?.organization.name || '사업조직')
 
 /** 비교 필터의 현재 시나리오를 반환한다. Args: 없음. Returns: ACTUAL/ESTIMATE. Raises: 없음. Side Effects: 없음. */
@@ -381,7 +388,6 @@ async function loadComparison() {
     ])
     if (generation !== workspaceGeneration) return
     currentSubmission.value = submission; reviewRows.value = reviews
-    if (workspace.value) selectedReviews.value = workspace.value.reviewItemIds.filter(id => reviews.some(item => item.id === id && item.workflowState === 'SELECTED'))
     if (baselineId.value) {
       const result = await session.request('/api/v1/submissions/' + currentId.value + '/comparison' + query({ baselineSubmissionId: baselineId.value, scenario: scenario(), baselineScenario: baselineScenario(), month: comparisonMonth.value }), { signal: workspaceController.signal })
       if (generation !== workspaceGeneration) return
@@ -389,6 +395,7 @@ async function loadComparison() {
     }
     if (generation !== workspaceGeneration) return
     if (!displayRows.value.some(row => row.workflowState === activeTab.value)) activeTab.value = 'ALL'
+    if (workspace.value) selectedReviews.value = filteredRows.value.filter(row => row.workflowState === 'SELECTED' && workspace.value.reviewItemIds.includes(row.review?.id)).map(row => row.review.id)
   } catch (cause) { if (generation === workspaceGeneration && cause.name !== 'AbortError') workspaceError.value = errorText(cause) }
   finally { if (generation === workspaceGeneration) workspaceLoading.value = false }
 }
@@ -444,7 +451,7 @@ function openRequest() { requestDialog.value?.showModal() }
 /** 작업공간의 현재 선정 항목 전체에 소명을 요청할 입력창을 연다.
  * Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 체크 선택·모달 변경; 요청은 확인 후 전송.
  */
-function requestWorkspace() { selectedReviews.value = reviewRows.value.filter(item => workspace.value?.reviewItemIds.includes(item.id) && item.workflowState === 'SELECTED').map(item => item.id); if (selectedReviews.value.length) beginAction('REQUEST_EXPLANATION') }
+function requestWorkspace() { selectedReviews.value = filteredRows.value.filter(item => workspace.value?.reviewItemIds.includes(item.review?.id) && item.workflowState === 'SELECTED').map(item => item.review.id); if (selectedReviews.value.length) beginAction('REQUEST_EXPLANATION') }
 
 /** 현재 선택한 두 버전의 실제 비교표를 내려받는다.
  * Args: 없음. Returns: Promise<void>. Raises: 없음(화면 표시). Side Effects: GET·사용자가 요청한 파일 다운로드.
@@ -462,18 +469,18 @@ async function downloadComparison() {
 <template>
   <div class="gap-page">
     <header class="page-heading"><h1>월간 시트 관리</h1><div class="button-row"><button class="button" :disabled="!comparison || workspaceLoading" @click="downloadComparison">엑셀 다운로드</button><button class="button" @click="openRequest">요청·제출 현황</button><RouterLink v-if="publication?.latestMasterId" :to="'/planning/masters/' + publication.latestMasterId" class="button">마스터 확인</RouterLink></div></header>
-    <section v-if="workspace" class="panel workspace-heading"><div class="section-heading"><div><h2>{{ workspace.organizationName }} · 선택 항목 검토</h2><p class="muted">선정 {{ workspace.reviewItemIds.length }}항목입니다. 조회 월·비교 필터로 항목을 확인한 뒤 소명을 요청하세요. 요청한 항목은 이 작업공간에서 제거됩니다.</p></div><RouterLink :to="{ path: '/planning/gap', query: { requestId: selectedId, organizationId } }" class="text-button">전체 월간 시트</RouterLink></div><button class="button primary" :disabled="workspaceLoading || !canAct || !workspace.reviewItemIds.length" @click="requestWorkspace">이 사업부 선정 항목 전체 소명 요청</button></section><div class="sheet-selectors"><label>제출 요청<select v-model="selectedId" :disabled="loading || !!workspace" @change="loadDetail"><option v-if="!requests.length" value="">등록된 요청 없음</option><option v-for="item in requests" :key="item.id" :value="String(item.id)">{{ item.year }}년 {{ item.month }}월 실적·추정</option></select></label><label>기준 대상<select v-model="currentId" :disabled="workspaceLoading || !versions.length || !!workspace" @change="loadComparison"><option value="">조직 제출본 선택</option><option v-for="item in versions.filter(item => item.type === 'MONTHLY_ACTUAL')" :key="item.id" :value="item.id">{{ versionLabel(item) }}</option></select></label><label>비교 대상<select v-model="baselineId" :disabled="workspaceLoading || !versions.length || !!workspace" @change="loadComparison"><option value="">선택하세요</option><option v-for="item in versions" :key="item.id" :value="item.id">{{ versionLabel(item) }}</option></select></label></div>
+    <section v-if="workspace" class="panel workspace-heading"><div class="section-heading"><div><h2>{{ workspace.organizationName }} · 선택 항목 검토</h2><p class="muted">선정 {{ workspace.reviewItemIds.length }}항목입니다. 조회 월·비교 필터로 항목을 확인한 뒤 소명을 요청하세요. 요청한 항목은 이 작업공간에서 제거됩니다.</p></div><RouterLink :to="{ path: '/planning/gap', query: { requestId: selectedId, organizationId } }" class="text-button">전체 월간 시트</RouterLink></div><button class="button primary" :disabled="workspaceLoading || !canAct || !filteredRows.some(item => item.workflowState === 'SELECTED')" @click="requestWorkspace">현재 표시된 선정 항목 소명 요청</button></section><div class="sheet-selectors"><label>제출 요청<select v-model="selectedId" :disabled="loading || !!workspace" @change="loadDetail"><option v-if="!requests.length" value="">등록된 요청 없음</option><option v-for="item in requests" :key="item.id" :value="String(item.id)">{{ item.year }}년 {{ item.month }}월 실적·추정</option></select></label><label>기준 대상<select v-model="currentId" :disabled="workspaceLoading || !versions.length || !!workspace" @change="loadComparison"><option value="">조직 제출본 선택</option><option v-for="item in versions.filter(item => item.type === 'MONTHLY_ACTUAL')" :key="item.id" :value="item.id">{{ versionLabel(item) }}</option></select></label><label>비교 대상<select v-model="baselineId" :disabled="workspaceLoading || !versions.length || !!workspace" @change="loadComparison"><option value="">선택하세요</option><option v-for="item in versions" :key="item.id" :value="item.id">{{ versionLabel(item) }}</option></select></label></div>
     <div v-if="error" class="alert error" role="alert">{{ error }}</div><p v-if="message" class="alert success" role="status">{{ message }}</p>
     <section class="panel gap-criteria" aria-labelledby="criteria-title">
       <form class="criteria-controls" @submit.prevent="thresholdCommand(true)">
         <div class="criteria-title"><h2 id="criteria-title">Gap 기준</h2><small>중복 선택 가능</small></div>
-        <label class="criterion-toggle"><input v-model="criterion.percentEnabled" type="checkbox" :disabled="!!thresholdBusy" />차이율</label><label class="criterion-input"><span class="visually-hidden">차이율</span><input v-model="criterion.percent" inputmode="decimal" :disabled="!!thresholdBusy || !criterion.percentEnabled" required /><span>%</span></label>
-        <label class="criterion-toggle"><input v-model="criterion.amountEnabled" type="checkbox" :disabled="!!thresholdBusy" />최소 금액</label><label class="criterion-input"><span class="visually-hidden">최소 금액 원</span><input v-model="criterion.amount" inputmode="decimal" :disabled="!!thresholdBusy || !criterion.amountEnabled" required /><span>원</span></label>
+        <label class="criterion-toggle"><input v-model="criterion.percentEnabled" type="checkbox" :disabled="workspaceLoading" />차이율</label><label class="criterion-input"><span class="visually-hidden">차이율</span><input v-model="criterion.percent" inputmode="decimal" :disabled="workspaceLoading || !criterion.percentEnabled" required /><span>%</span></label>
+        <label class="criterion-toggle"><input v-model="criterion.amountEnabled" type="checkbox" :disabled="workspaceLoading" />최소 금액</label><label class="criterion-input"><span class="visually-hidden">최소 금액 원</span><input v-model="criterion.amount" inputmode="decimal" :disabled="workspaceLoading || !criterion.amountEnabled" required /><span>원</span></label>
         <label class="comparison-filter"><span class="visually-hidden">비교 필터</span><select v-model="comparisonType" :disabled="workspaceLoading" @change="changeComparisonType"><option value="ACTUAL_PLAN">실적 vs 계획</option><option value="ESTIMATE_PREVIOUS">추정 vs 추정</option><option value="ESTIMATE_PLAN">추정 vs 계획</option></select></label>
-        <button class="button dark" :disabled="!!thresholdBusy || !thresholds || (!criterion.percentEnabled && !criterion.amountEnabled)">기준 적용</button>
+        <button class="button dark" :disabled="workspaceLoading">기준 적용</button>
       </form>
-      <div class="criteria-help"><span>켜진 기준을 모두 초과한 항목을 소명 대상으로 판단합니다.</span><button class="text-button" :disabled="!!thresholdBusy || !selected" @click="thresholdCommand(false)">영향 미리보기</button></div>
-      <p v-if="thresholdError" class="alert error" role="alert">{{ thresholdError }}</p><p v-if="thresholdMessage" class="notice" role="status">{{ thresholdMessage }}</p><p v-if="preview" class="notice">평가 {{ preview.evaluatedItemCount }}항목 중 {{ preview.exceededItemCount }}항목 · {{ preview.exceededOrganizationCount }}조직이 기준을 초과합니다.</p>
+      <div class="criteria-help"><span>켜진 조건을 모두 충족한 항목을 표시합니다. 둘 다 끄면 금액이 바뀐 전체 항목을 표시합니다.</span><button class="text-button" :disabled="workspaceLoading || !selected" @click="thresholdCommand(false)">결과 미리보기</button></div>
+      <p v-if="thresholdError" class="alert error" role="alert">{{ thresholdError }}</p><p v-if="thresholdMessage" class="notice" role="status">{{ thresholdMessage }}</p><p v-if="preview" class="notice">현재 비교 {{ preview.evaluatedItemCount }}항목 중 {{ preview.matchedItemCount }}항목이 입력한 조건을 충족합니다. 기준 적용을 누르면 표에 반영됩니다.</p>
     </section>
     <ReviewPolicySettings :request-id="selected?.id || ''" @changed="loadComparison" />
     <ol class="review-pipeline" aria-label="검토 진행 단계"><li v-for="(stage, index) in tabs.slice(0,5)" :key="stage.key" :class="'stage-' + (index + 1)"><button @click="activeTab = stage.key"><b>{{ index + 1 }}</b><div><strong>{{ stage.label }}</strong><small>{{ ['차이 항목 확인', '검토 결과 확정', '조직 소명 수집', '보완 내용 재검토', '소명 및 확정'][index] }}</small></div></button></li></ol>
@@ -484,6 +491,7 @@ async function downloadComparison() {
       <p v-if="workspaceError" class="alert error" role="alert">{{ workspaceError }} <button class="text-button" @click="loadComparison">다시 조회</button></p>
       <p v-if="loading || detailLoading || workspaceLoading" class="empty" role="status">제출 버전과 비교 항목을 불러오는 중…</p>
       <template v-else>
+        <p class="applied-criteria" role="status">{{ appliedCriteriaLabel }}</p>
         <GapReviewTable :rows="filteredRows" :catalog="catalog" :unit="unit" :sort="sort" :selected="selectedReviews" :comparison-type="comparisonType" @toggle="toggleReview" @detail="openReview" @source="openSource" />
         <p class="review-count">{{ targetName }} · {{ filteredRows.length }}항목<span v-if="currentSubmission"> · {{ currentSubmission.versionLabel || '신규 업로드 · 미확정' }} · {{ statusLabel(currentSubmission.status) }}</span></p>
         <SubmissionExplanationPolicy v-if="currentSubmission" :submission="currentSubmission" /><div v-if="currentSubmission" class="review-context"><p>다른 버전을 선택한 비교에서도 항목을 체크해 소명을 요청할 수 있습니다. 이번 요청의 비교 근거를 보존하며 제출 당시 자동 검증 기준은 유지됩니다.</p><RouterLink :to="{ path: '/submissions/' + currentSubmission.id, query: { from: 'gap', requestId: selectedId, organizationId } }" class="text-button">{{ currentSubmission.status === 'PENDING' ? '제출 승인·반려 검토 →' : '제출 내역 확인 →' }}</RouterLink></div>
@@ -500,6 +508,7 @@ async function downloadComparison() {
 </template>
 
 <style scoped>
+.applied-criteria{font-size:12px;color:var(--muted);padding:12px 0;margin:0;line-height:1.6}
 .reply-toggle{background:transparent;padding:0;text-align:left;font:inherit;color:inherit}.reply-selected{background:#faf7f1}.reply-detail>td{padding:20px;background:#fcfbf9}.reply-heading{display:flex;align-items:center;justify-content:space-between;gap:15px}.reply-heading p{font-size:11px;color:var(--muted);margin-top:6px}.reply-explanations{margin:20px 0}.reply-explanations summary{font-size:13px}@media(max-width:760px){.reply-heading{align-items:flex-start;flex-direction:column}}
 
 .sheet-selectors{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:18px 0}.sheet-selectors label{font-size:11px;color:#8b919c}.sheet-selectors select{font-size:12px}.criteria-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.criteria-title{min-width:96px;flex:1}.criteria-title h2{font-size:14px}.criteria-title small{display:block;color:#8e95a2;font-size:10px;margin-top:10px}.criterion-toggle{display:flex;align-items:center;gap:8px;border:1px solid #c59a60;background:#f6f0e4;border-radius:6px;padding:10px 12px;font-size:12px;white-space:nowrap;color:#775326;min-height:40px}.criterion-toggle input{accent-color:#a9875b;width:16px;min-height:16px;margin:0}.criterion-input{position:relative;width:114px}.criterion-input:nth-of-type(4){width:145px}.criterion-input input{margin:0;padding-right:28px;min-height:40px}.criterion-input>span:last-child{position:absolute;right:10px;top:11px;font-size:11px;color:#7b8291;font-weight:400}.comparison-filter select{margin:0;min-height:40px}.criteria-controls .button{min-height:40px}.criteria-help{display:flex;justify-content:space-between;color:#7b8291;font-size:11px;margin-left:110px;gap:10px}.criteria-help .text-button{font-size:11px;white-space:nowrap}.review-pipeline{list-style:none;display:grid;grid-template-columns:repeat(5,1fr);gap:18px;margin:26px 24px;padding:0}.review-pipeline li{border:1px solid #f0c86e;border-radius:7px;background:#fff7e6;position:relative}.review-pipeline li:not(:last-child)::after{content:'›';position:absolute;right:-12px;top:22px;color:#929baa}.review-pipeline button{background:transparent;padding:15px 12px;display:flex;align-items:flex-start;gap:10px;text-align:left;width:100%;color:#865b13}.review-pipeline b{display:flex;justify-content:center;align-items:center;width:24px;height:24px;border-radius:50%;background:currentColor;font-size:11px;position:relative;color:#865b13;flex-shrink:0}.review-pipeline b{background:#865b13;color:white}.review-pipeline .stage-2 b{background:#2d63aa;color:white}.review-pipeline .stage-3 b{background:#7e4eb3;color:white}.review-pipeline .stage-4 b{background:#b9573a;color:white}.review-pipeline .stage-5 b{background:#247a62;color:white}.review-pipeline strong{font-size:12px}.review-pipeline small{display:block;font-size:10px;color:#78808e;margin-top:7px}.review-pipeline .stage-2{background:#edf3ff;border-color:#b9d2fc}.stage-2 button,.stage-2 b{color:#2d63aa}.review-pipeline .stage-3{background:#f6efff;border-color:#dab8fa}.stage-3 button,.stage-3 b{color:#7e4eb3}.review-pipeline .stage-4{background:#fff1eb;border-color:#f3c3ac}.stage-4 button,.stage-4 b{color:#b9573a}.review-pipeline .stage-5{background:#ebf8f3;border-color:#9bcfbd}.stage-5 button,.stage-5 b{color:#247a62}.review-board{padding:22px 24px;min-height:480px}.review-tabs{display:flex;gap:20px;overflow-x:auto;border-bottom:1px solid #f1efea}.review-tabs button{white-space:nowrap;background:transparent;padding:0 0 12px;color:#7c8391;font-size:12px;border-bottom:2px solid transparent}.review-tabs span{font-size:11px;color:#929baa;margin-left:8px}.review-tabs .active{font-weight:700;color:#16181d;border-color:#16181d}.review-tabs .active span{color:#a9875b}.review-filters{display:flex;align-items:center;gap:10px;margin:4px 0}.review-filters label{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:400;color:#a0a7b2;white-space:nowrap}.review-filters select,.review-filters input{margin:0;font-size:11px;min-height:34px}.review-filters .search{margin-left:12px;flex:1;max-width:260px}.review-filters label:last-child{margin-left:auto}.review-count{font-size:11px;text-align:center;color:#77808d;margin-top:8px}.review-context{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:14px;gap:18px}.review-context p{font-size:11px;color:#7b8291;line-height:1.7;max-width:70%}.review-context a{white-space:nowrap;font-size:11px}.selection-bar{display:flex;align-items:center;justify-content:space-between;gap:20px;background:#14171e;border-radius:12px;padding:14px 24px;position:sticky;bottom:16px;z-index:3;box-shadow:0 5px 20px #14171e15;color:white}.selection-bar>strong{font-size:13px}.selection-bar .button{font-size:11px;min-height:36px}.selection-bar .clear-selection{background:#2a2f3a;border-color:#2a2f3a;color:#eee}.selection-bar .exclude-selection{background:#b8c4d3;border-color:#b8c4d3;color:#14171e}.selection-bar .primary{min-width:200px}.selection-bar .button:disabled{opacity:.45}.gap-detail-dialog{width:min(1120px,calc(100vw - 40px));padding:24px}.gap-detail-dialog>.section-heading{margin-bottom:20px}.action-items{max-height:180px;overflow:auto;font-size:12px;color:var(--muted);line-height:1.9;margin:0;padding-left:20px}.monthly-request-dialog{width:min(1000px,calc(100vw - 40px))}.monthly-request-dialog>.section-heading{margin-bottom:14px}.create-month{margin:20px 0}.create-month form{display:flex;flex-direction:column;gap:16px;margin-top:18px}.request-summary{display:flex;justify-content:space-between;margin:20px 0;font-size:13px}.request-summary span{color:var(--muted)}.organization-checks{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.organization-checks label{display:flex;gap:7px;align-items:center;font-size:11px}.organization-checks input{width:14px;min-height:14px;margin:0}.draft-link{display:block;margin-top:8px}td small{display:block;color:var(--muted);font-size:10px;margin-top:4px}@media(max-width:1150px){.review-filters{flex-wrap:wrap}.criteria-help{margin-left:0}.review-pipeline{gap:12px;margin:20px 0}.review-pipeline button{padding:12px 8px;gap:6px}.review-pipeline strong{font-size:11px}.review-pipeline b{width:20px;height:20px}}@media(max-width:760px){.sheet-selectors{grid-template-columns:1fr}.review-pipeline{grid-template-columns:repeat(2,1fr)}.review-pipeline li::after{display:none}.review-context{align-items:flex-start;flex-direction:column}.review-context p{max-width:none}.selection-bar{flex-wrap:wrap;padding:16px;gap:12px}.selection-bar .primary{min-width:0}.selection-bar .button-row{width:100%}.selection-bar .button{flex:1}.review-board{padding:16px}.review-filters label:last-child{margin-left:0}.organization-checks{grid-template-columns:1fr 1fr}}
