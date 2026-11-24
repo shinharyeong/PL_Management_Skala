@@ -267,8 +267,8 @@ HOME-03~06 계산 기준:
 | RPT-06 | GET | `/report/templates/{templateId}` | 틀 불러오기(구성 확인 건너뜀) | `version`(기본 최신) | `template`, `definition` | P | RPT-003 | report_template_version |
 | RPT-07 | GET | `/report/periods` | 기준 월 선택지와 월별 상태 | `year`(기본 올해) | `default{year, month}`(최근 확정 월, 없으면 최근 잠정 월), `year`, `months[{month, state: CONFIRMED·PROVISIONAL·NONE, masterId?}]` (보고서용 뷰 `dim_version` 기준) | P | RPT-004 | master_version, submission |
 | RPT-08 | GET | `/report/metrics` | 지표 사전 목록 | `q` | `items[{id, code, name, description}]` | P | RPT-005 | metric |
-| RPT-09 | POST | `/report/metrics` | 자주 쓰는 SQL을 지표 사전으로 등록 | `code`, `name`, `description`, `sqlText` | `metric{id}` · 오류 `SQL_NOT_ALLOWED` | P | RPT-006 | metric |
-| RPT-10 | POST | `/report/data` | 블록 데이터 채우기(지표 또는 확정 SQL, AI 문장 없음). report-ai로 위임 | `base{year, month}`, `blocks[]`(틀의 블록 그대로) | `dataStatus`, `blocks[{id, …}]`(AI 형식, 계산할 수 없는 칸은 `missing`) | P | RPT-004, 005 | db-mcp 보고서용 뷰 |
+| RPT-09 | POST | `/report/metrics` | 자주 쓰는 SQL을 지표 사전으로 등록(검사는 report-ai `/v1/sql-check`) | `code`, `name`, `description`, `sqlText` | `201` `metric{id, code, name}` · 오류 `SQL_NOT_ALLOWED`(422), `METRIC_CODE_EXISTS`(409), `REPORT_AI_UNAVAILABLE`(503) | P | RPT-006 | metric |
+| RPT-10 | POST | `/report/data` | 블록 데이터 채우기(지표 또는 확정 SQL, AI 문장 없음). report-ai로 위임 | `base{year, month}`, `blocks[]`(틀의 블록 그대로, `metricId`는 backend가 지표 SQL로 바꿔 넘김) | `dataStatus`, `blocks[{id, …}]`(AI 형식, 계산할 수 없는 칸은 `missing`) | P | RPT-004, 005 | db-mcp 보고서용 뷰 |
 | RPT-11 | POST | `/report/nl-query` | 자연어 질의 → SQL 생성·미리보기(text2SQL, 읽기 전용) | `question`, `baseYear`, `baseMonth` | `status: OK·CLARIFY·UNKNOWN`, `sql`, `explanation`, `preview{columns, rows}`, `clarifyQuestion`, `clarifyOptions[]` | P | RPT-006 | db-mcp 보고서용 뷰 |
 | RPT-12 | GET | `/report/explanation-categories` | 소명 사유 유형 분류표 | `tableVersion`(기본 최신) | `items[{id, code, name, parentCode, catchAll, assignable}]` (상위 유형 = 하위 합, catchAll = '기타') | P | RPT-007 | explanation_category |
 | RPT-13 | GET | `/report/explanations` | Gap 설명 블록용 승인 소명 카드 + 제안 분류 | `year`, `month`, `comparison` (실적 비교는 기준 월, 추정 비교는 기준 월+1 항목) | `items[{explanationId, organization, item, gapAmount, answer, categoryId, suggestedCategoryId, suggestionSource: RULE·LAST_MONTH}]`, `reviewing[]`, `gapTotal`, `categoryTotals`, `classifiedTotal`, `matchesGapTotal` | P | RPT-007 | review_explanation, explanation_classification, gap_comparison |
@@ -293,6 +293,7 @@ report-ai app은 상태를 저장하지 않는다. 저장·권한·감사는 bac
 | report-ai → backend | `POST /internal/pdf-jobs/{jobId}/result` | `status: SUCCEEDED·FAILED`, `definition`(틀 초안, `TemplateDefinition`), `pages[{no, width, height, imagePng(base64, 숫자 가림)}]`, `error{code, message}` | `204` | RPT-02 |
 | backend → report-ai | `POST /v1/data` | `base{year, month}`, `blocks[]` | `dataStatus`, `blocks[{id, …}]` | RPT-10 |
 | backend → report-ai | `POST /v1/nl-query` | `question`, `baseYear`, `baseMonth`, `conversationId?` | RPT-11 응답과 같은 모양(`status`, `sql`, `explanation`, `preview`, `clarifyQuestion`, `clarifyOptions`) | RPT-11 |
+| backend → report-ai | `POST /v1/sql-check` | `sql` | `ok`, `sql`, `code`, `message`(실행하지 않음) | RPT-09 |
 | backend → report-ai | `POST /v1/edit` | `definition`, `instruction` | RPT-15 응답과 같은 모양(`status`, `message`, `proposals[]`) | RPT-15 |
 | backend → parser-worker | RabbitMQ `parse.jobs` (메시지: `parsingJobId`) | — | — | UP-03 (2차) |
 

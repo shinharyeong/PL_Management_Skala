@@ -190,6 +190,54 @@ class ReportAiRelayIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void metricsAreCheckedByReportAiAndResolvedForData() throws Exception {
+        String sql = "SELECT org_name, op_won FROM v_op WHERE version = :version";
+        when(reportAi.post(eq("/v1/sql-check"), eq(Map.of("sql", sql)), eq(plannerId)))
+                .thenReturn(objectMapper.readTree("{\"ok\": true, \"sql\": \"" + sql + "\"}"));
+        when(reportAi.post(eq("/v1/sql-check"), eq(Map.of("sql", "DELETE FROM fact")), eq(plannerId)))
+                .thenReturn(objectMapper.readTree("{\"ok\": false, \"code\": \"NOT_SELECT\", \"message\": \"SELECT 만 허용\"}"));
+        String code = "OP_" + UUID.randomUUID().toString().substring(0, 6).toUpperCase().replace("-", "");
+
+        // RPT-09 등록: report-ai sqlguard가 통과시킨 SQL만. 같은 코드는 409, 막힌 SQL은 422
+        String id = objectMapper.readTree(metric(code, sql).andExpect(status().isCreated())
+                .andExpect(jsonPath("$.code").value(code)).andReturn().getResponse().getContentAsString()).get("id").asText();
+        metric(code, sql).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("METRIC_CODE_EXISTS"));
+        metric(code + "X", "DELETE FROM fact").andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("SQL_NOT_ALLOWED"))
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("SELECT 만 허용")));
+        mvc.perform(auth(post("/api/v1/report/metrics"), planner).header("Idempotency-Key", "it-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"code\": \"lower\", \"name\": \"x\", \"sqlText\": \"SELECT 1\"}"))
+                .andExpect(status().isBadRequest());
+
+        // RPT-08 목록(검색). SQL은 내보내지 않는다
+        mvc.perform(auth(get("/api/v1/report/metrics").param("q", code), planner))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].id").value(id))
+                .andExpect(jsonPath("$.items[0].sqlText").doesNotExist());
+
+        // RPT-10: 블록의 metricId를 등록된 SQL로 바꿔 report-ai에 넘긴다. 없는 지표는 400
+        when(reportAi.post(eq("/v1/data"), any(), eq(plannerId))).thenReturn(objectMapper.readTree("{\"dataStatus\": \"CONFIRMED\", \"blocks\": []}"));
+        mvc.perform(auth(post("/api/v1/report/data"), planner).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"base\": {\"year\": 2026, \"month\": 11}, \"blocks\": [{\"id\": \"b1\", \"kind\": \"table\", \"metricId\": \"" + id + "\"}]}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<Object> body = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(reportAi).post(eq("/v1/data"), body.capture(), eq(plannerId));
+        java.util.List<com.fasterxml.jackson.databind.JsonNode> blocks =
+                (java.util.List<com.fasterxml.jackson.databind.JsonNode>) ((Map<String, Object>) body.getValue()).get("blocks");
+        assertThat(blocks.get(0).get("sql").asText()).isEqualTo(sql);
+        mvc.perform(auth(post("/api/v1/report/data"), planner).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"base\": {\"year\": 2026, \"month\": 11}, \"blocks\": [{\"id\": \"b1\", \"kind\": \"table\", \"metricId\": \"999999999\"}]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    private org.springframework.test.web.servlet.ResultActions metric(String code, String sql) throws Exception {
+        return mvc.perform(auth(post("/api/v1/report/metrics"), planner).header("Idempotency-Key", "it-" + UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("code", code, "name", "조직별 영업이익", "sqlText", sql))));
+    }
+
     private String createJob() throws Exception {
         return objectMapper.readTree(mvc.perform(auth(multipart("/api/v1/report/pdf-jobs")
                         .file(new MockMultipartFile("file", "a.pdf", "application/pdf", PDF)), planner))
