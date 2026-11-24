@@ -35,6 +35,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/codes", "/api/v1/auth/sessions").permitAll()
                         // 쿠버네티스 프로브가 health/readiness·liveness를 인증 없이 부른다.
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/error").permitAll()
+                        // report-ai → backend 내부 보고(명세 12절). Ingress에 열지 않고, 컨트롤러가 X-Internal-Token을 확인한다.
+                        .requestMatchers(HttpMethod.POST, "/internal/pdf-jobs/*/result").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(handling -> handling
                         .authenticationEntryPoint((request, response, e) ->

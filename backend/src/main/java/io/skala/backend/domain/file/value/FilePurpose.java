@@ -20,6 +20,8 @@ public enum FilePurpose {
     EXPLANATION_ATTACHMENT("drafts/attachments/", Set.of(), 16L * 1024 * 1024),
     /** AI 보고서 틀 분석용 PDF */
     REPORT_PDF("uploads/pdf/", Set.of("pdf"), 30L * 1024 * 1024),
+    /** report-ai가 보고한 PDF 분석 결과 JSON(틀 초안·숫자 가린 페이지 이미지, pdf_job.result_object_key) */
+    REPORT_PDF_RESULT("results/pdf/", Set.of("json"), 100L * 1024 * 1024),
     /** 파서 출력 전체 JSON(parsing_job.result_object_key, submission_validation.parser_result_object_key) */
     PARSER_RESULT("results/parser/", Set.of("json"), 100L * 1024 * 1024),
     /** 검증 결과 JSON — UP-05 오류 목록(submission_validation.validation_result_object_key) */
