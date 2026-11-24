@@ -136,7 +136,7 @@ public class ExplanationAnswerService {
 
     private Writable writable(Long reviewItemId, AuthenticatedUser user, String expectedStateToken) {
         user.requireRole(UserRole.ORG_MANAGER);
-        ReviewItem item = reviewItemQueryService.load(reviewItemId, user);
+        ReviewItem item = reviewItemQueryService.lockForCommand(reviewItemId, user);
         Submission submission = item.getSubmission();
         ReviewExplanation current = ReviewItemQueryService.currentExplanation(
                 reviewExplanationRepository.findAllByReviewItemIdOrderByRoundAsc(item.getId()), item);

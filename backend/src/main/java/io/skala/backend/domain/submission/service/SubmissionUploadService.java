@@ -95,7 +95,7 @@ public class SubmissionUploadService {
 
     @Transactional
     public ParsingJobResponse retry(Long submissionId, AuthenticatedUser user, String expectedStateToken) {
-        Submission submission = submissionAccess.loadForOrgManager(submissionId, user);
+        Submission submission = submissionAccess.lockForOrgManager(submissionId, user);
         ParsingJob job = parsingJobRepository.findBySubmissionId(submissionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
         StateToken.verify(expectedStateToken, SubmissionStateToken.of(submission, job));
