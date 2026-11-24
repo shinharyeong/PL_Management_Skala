@@ -274,7 +274,7 @@ HOME-03~06 계산 기준:
 | RPT-13 | GET | `/report/explanations` | Gap 설명 블록용 승인 소명 카드 + 제안 분류 | `year`, `month`, `comparison` (실적 비교는 기준 월, 추정 비교는 기준 월+1 항목) | `items[{explanationId, organization, item, gapAmount, answer, categoryId, suggestedCategoryId, suggestionSource: RULE·LAST_MONTH}]`, `reviewing[]`, `gapTotal`, `categoryTotals`, `classifiedTotal`, `matchesGapTotal` | P | RPT-007 | review_explanation, explanation_classification, gap_comparison |
 | RPT-14 | PUT | `/report/explanations/{explanationId}/classification` | 소명 카드를 분류함에 배치 | `categoryId`(null이면 빼기), `comparison?` | `explanationId`, `categoryId`, `categoryTotals`, `classifiedTotal`, `gapTotal`, `matchesGapTotal` · 오류 `EXPLANATION_NOT_ACCEPTED`(409), `CATEGORY_NOT_ASSIGNABLE`(400) | P | RPT-007 | explanation_classification |
 | RPT-15 | POST | `/report/ai/edit` | 대화로 자료 편집 → 변경안(블록 추가·삭제·이동·글꼴). 숫자는 바꾸지 않음 | `definition`, `instruction` | `status: EDIT·CLARIFY·REFUSED·UNAVAILABLE`, `message`, `proposals[{op: add_block·remove_block·move_block·set_style·add_column, target, description, patch}]` | P | RPT-012 | — (저장 안 함) |
-| RPT-16 | POST | `/report/export` | 자료 내보내기(1개씩). 결과는 저장하지 않고 바로 내려줌 | `templateId`, `version`, `period`, `blockId?`, `format`=PDF·PPTX·XLSX·PNG | 파일 스트림 | P | RPT-008, 009 | — |
+| RPT-16 | POST | `/report/export` | 자료 XLSX 내보내기(1개씩, 저장 안 함). 틀·기준 월로 다시 채워 숫자는 원 단위 값 그대로. PNG·PDF는 화면(브라우저)에서 만든다 | `templateId`, `version?`(기본 최신), `period{year, month}`, `blockId?`, `format`=XLSX | xlsx 스트림 · 오류 `REPORT_AI_UNAVAILABLE`(503) | P | RPT-008, 009 | — |
 
 ## 12. backend ↔ report-ai 내부 API (클러스터 내부)
 

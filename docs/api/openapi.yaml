@@ -5169,8 +5169,11 @@ paths:
       operationId: exportReport
       tags:
       - AI 보고서
-      summary: RPT-16 자료 내보내기(1개씩, 저장하지 않음)
-      description: 서버에 설치된 글꼴만 사용(PDF 호환). 잠정 월이면 '잠정' 표시를 붙인다.
+      summary: RPT-16 자료 XLSX 내보내기(1개씩, 저장하지 않음)
+      description: |-
+        서버는 XLSX만 만든다. PNG·PDF는 화면에 보이는 그대로 브라우저에서 만든다(배치를 서버에서 다시 그리지 않음).
+        화면에서 받은 숫자를 쓰지 않고, 저장된 틀(templateId·version)과 기준 월(period)로 report-ai에 다시 채워(RPT-10과 같은 경로)
+        숫자를 원 단위 값 그대로 넣는다. 잠정 월이면 제목에 '(잠정)'. version을 비우면 최신, blockId를 주면 그 블록만.
       x-fr:
       - FR-RPT-008
       - FR-RPT-009
@@ -5182,14 +5185,17 @@ paths:
               type: object
               required:
               - templateId
-              - version
               - period
               - format
               properties:
                 templateId:
                   $ref: '#/components/schemas/Id'
                 version:
-                  type: integer
+                  type:
+                  - integer
+                  - 'null'
+                  minimum: 1
+                  description: 비우면 최신 버전
                 period:
                   type: object
                   required:
@@ -5208,10 +5214,8 @@ paths:
                 format:
                   type: string
                   enum:
-                  - PDF
-                  - PPTX
                   - XLSX
-                  - PNG
+                  description: PNG·PDF는 화면에서 만든다
       responses:
         '200':
           $ref: '#/components/responses/FileStream'
@@ -5224,7 +5228,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '503':
-          description: '`PROCESSING_UNAVAILABLE` 렌더링 서비스 일시 불가'
+          description: '`REPORT_AI_UNAVAILABLE` 숫자를 다시 채울 보고서 AI에 연결할 수 없음'
           content:
             application/problem+json:
               schema:

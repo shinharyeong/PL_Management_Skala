@@ -1,10 +1,12 @@
 package io.skala.backend.domain.report.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.skala.backend.domain.report.dto.ExportRequest;
 import io.skala.backend.domain.report.dto.MetricDtos;
 import io.skala.backend.domain.report.dto.PdfJobResponse;
 import io.skala.backend.domain.report.dto.ReportAiRequests;
 import io.skala.backend.domain.report.service.ReportAiRelayService;
+import io.skala.backend.domain.report.service.ReportExportService;
 import io.skala.backend.domain.report.service.ReportMetricService;
 import io.skala.backend.domain.report.service.ReportPdfJobService;
 import io.skala.backend.global.exception.BusinessException;
@@ -15,7 +17,10 @@ import io.skala.backend.global.security.AuthenticatedUser;
 import io.skala.backend.global.security.CurrentUser;
 import jakarta.validation.Valid;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -41,6 +46,7 @@ public class ReportAiController {
     private final ReportPdfJobService pdfJobs;
     private final ReportAiRelayService relay;
     private final ReportMetricService metricService;
+    private final ReportExportService exportService;
     private final CurrentUser currentUser;
     private final IdempotentCommandExecutor idempotency;
 
@@ -97,6 +103,17 @@ public class ReportAiController {
     @PostMapping("/nl-query")
     public JsonNode nlQuery(@Valid @RequestBody ReportAiRequests.NlQuery request) {
         return relay.nlQuery(currentUser.get(), request);
+    }
+
+    /** RPT-16 XLSX 내보내기(저장하지 않음). 틀·기준 월로 다시 채워 원 단위 값 그대로. PNG·PDF는 화면에서 */
+    @PostMapping("/export")
+    public ResponseEntity<byte[]> export(@Valid @RequestBody ExportRequest request) {
+        ReportExportService.Export file = exportService.export(currentUser.get(), request);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(file.filename(), StandardCharsets.UTF_8).build().toString())
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(file.content());
     }
 
     /** RPT-15 대화 편집 변경안(저장하지 않음, 적용은 화면·저장은 RPT-05) */
