@@ -297,7 +297,7 @@ report-ai app은 상태를 저장하지 않는다. 저장·권한·감사는 bac
 | backend → parser-worker | RabbitMQ `parse.jobs` (메시지: `parsingJobId`) | — | — | UP-03 (2차) |
 
 - 틀 형식(`definition`)의 기준은 AI다. backend는 저장 봉투만 검사한다(`backend/src/main/resources/report/template-definition.schema.json`, AI `model.py StoredTemplate`에서 `python ai/tools/export_template_schema.py`로 생성, AI 테스트가 어긋나면 실패).
-- 공통 헤더: 양방향 모두 `X-Internal-Token`(Secret `REPORT_AI_TOKEN`, 비어 있으면 검사 안 함: 로컬 개발). backend → report-ai는 `X-Request-Id`, `X-User-Id`(감사·호출 한도용)도 보낸다. backend `/internal/**`는 Ingress에 열지 않는다(Ingress는 `/api`만). 주소: backend `REPORT_AI_URL`(`http://ai:8000`), report-ai `AI_BACKEND_URL`(`http://backend:8080`).
+- 공통 헤더: 양방향 모두 `X-Internal-Token`(Secret `REPORT_AI_TOKEN`). 운영(backend `prod` 프로필 `app.report-ai.require-token=true`, report-ai `AI_REQUIRE_INTERNAL_TOKEN=true`)은 토큰이 설정되지 않으면 내부 보고·계약 API를 거부하고 상대를 부르지 않는다. 비어 있어도 통과하는 것은 로컬 개발(기본값 false)뿐이다. backend → report-ai는 `X-Request-Id`, `X-User-Id`(감사·호출 한도용)도 보낸다. backend `/internal/**`는 Ingress에 열지 않는다(Ingress는 `/api`만). 주소: backend `REPORT_AI_URL`(`http://ai:8000`), report-ai `AI_BACKEND_URL`(`http://backend:8080`).
 - report-ai 연결 실패·시간 초과·5xx는 공개 API에서 `503 REPORT_AI_UNAVAILABLE`, report-ai의 4xx는 `400 REPORT_AI_REJECTED`. 결과 보고가 이미 끝난 작업에 다시 오면 바꾸지 않는다. 틀 초안이 저장 봉투에 맞지 않으면 작업을 `FAILED`(`INVALID_TEMPLATE`)로 둔다.
 - report-ai가 키 없음·한도 초과·실패로 AI를 못 쓰면 규칙 기반으로 답하고 응답에 그 사실을 표시한다(`UNAVAILABLE` 등). 숫자는 항상 코드가 보고서용 뷰에서 계산한다.
 

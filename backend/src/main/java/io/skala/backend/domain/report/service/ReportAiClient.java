@@ -27,15 +27,25 @@ public class ReportAiClient {
 
     private final RestClient client;
     private final String token;
+    private final boolean requireToken;
 
     public ReportAiClient(@Value("${app.report-ai.base-url}") String baseUrl,
                           @Value("${app.report-ai.token:}") String token,
-                          @Value("${app.report-ai.timeout-seconds:90}") int timeoutSeconds) {
+                          @Value("${app.report-ai.timeout-seconds:90}") int timeoutSeconds,
+                          @Value("${app.report-ai.require-token:false}") boolean requireToken) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(5));
         factory.setReadTimeout(Duration.ofSeconds(timeoutSeconds));
         this.client = RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
         this.token = token;
+        this.requireToken = requireToken;
+        if (requireToken && !hasToken()) {
+            log.warn("REPORT_AI_TOKEN이 없어 보고서 AI 호출과 내부 보고를 모두 거부합니다(app.report-ai.require-token=true).");
+        }
+    }
+
+    private boolean hasToken() {
+        return token != null && !token.isBlank();
     }
 
     /** JSON 요청 → JSON 응답(/v1/data, /v1/nl-query, /v1/edit) */
@@ -68,6 +78,9 @@ public class ReportAiClient {
     }
 
     private <T> T call(java.util.function.Supplier<T> request, String path) {
+        if (requireToken && !hasToken()) {                 // 토큰 없이 내부 호출을 보내지 않는다(운영)
+            throw ReportErrorCode.REPORT_AI_UNAVAILABLE.exception();
+        }
         try {
             return request.get();
         } catch (RestClientResponseException e) {
@@ -80,8 +93,12 @@ public class ReportAiClient {
         }
     }
 
-    /** 내부 보고 토큰 확인(설정이 비어 있으면 검사하지 않음: 로컬 개발) */
+    /** 내부 보고 토큰 확인. 설정이 비어 있으면 require-token=false(로컬 개발)일 때만 통과, 운영은 거부 */
     public boolean acceptsToken(String header) {
-        return token == null || token.isBlank() || token.equals(header);
+        if (!hasToken()) {
+            return !requireToken;
+        }
+        return java.security.MessageDigest.isEqual(token.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                header == null ? new byte[0] : header.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 }
