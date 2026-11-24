@@ -107,7 +107,8 @@ public class SubmissionSubmitService {
                 && explanationTargetService.prepared(submissionId) && items.stream().allMatch(SubmitPreviewResponse.Item::answered);
         return new SubmitPreviewResponse(
                 new SubmitPreviewResponse.FileInfo(submission.getOriginalFilename(),
-                        organization.getCode() + "_" + expectedLabel + ".xlsx"),
+                        organization.getCode() + "_" + expectedLabel + "."
+                                + SubmissionFileNames.extension(submission.getOriginalFilename())),
                 expectedLabel, baseline, items, canSubmit, SubmissionStateToken.of(submission, job));
     }
 

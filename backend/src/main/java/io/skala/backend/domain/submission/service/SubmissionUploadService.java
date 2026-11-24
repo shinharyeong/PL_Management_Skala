@@ -77,13 +77,13 @@ public class SubmissionUploadService {
             throw new BusinessException(ErrorCode.INVALID_REQUEST, "빈 파일은 올릴 수 없습니다.");
         }
         SubmissionFileNames.check(filename, request, organization.getCode());
-        if (!SubmissionFileNames.looksLikeXlsx(content)) {
+        if (!SubmissionFileNames.looksLikeWorkbook(content)) {
             throw new BusinessException(ErrorCode.UNSUPPORTED_FILE_TYPE);
         }
 
         StoredObject stored = fileStorage.save(FilePurpose.SUBMISSION_EXCEL, filename,
                 contentType == null || contentType.isBlank()
-                        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : contentType,
+                        ? SubmissionFileNames.defaultContentType(filename) : contentType,
                 new ByteArrayInputStream(content));
         Submission submission = submissionRepository.save(Submission.draft(requestId, organization.getId(), filename,
                 stored, appUserRepository.getReferenceById(user.id()), OffsetDateTime.now(clock)));

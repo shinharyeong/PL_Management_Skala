@@ -47,7 +47,7 @@ public class SubmissionDiagnosticsService {
                 "/api/v1/submissions/" + submissionId + "/file");
         if (job.getStatus() == ParsingJobStatus.FAILED) {
             String guide = FAILURE_GUIDES.getOrDefault(job.getErrorCode(),
-                    "파일을 읽을 수 없습니다. .xlsx 양식 파일인지 확인해 다시 시도하거나 파일을 다시 선택해 주세요.");
+                    "파일을 읽을 수 없습니다. .xlsx·.xlsb 양식 파일인지 확인해 다시 시도하거나 파일을 다시 선택해 주세요.");
             return new DiagnosticsResponse(file, 1, List.of(new DiagnosticsResponse.Item(null, null, "파일 읽기", guide)));
         }
         if (job.getStatus() != ParsingJobStatus.SUCCEEDED) {
