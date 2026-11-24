@@ -105,7 +105,7 @@ public class GapCalculator {
     public Map<GapBasis, Map<Key, Aggregate>> values(Map<GapBasis, Submission> sources) {
         Map<GapBasis, Map<Key, Aggregate>> values = new EnumMap<>(GapBasis.class);
         sources.forEach((basis, source) -> values.put(basis, ChangeDetector.aggregate(
-                financialValueRepository.findAllWithLineBySubmissionId(source.getId()))));
+                financialValueRepository.findRequestYearValuesBySubmissionId(source.getId()))));
         return values;
     }
 }

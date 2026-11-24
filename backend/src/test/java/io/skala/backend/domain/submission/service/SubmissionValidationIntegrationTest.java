@@ -75,10 +75,11 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         long octJob = job(octSubmission);
         IngestionResult octResult = complete(octJob, data(SHA_OCT, List.of(
                 line("1:10", "REVENUE", SALES_KEY, "매출", 10, "A-1",
-                        value(10, "ACTUAL", "1000", "N10"), value(11, "ESTIMATE", "1100", "O10")))));
+                        value(10, "ACTUAL", "1000", "N10"), value(11, "ESTIMATE", "1100", "O10"),
+                        priorYear(10, "800", "B10")))));
         assertThat(octResult.diagnostics()).isEmpty();
         assertThat(octResult.lineCount()).isEqualTo(1);
-        assertThat(octResult.valueCount()).isEqualTo(2);
+        assertThat(octResult.valueCount()).isEqualTo(3); // 전년 실적 열도 참고값으로 저장
 
         AuthenticatedUser managerUser = new AuthenticatedUser(manager, UserRole.ORG_MANAGER, orgId);
         ValidationResponse octValidation = validationService.validate(octSubmission, token(octSubmission), managerUser);
@@ -100,13 +101,14 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         long novJob = job(novSubmission);
         IngestionResult novResult = complete(novJob, data(SHA_NOV, List.of(
                 line("1:10", "REVENUE", SALES_KEY, "매출", 10, "A-1",
-                        value(10, "ACTUAL", "1000.000000", "N10"), value(11, "ESTIMATE", "1300", "O10")),
+                        value(10, "ACTUAL", "1000.000000", "N10"), value(11, "ESTIMATE", "1300", "O10"),
+                        priorYear(10, "900", "B10")),
                 line("2:5", "COST", RENT_KEY, "비용", 5, "C-9",
                         value(11, "ESTIMATE", "50", "O5"),
                         new Value(2026, 12, "ESTIMATE", null, "MISSING", "STORED_BLANK", "P5", "slot:x"))),
                 List.of(new ReportItem(RENT_KEY, "COST", "임차료", List.of("판관비", "임차료"), "RESOLVED"))));
         assertThat(novResult.diagnostics()).isEmpty();
-        assertThat(novResult.valueCount()).isEqualTo(3);
+        assertThat(novResult.valueCount()).isEqualTo(4);
 
         assertThatThrownBy(() -> validationService.validate(novSubmission, token(novSubmission),
                 new AuthenticatedUser(outsider, UserRole.ORG_MANAGER, otherOrgId)))
@@ -118,7 +120,10 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         assertThat(nov.baseline().kind()).isEqualTo(BaselineKind.PREV_MONTH_APPROVED);
         assertThat(nov.baseline().submissionId()).isEqualTo(String.valueOf(octSubmission));
         assertThat(nov.baseline().label()).isEqualTo("2026-10-01");
-        assertThat(nov.progress().required()).isEqualTo(2); // 11월 추정 매출, 11월 추정 임차료
+        // 11월 추정 매출, 11월 추정 임차료. 전년 실적은 금액이 바뀌었어도 검토 대상이 아니다(#59)
+        assertThat(nov.progress().required()).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from review_item where submission_id = ? and year <> 2026",
+                Integer.class, novSubmission)).isZero();
         assertThat(nov.progress().answered()).isZero();
         assertThat(nov.canSubmit()).isFalse();
 
@@ -168,12 +173,37 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
                 List.of());
         IngestionResult result = complete(jobId, bad);
 
+        // 이전 연도(2026) 열만 있어 요청 연도(2030) 양식이 아니다
         assertThat(result.diagnostics()).extracting("rule")
                 .containsExactlyInAnyOrder("ORGANIZATION_MISMATCH", "PERIOD_OUT_OF_RANGE");
         assertThat(parsingJobRepository.findById(jobId).orElseThrow().getErrorCode()).isEqualTo("VALIDATION_FAILED");
         assertThatThrownBy(() -> validationService.validate(submission, token(submission),
                 new AuthenticatedUser(manager, UserRole.ORG_MANAGER, orgId)))
                 .isInstanceOf(BusinessException.class).extracting("code").isEqualTo("VALIDATION_FAILED");
+    }
+
+    @Test
+    void 요청_연도_이후_금액_열은_기간_일치_오류다() {
+        long orgId = insert("insert into organization(code, name) values ('ORG8', '미래사업부') returning id");
+        long planner = insert("insert into app_user(email, name, role) values ('p8@x.io', '기획', 'PLANNER') returning id");
+        long manager = insert("insert into app_user(email, name, role, organization_id) values ('o8@x.io', '담당', 'ORG_MANAGER', "
+                + orgId + ") returning id");
+        long plan = insert("insert into annual_plan(year, status) values (2026, 'CONFIRMED') "
+                + "on conflict (year) do update set year = excluded.year returning id");
+        long req = request(plan, 4, planner);
+        jdbc.update("insert into request_target(request_id, organization_id) values (?, ?)", req, orgId);
+        long submission = draft(req, orgId, manager, "drafts/future.xlsx", SHA_OCT);
+
+        IngestionResult result = complete(job(submission), new ParserSubmissionData("financial-submission/1.0",
+                SHA_OCT, new Owner("ORG8", "미래사업부", "RESOLVED"),
+                List.of(new ReportItem(SALES_KEY, "REVENUE", "제품매출", List.of("매출", "제품매출"), "RESOLVED")),
+                List.of(line("1:10", "REVENUE", SALES_KEY, "매출", 10, "A-1", value(4, "ACTUAL", "1", "N10"),
+                        new Value(2027, 1, "PLAN", "2", "AVAILABLE", "PRESENT", "Z10", "rec:Z10"))),
+                List.of()));
+
+        assertThat(result.diagnostics()).extracting("rule").containsExactly("PERIOD_OUT_OF_RANGE");
+        assertThat(result.diagnostics()).extracting("sourceCell").containsExactly("매출!Z10");
+        assertThat(result.valueCount()).isEqualTo(1);
     }
 
     private String token(long submissionId) {
@@ -230,6 +260,10 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
                              Value... values) {
         return new Line(key, domain, new Source(sheet, row), new Account("ACC-" + row, "계정" + row), detailId, null,
                 reportKey, "RESOLVED", "관리분류", "실적기준", null, "T1", "K1", "거래내역", List.of(values));
+    }
+
+    private static Value priorYear(int month, String amount, String cell) {
+        return new Value(2025, month, "ACTUAL", amount, "AVAILABLE", "PRESENT", cell, "rec:" + cell);
     }
 
     private static Value value(int month, String scenario, String amount, String cell) {

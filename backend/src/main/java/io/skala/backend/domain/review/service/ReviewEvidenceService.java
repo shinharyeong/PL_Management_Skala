@@ -132,7 +132,7 @@ public class ReviewEvidenceService {
     }
 
     private List<FinancialValue> cellsOf(Submission submission, Key key) {
-        return financialValueRepository.findAllWithLineBySubmissionId(submission.getId()).stream()
+        return financialValueRepository.findRequestYearValuesBySubmissionId(submission.getId()).stream()
                 .filter(v -> v.getLine().getReportItem().getId().equals(key.reportItemId())
                         && v.getYear() == key.year() && v.getMonth() == key.month() && v.getScenario() == key.scenario())
                 .toList();

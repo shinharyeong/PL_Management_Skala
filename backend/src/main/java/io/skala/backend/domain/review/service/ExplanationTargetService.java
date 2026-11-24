@@ -61,9 +61,9 @@ public class ExplanationTargetService {
     @Transactional(propagation = Propagation.MANDATORY)
     public Progress prepare(Submission submission, Submission baseline, boolean rejectedBase) {
         Map<Key, Aggregate> current = ChangeDetector.aggregate(
-                financialValueRepository.findAllWithLineBySubmissionId(submission.getId()));
+                financialValueRepository.findRequestYearValuesBySubmissionId(submission.getId()));
         Map<Key, Aggregate> before = baseline == null ? null : ChangeDetector.aggregate(
-                financialValueRepository.findAllWithLineBySubmissionId(baseline.getId()));
+                financialValueRepository.findRequestYearValuesBySubmissionId(baseline.getId()));
         List<Detection> detections = ChangeDetector.detect(current, before);
 
         Map<Key, ReviewItem> existing = byKey(reviewItemRepository.findAllWithReportItemBySubmissionId(submission.getId()));
@@ -164,7 +164,7 @@ public class ExplanationTargetService {
     @Transactional(readOnly = true)
     public boolean contextMatches(Submission submission, Submission baseline) {
         Map<Key, Aggregate> before = baseline == null ? Map.of() : ChangeDetector.aggregate(
-                financialValueRepository.findAllWithLineBySubmissionId(baseline.getId()));
+                financialValueRepository.findRequestYearValuesBySubmissionId(baseline.getId()));
         for (ReviewItem item : reviewItemRepository.findAllWithReportItemBySubmissionId(submission.getId())) {
             if (!Boolean.TRUE.equals(item.getActive())) {
                 continue;

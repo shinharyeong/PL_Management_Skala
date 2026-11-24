@@ -36,7 +36,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 파서 결과(submissionData)를 financial_line·financial_value에 적재하고 account_item·report_item에 연결한다.
  *
  * <p>파서 계약상 호출자(백엔드)가 확인해야 하는 것: 원본 해시, 조직 일치, 요청 연도 밖 기간, 보고 항목 미연결,
- * 중복 상세 ID, 미확정 금액. 이 검사에서 걸린 항목은 {@link IngestionDiagnostic}으로 돌려주고, 저장할 수 있는
+ * 중복 상세 ID, 미확정 금액. 요청 연도보다 이른 연도 열(양식의 전년 실적 등)은 참고값으로 저장하고 오류로 보지 않는다.
+ * 검토(변경 감지·Gap)는 요청 연도 금액만 쓴다. 이 검사에서 걸린 항목은 {@link IngestionDiagnostic}으로 돌려주고, 저장할 수 있는
  * 행·금액만 저장한다. 빈 금액(MISSING)은 저장하지 않으며 0으로 바꾸지 않는다.
  */
 @Service
@@ -44,6 +45,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class FinancialIngestionService {
 
     static final String SUPPORTED_ADAPTER = "financial-submission/1.0";
+    /** financial_value.year 하한(DB 검사 조건) */
+    private static final int MIN_YEAR = 2000;
 
     private final ReportItemRepository reportItemRepository;
     private final AccountItemRepository accountItemRepository;
@@ -53,7 +56,7 @@ public class FinancialIngestionService {
     /**
      * @param submission   적재 대상 DRAFT 제출본
      * @param organization 제출 조직(파서가 확인한 소유 조직과 대조)
-     * @param requestYear  요청 연도. 이 연도 밖 금액은 오류로 본다
+     * @param requestYear  요청 연도. 이후 연도 금액이나 요청 연도 금액 열이 하나도 없는 파일은 오류로 본다
      * @param data         파서 submissionData
      */
     @Transactional(propagation = Propagation.MANDATORY)
@@ -73,6 +76,7 @@ public class FinancialIngestionService {
         Set<String> seenRows = new HashSet<>();
         List<FinancialValue> values = new ArrayList<>();
         int lineCount = 0;
+        boolean hasRequestYear = false;
 
         for (Line line : data.lines()) {
             String rowRef = line.source() == null ? null : line.source().sheet() + "!" + line.source().row();
@@ -111,7 +115,12 @@ public class FinancialIngestionService {
                     .sourceRow(line.source().row())
                     .build());
             lineCount++;
-            collectValues(saved, line, requestYear, values, diagnostics);
+            hasRequestYear |= collectValues(saved, line, requestYear, values, diagnostics);
+        }
+        if (lineCount > 0 && !hasRequestYear) {
+            // 이전 연도 열만 있으면 다른 연도 양식이다.
+            diagnostics.add(new IngestionDiagnostic(null, null, "PERIOD_OUT_OF_RANGE",
+                    "요청 연도(" + requestYear + "년) 금액 열이 없습니다. 요청한 연도의 양식인지 확인해 주세요."));
         }
         financialValueRepository.saveAll(values);
         return new IngestionResult(lineCount, values.size(), diagnostics);
@@ -204,8 +213,10 @@ public class FinancialIngestionService {
                         .orElseGet(() -> accountItemRepository.save(AccountItem.create(type, code, name))));
     }
 
-    private void collectValues(FinancialLine saved, Line line, int requestYear, List<FinancialValue> values,
-                               List<IngestionDiagnostic> diagnostics) {
+    /** @return 요청 연도 금액 열(빈 칸 포함)이 하나라도 있으면 true */
+    private boolean collectValues(FinancialLine saved, Line line, int requestYear, List<FinancialValue> values,
+                                  List<IngestionDiagnostic> diagnostics) {
+        boolean hasRequestYear = false;
         Set<String> slots = new HashSet<>();
         for (Value value : line.values()) {
             String cell = value.sourceCell() == null ? null : line.source().sheet() + "!" + value.sourceCell();
@@ -216,11 +227,12 @@ public class FinancialIngestionService {
                         "금액 열의 연도·월·구분(계획/실적/추정)을 확인할 수 없습니다. 머리글을 확인해 주세요."));
                 continue;
             }
-            if (value.year() != requestYear) {
+            if (value.year() > requestYear || value.year() < MIN_YEAR) {
                 diagnostics.add(new IngestionDiagnostic(cell, accountName(line), "PERIOD_OUT_OF_RANGE",
-                        "요청 연도가 아닌 금액 열이 있습니다. 요청한 연도의 양식인지 확인해 주세요."));
+                        "요청 연도 이후의 금액 열이 있습니다. 요청한 연도의 양식인지 확인해 주세요."));
                 continue;
             }
+            hasRequestYear |= value.year() == requestYear;
             switch (Objects.toString(value.valueStatus(), "")) {
                 case "AVAILABLE" -> {
                     BigDecimal amount = parseAmount(value.amount());
@@ -242,6 +254,7 @@ public class FinancialIngestionService {
                         "금액을 숫자로 읽을 수 없습니다. 셀 값을 확인해 주세요."));
             }
         }
+        return hasRequestYear;
     }
 
     static BigDecimal parseAmount(String raw) {
