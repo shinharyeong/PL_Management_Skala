@@ -90,7 +90,7 @@ PL_Management_Skala/
 ├── parser/                     # 엑셀 파서(표준 라이브러리만). 1차는 backend 이미지에 포함
 ├── ai/         Dockerfile      # 보고서 AI(FastAPI). parser/src를 함께 넣음
 ├── k8s/                        # kubectl apply -k 로 배포하는 매니페스트(Kustomize)
-│   ├── kustomization.yaml      # 이미지 태그는 여기서만 바뀜(scripts/deploy.sh가 갱신)
+│   ├── kustomization.yaml      # 이미지 태그는 자리표시(main). deploy.sh가 임시 복사본에서 커밋 해시로 바꿔 적용
 │   └── backend.yaml  ai.yaml  frontend.yaml  ingress.yaml
 ├── docs/
 └── scripts/  deploy.sh  seed-demo.sh  upload-template.sh
@@ -125,8 +125,8 @@ PL_Management_Skala/
 | 항목 | 구성 |
 | --- | --- |
 | CI | GitHub Actions(`ci.yaml`)가 backend·parser·ai·frontend 테스트와 linux/amd64 이미지 빌드를 확인한다. Harbor push는 하지 않는다(플랫폼 안내: GitHub Actions에서 Harbor push 불가) |
-| 이미지 저장소 | Harbor 팀 비공개 프로젝트 `p1-2`(10GiB). 태그는 커밋 해시. 오래된 태그는 정리 |
-| CD | 캠퍼스 네트워크에서 `scripts/deploy.sh`: 이미지 빌드·push → `k8s/kustomization.yaml` 태그 갱신 → `kubectl apply -k k8s/` → rollout 확인. 배포한 태그는 Git에 커밋 |
+| 이미지 저장소 | Harbor 팀 비공개 프로젝트 `p1-2`(10GiB). 태그는 main 커밋 해시(12자리). 오래된 태그는 정리 |
+| CD | **main 기준.** develop → main PR이 머지되면 캠퍼스 네트워크에서 `git switch main && git pull` 후 `scripts/deploy.sh`: 이미지 빌드·push → `k8s/` 임시 복사본에 태그 적용 → `kubectl apply -k` → rollout 확인. main이 아니거나 origin/main과 다르거나 변경이 남아 있으면 중단한다. 저장소 파일을 바꾸지 않으므로 배포 후 커밋할 것이 없고, 지금 배포된 버전은 이미지 태그(= main 커밋 해시)로 안다(`kubectl get deploy -o wide`). 일부 서비스만 빌드하거나 `SKIP_BUILD=1`이면 나머지는 지금 배포된 태그를 유지 |
 | 처음 한 번 | `scripts/seed-demo.sh`(체험 계정·조직), `scripts/upload-template.sh <양식.xlsb>`(제출 양식을 PVC에) |
 | 플랫폼이 만들어 둔 것 | Secret `rds-credentials`·`harbor-cred`·`team-tls`, ConfigMap `s3-config`, ServiceAccount `s3-access` |
 | 팀이 만드는 Secret | `app-secrets`(Git에 넣지 않음, `kubectl create secret generic`): `OPENAI_API_KEY`, `SPRING_MAIL_*` 등. 없어도 파드는 뜬다 |
