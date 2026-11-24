@@ -245,9 +245,9 @@ def _extract_sheet(
                 ),
                 {},
             )
-            style_id = int(
-                node.get("s", row_node.get("s", column_info.get("style", "0")))
-            )
+            # OOXML c@s 기본값은 0이다. 행·열 서식은 c 요소가 없는 칸에만 적용되므로 대체하지 않는다
+            # (출력 계약 style_id). 행·열 서식은 rows/columns 메타데이터로 따로 보존된다.
+            style_id = int(node.get("s", "0"))
             style = (
                 styles["cell_formats"][style_id]
                 if style_id < len(styles["cell_formats"])

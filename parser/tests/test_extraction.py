@@ -77,6 +77,45 @@ def _memory_sheet() -> dict:
 class ExtractionBoundaryTests(unittest.TestCase):
     """저장 숫자·캐시 상태·숨김·병합을 파일 생성 없이 검증한다."""
 
+    def test_cell_without_style_uses_default_not_row_or_column_style(self) -> None:
+        """s 없는 셀은 OOXML 기본 서식 0이며 행·열의 날짜 서식을 물려받지 않는다(#3).
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 행·열 서식으로 대체한 경우.
+        Side Effects:
+            메모리 ZIP만 사용한다.
+        """
+        document = (
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<cols><col min="3" max="3" style="5"/></cols><sheetData>'
+            '<row r="1" s="5" customFormat="1"><c r="A1"><v>45292</v></c><c r="B1" s="5"><v>45292</v></c>'
+            '<c r="C1"><v>7</v></c></row></sheetData></worksheet>'
+        )
+        stream = BytesIO()
+        with ZipFile(stream, "w") as archive:
+            archive.writestr("xl/worksheets/sheet1.xml", document)
+            archive.writestr("xl/styles.xml", _STYLES_XML)
+        stream.seek(0)
+        with ZipFile(stream) as archive:
+            sheet = _extract_sheet(
+                archive,
+                {"name": "서식", "sheet_id": "1", "state": "visible", "part": "xl/worksheets/sheet1.xml"},
+                {"source_id": "memory", "file_id": "memory"},
+                [],
+                read_styles(archive, "xl/styles.xml"),
+            )
+        cells = {cell["address"]: cell for cell in sheet["cells"]}
+        self.assertEqual(cells["A1"]["style_id"], 0)
+        self.assertEqual(cells["A1"]["data_type"], "number")
+        self.assertEqual(cells["B1"]["style_id"], 5)
+        self.assertEqual(cells["B1"]["data_type"], "date")
+        self.assertEqual(cells["C1"]["style_id"], 0)
+        self.assertEqual(sheet["rows"][0].get("s"), "5")  # 행 서식 자체는 보존
+
     def test_stored_values_ignore_visual_signs(self) -> None:
         """색상·괄호·대시·퍼센트 서식이 원본 저장값을 바꾸지 않음을 확인한다.
 

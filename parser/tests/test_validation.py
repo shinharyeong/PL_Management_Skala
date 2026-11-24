@@ -62,6 +62,31 @@ class IndependentValidationTests(unittest.TestCase):
         ):
             return validate_extraction(self.source, workbook)
 
+    def test_cell_without_style_matches_default_style_in_both_readers(self) -> None:
+        """서식 있는 행의 s 없는 셀을 추출기·검증기 모두 서식 0으로 읽어 검증이 통과한다(#3).
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 두 읽기 결과의 style_id가 다른 경우.
+        Side Effects:
+            메모리 패키지만 읽는다.
+        """
+        package = make_package({
+            "서식": '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<cols><col min="2" max="2" style="2"/></cols><sheetData>'
+            '<row r="1" s="1" customFormat="1"><c r="A1"><v>10</v></c><c r="B1"><v>20</v></c></row>'
+            "</sheetData></worksheet>"
+        })
+        workbook = extract_memory(package)
+        styles = {cell["address"]: cell["style_id"] for cell in workbook["sheets"][0]["cells"]}
+        self.assertEqual(styles, {"A1": 0, "B1": 0})
+        with patch("excel_parser.validation.ZipFile", side_effect=lambda _: open_memory_archive(package)):
+            report = validate_extraction(self.source, workbook)
+        self.assertTrue(report["passed"], report["issues"])
+
     def test_unmodified_package_matches_independent_xml(self) -> None:
         """직접 작성한 XML의 다섯 내용 셀과 한 빈 구조 셀을 대조한다.
 
