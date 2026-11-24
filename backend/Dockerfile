@@ -19,7 +19,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=build /workspace/app.jar /app/app.jar
 COPY parser/src /app/parser/src
-RUN mkdir -p /app/local-storage /app/templates && chown -R app:app /app/local-storage /app/templates
+RUN mkdir -p /app/local-storage /app/templates /data/storage /data/templates \
+    && chown -R app:app /app/local-storage /app/templates /data
 ENV TZ=Asia/Seoul \
     JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75" \
     PARSER_PYTHON=python3 \
