@@ -1099,100 +1099,50 @@ components:
           format: date-time
     TemplateDefinition:
       type: object
-      description: 블록 구성·기간 규칙·확정 SQL·서식 (FR-RPT-002, 006, 008)
+      description: |-
+        자료 틀(FR-RPT-002·006·008). 형식의 기준은 AI다. 백엔드는 저장 봉투만 검사하고(JSON 스키마
+        `backend/src/main/resources/report/template-definition.schema.json`, AI `model.py StoredTemplate`에서 생성)
+        블록 세부(기간·범위·비교·표 스펙·배치·서식 등)는 AI·화면 형식 그대로 보관한다. `id`·`name`은 서버 값으로 맞춘다.
       required:
+      - schema_version
+      - name
       - blocks
+      additionalProperties: true
       properties:
+        schema_version:
+          type: integer
+          minimum: 1
+          example: 1
+        name:
+          type: string
+          maxLength: 120
         blocks:
           type: array
+          maxItems: 500
           items:
             $ref: '#/components/schemas/ReportBlock'
     ReportBlock:
       type: object
+      description: 블록. id·kind만 정해져 있고 나머지 칸은 AI·화면 형식(예 text, metric, period, scope, compare, options, bbox)
       required:
       - id
       - kind
-      - title
-      - order
+      additionalProperties: true
       properties:
         id:
           type: string
+          maxLength: 64
           example: b1
         kind:
           type: string
-          enum:
-          - TABLE
-          - LIST
-          - TEXT
-          - GAP
-          - CHART
-        title:
-          type: string
-          example: 실적 표
-        order:
-          type: integer
-        period:
-          type: object
-          description: 공통 따라감 / 기준 월 ± n / 고정 월
-          properties:
-            rule:
-              type: string
-              enum:
-              - FOLLOW
-              - OFFSET
-              - FIXED
-            offset:
-              type: integer
-              example: 1
-            fixedYear:
-              type: integer
-            fixedMonth:
-              type: integer
-            rangeMonths:
-              type: integer
-              description: 월별 추이 등 최근 n개월
-        scope:
-          type: string
-          enum:
-          - COMPANY
-          - ORGANIZATION
-        organizationId:
-          oneOf:
-          - $ref: '#/components/schemas/Id'
-          - type: 'null'
-        comparison:
-          type: string
-          enum:
-          - NONE
-          - PLAN
-          - PREV_ESTIMATE
-          - PREV_YEAR
-        metricId:
-          oneOf:
-          - $ref: '#/components/schemas/Id'
-          - type: 'null'
-        sql:
-          type:
-          - string
-          - 'null'
-          description: 자연어 질의로 확정해 저장한 SQL
-        emptyPolicy:
-          type: string
-          enum:
-          - SHOW_NO_DATA
-          - REMOVE
-          - KEEP_ORIGINAL
-        style:
-          type: object
-          properties:
-            fontFamily:
-              type: string
-            fontSize:
-              type: integer
-            width:
-              type: integer
-            height:
-              type: integer
+          maxLength: 40
+          description: AI가 정하는 종류(예 title, paragraph, table, list, chart, numbercard, footnote)
+          example: table
+        needs_review:
+          type: array
+          description: 확인 필요 사유 코드(구성 확인 단계 노란 표시)
+          items:
+            type: string
     Template:
       type: object
       properties:
@@ -1238,36 +1188,17 @@ components:
           - FAILED
         maskNumbers:
           type: boolean
-        blocks:
-          type: array
-          description: SUCCEEDED일 때 추출한 블록(구성 확인용)
-          items:
-            allOf:
-            - $ref: '#/components/schemas/ReportBlock'
-            - type: object
-              properties:
-                needsCheck:
-                  type: boolean
-                  description: 종류·데이터 연결 확인 필요(노란색)
-                sourceArea:
-                  type: object
-                  properties:
-                    page:
-                      type: integer
-                    x:
-                      type: number
-                    y:
-                      type: number
-                    w:
-                      type: number
-                    h:
-                      type: number
+        definition:
+          oneOf:
+          - $ref: '#/components/schemas/TemplateDefinition'
+          - type: 'null'
+          description: SUCCEEDED일 때 AI가 추출한 틀 초안(구성 확인용). 확인이 필요한 블록은 needs_review가 있다
         pages:
           type: array
           items:
             type: object
             properties:
-              false:
+              "no":
                 type: integer
               maskedImageUrl:
                 type: string
@@ -4679,19 +4610,12 @@ paths:
             schema:
               type: object
               required:
-              - period
+              - base
+              - blocks
               properties:
-                metricId:
-                  oneOf:
-                  - $ref: '#/components/schemas/Id'
-                  - type: 'null'
-                sql:
-                  type:
-                  - string
-                  - 'null'
-                  description: metricId가 없을 때 블록에 저장된 SQL
-                period:
+                base:
                   type: object
+                  description: 기준 월. 블록마다 기간 규칙(기준 월 ± n, 고정 월, 최근 n개월)을 이 값에 적용한다
                   required:
                   - year
                   - month
@@ -4700,33 +4624,35 @@ paths:
                       type: integer
                     month:
                       type: integer
-                    rangeMonths:
-                      type: integer
-                scope:
-                  type: string
-                  enum:
-                  - COMPANY
-                  - ORGANIZATION
-                  default: COMPANY
-                organizationId:
-                  oneOf:
-                  - $ref: '#/components/schemas/Id'
-                  - type: 'null'
-                comparison:
-                  type: string
-                  enum:
-                  - NONE
-                  - PLAN
-                  - PREV_ESTIMATE
-                  - PREV_YEAR
-                  default: NONE
+                      minimum: 1
+                      maximum: 12
+                blocks:
+                  type: array
+                  description: 채울 블록(틀의 블록 그대로). 지표(metric)나 확정 SQL은 블록 안에 있다
+                  items:
+                    $ref: '#/components/schemas/ReportBlock'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TableData'
+                type: object
+                description: report-ai가 보고서용 뷰에서 코드로 계산한 값(AI 문장 생성 없음). 저장하지 않는다
+                properties:
+                  dataStatus:
+                    $ref: '#/components/schemas/DataStatus'
+                  blocks:
+                    type: array
+                    description: 블록 id별 채운 결과(표 행·차트 계열·숫자 카드 값 등, AI 형식). 계산할 수 없는 칸은 missing=true
+                    items:
+                      type: object
+                      required:
+                      - id
+                      additionalProperties: true
+                      properties:
+                        id:
+                          type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -4801,6 +4727,11 @@ paths:
                     type:
                     - string
                     - 'null'
+                  clarifyOptions:
+                    type: array
+                    description: 되묻기 선택지(CLARIFY일 때)
+                    items:
+                      type: string
                   preview:
                     $ref: '#/components/schemas/TableData'
         '400':
@@ -5096,6 +5027,18 @@ paths:
               schema:
                 type: object
                 properties:
+                  status:
+                    type: string
+                    enum:
+                    - EDIT
+                    - CLARIFY
+                    - REFUSED
+                    - UNAVAILABLE
+                    description: 변경안 있음 / 되묻기 / 거절(숫자 변경 요청 등) / AI 사용 불가
+                  message:
+                    type:
+                    - string
+                    - 'null'
                   proposals:
                     type: array
                     items:
@@ -5103,12 +5046,13 @@ paths:
                       properties:
                         op:
                           type: string
+                          description: AI 편집 조작(report-ai chat_edit). 숫자 값은 바꾸지 않는다
                           enum:
-                          - ADD_BLOCK
-                          - REMOVE_BLOCK
-                          - MOVE_BLOCK
-                          - SET_FONT
-                          - SET_SIZE
+                          - add_block
+                          - remove_block
+                          - move_block
+                          - set_style
+                          - add_column
                         target:
                           type: string
                         description:
