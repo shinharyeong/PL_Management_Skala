@@ -111,6 +111,11 @@ public class FinancialIngestionService {
                     .actualBasis(truncate(line.actualBasis(), 500))
                     .costType(truncate(line.costType(), 500))
                     .description(line.description())
+                    // 이름·담당자는 파서가 준 그대로 저장한다. 본부 코드는 파서가 주지 않으므로 이름으로 추정하지 않는다(#58).
+                    .headquartersName(truncate(line.headquartersName(), 500))
+                    .teamName(truncate(line.teamName(), 500))
+                    .taskName(truncate(line.taskName(), 500))
+                    .personInCharge(truncate(line.personInCharge(), 500))
                     .sourceSheet(truncate(line.source().sheet(), 255))
                     .sourceRow(line.source().row())
                     .build());

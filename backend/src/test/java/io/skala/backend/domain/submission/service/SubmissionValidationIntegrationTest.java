@@ -84,6 +84,13 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         assertThat(octResult.diagnostics()).isEmpty();
         assertThat(octResult.lineCount()).isEqualTo(1);
         assertThat(octResult.valueCount()).isEqualTo(3); // 전년 실적 열도 참고값으로 저장
+        // 상세 행의 이름·담당자도 저장한다(#58). 본부 코드는 파서가 주지 않으므로 비워 둔다.
+        assertThat(jdbc.queryForMap("""
+                select headquarters_code, headquarters_name, team_name, task_name, person_in_charge
+                from financial_line where submission_id = ?""", octSubmission))
+                .containsEntry("headquarters_name", "본부10").containsEntry("team_name", "팀10")
+                .containsEntry("task_name", "과제10").containsEntry("person_in_charge", "담당자10")
+                .containsEntry("headquarters_code", null);
 
         AuthenticatedUser managerUser = new AuthenticatedUser(manager, UserRole.ORG_MANAGER, orgId);
         ValidationResponse octValidation = validationService.validate(octSubmission, token(octSubmission), managerUser);
@@ -309,7 +316,8 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
     private static Line line(String key, String domain, String reportKey, String sheet, int row, String detailId,
                              Value... values) {
         return new Line(key, domain, new Source(sheet, row), new Account("ACC-" + row, "계정" + row), detailId, null,
-                reportKey, "RESOLVED", "관리분류", "실적기준", null, "T1", "K1", "거래내역", List.of(values));
+                reportKey, "RESOLVED", "관리분류", "실적기준", null, "T1", "K1", "거래내역",
+                "담당자" + row, "팀" + row, "과제" + row, "본부" + row, List.of(values));
     }
 
     private static Value priorYear(int month, String amount, String cell) {

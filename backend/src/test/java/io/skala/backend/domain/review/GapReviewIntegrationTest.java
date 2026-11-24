@@ -338,7 +338,8 @@ class GapReviewIntegrationTest extends PostgresIntegrationTest {
 
     private static Line line(int row, Value... values) {
         return new Line("k" + row, "REVENUE", new Source("매출", row), new Account("ACC" + row, "계정" + row),
-                "D-" + row, null, SALES_KEY, "RESOLVED", null, null, null, null, null, null, List.of(values));
+                "D-" + row, null, SALES_KEY, "RESOLVED", null, null, null, null, null, null,
+                null, null, null, null, List.of(values));
     }
 
     private Value value(int month, String scenario, String amount, String cell) {

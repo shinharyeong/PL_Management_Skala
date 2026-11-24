@@ -261,7 +261,8 @@ class ExplanationSubmitIntegrationTest extends PostgresIntegrationTest {
     private static Line line(int row, String reportKey, String domain, Value... values) {
         String sheet = "REVENUE".equals(domain) ? "매출" : "비용";
         return new Line("k" + row, domain, new Source(sheet, row), new Account("ACC" + row, "계정" + row),
-                "D-" + row, null, reportKey, "RESOLVED", null, null, null, null, null, null, List.of(values));
+                "D-" + row, null, reportKey, "RESOLVED", null, null, null, null, null, null,
+                null, null, null, null, List.of(values));
     }
 
     private static Value value(int month, String scenario, String amount, String cell) {
