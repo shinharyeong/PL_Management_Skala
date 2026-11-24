@@ -117,7 +117,7 @@ PL_Management_Skala/
 - 제출본, 버전, 소명, master, 자료 틀, 알림을 저장합니다.
 - backend와 parser-worker는 팀 계정을 씁니다. db-mcp는 보고서용 뷰에만 SELECT 권한이 있는 읽기 전용 역할을 씁니다. SELECT 이외의 구문, 실행 시간, 행 수는 db-mcp가 실행 전에 한 번 더 검사합니다.
 - 원본 파일의 메타데이터는 `stored_object`, 파일 자체는 1차 배포에서 backend PVC(`/data/storage`)에 둡니다. S3 `uploads/` 연결은 2차 과제입니다.
-- 팀 계정 동시 연결은 50개까지라 backend 연결 풀을 5로 둡니다(`application-prod.yml`). 접속 값은 플랫폼 Secret `rds-credentials`의 `SPRING_DATASOURCE_*`·`DATABASE_URL`을 그대로 씁니다.
+- 팀 계정 동시 연결은 50개까지라 backend 연결 풀을 5로 둡니다(`application-prod.yml`). 접속 값은 플랫폼 Secret `rds-credentials`에서 받습니다. 이 Secret에는 `SPRING_DATASOURCE_URL`, `DATABASE_URL`, `PG*`만 있어(가이드와 달리 `SPRING_DATASOURCE_USERNAME·PASSWORD`가 없음) backend는 `PGUSER`·`PGPASSWORD`를 Spring 이름으로 넘겨받습니다(`k8s/backend.yaml`).
 - 공용 인스턴스라 자동 스냅샷으로 팀별 복원이 안 됩니다. 발표 전 등 중요한 시점에는 `pg_dump`로 직접 백업합니다(플랫폼 가이드 "백업과 복원").
 
 ## 4. 배포

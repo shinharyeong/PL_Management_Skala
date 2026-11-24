@@ -41,12 +41,17 @@ spec:
           image: skala-registry.skala-ai.com/p1-2/backend
           ports: [{ name: http, containerPort: 8080 }]
           envFrom:
-            - secretRef: { name: rds-credentials }          # SPRING_DATASOURCE_URL·USERNAME·PASSWORD …
+            - secretRef: { name: rds-credentials }          # SPRING_DATASOURCE_URL, PG* (USERNAME·PASSWORD는 아래 env로)
             - configMapRef: { name: s3-config }              # S3_BUCKET, AWS_REGION
             - configMapRef: { name: backend-config }
             - secretRef: { name: app-secrets, optional: true }  # SPRING_MAIL_* 등
           env:
             - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=75" }
+            # rds-credentials에는 SPRING_DATASOURCE_URL만 있고 USERNAME·PASSWORD 키가 없다(PG*로 들어 있다).
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom: { secretKeyRef: { name: rds-credentials, key: PGUSER } }
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom: { secretKeyRef: { name: rds-credentials, key: PGPASSWORD } }
           resources:
             requests: { cpu: 500m, memory: 1536Mi }
             limits: { cpu: 1500m, memory: 2Gi }
