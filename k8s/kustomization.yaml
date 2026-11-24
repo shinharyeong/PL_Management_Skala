@@ -13,6 +13,6 @@ resources:
   - ingress.yaml
 images:
   # scripts/deploy.sh가 newTag를 이번에 올린 이미지 태그(커밋 해시)로 바꾼다.
-  - { name: skala-registry.skala-ai.com/p1-2/backend, newTag: "init" }
-  - { name: skala-registry.skala-ai.com/p1-2/ai, newTag: "init" }
-  - { name: skala-registry.skala-ai.com/p1-2/frontend, newTag: "init" }
+  - { name: skala-registry.skala-ai.com/p1-2/backend, newTag: "ef6ad7525b1f" }
+  - { name: skala-registry.skala-ai.com/p1-2/ai, newTag: "ef6ad7525b1f" }
+  - { name: skala-registry.skala-ai.com/p1-2/frontend, newTag: "ef6ad7525b1f" }
