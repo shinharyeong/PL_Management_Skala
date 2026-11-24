@@ -1,8 +1,11 @@
 # 인프라 구성
 
-SKALA 플랫폼이 제공하는 EKS 공유 클러스터에 팀 네임스페이스 하나로 배포합니다. 진입은 플랫폼 공용 NGINX Ingress Controller, 이미지 저장소는 Harbor, 배포는 Argo CD(GitOps)를 사용합니다. 구성도는 [architecture.png](architecture.png)입니다.
+SKALA 플랫폼이 제공하는 EKS 공유 클러스터(`skala-2026`)에 팀 네임스페이스 `p1-2` 하나로 배포합니다. 진입은 플랫폼 공용 NGINX Ingress Controller(`public-nginx`), 이미지 저장소는 Harbor, 배포는 **캠퍼스 네트워크에서 `kubectl apply -k k8s/`** 로 합니다. 플랫폼이 Argo CD를 중지해(2026-11-19) GitOps 자동 동기화는 쓰지 않습니다. 구성도는 [architecture.png](architecture.png)입니다.
 
-> 플랫폼 내부 주소, 버킷 이름, DB 계정 이름은 공개 저장소에 적지 않습니다. 실제 값은 Secret과 팀 내부 문서로 관리합니다.
+- **1차 배포(현재)**: frontend·backend·ai 세 파드. backend가 파서를 자식 프로세스로 실행하고, 업로드 원본은 backend PVC에 둡니다. 매니페스트는 [`k8s/`](../k8s), 절차는 아래 4절입니다.
+- **목표 구성(2차)**: 아래 2절 표처럼 RabbitMQ·parser-worker·db-mcp를 더하고 원본을 S3로 옮깁니다.
+
+> 비밀번호·키·토큰과 RDS 주소는 저장소에 넣지 않습니다(Secret과 팀 내부 문서). 팀 도메인, Harbor 프로젝트 경로, Ingress의 캠퍼스 IP 허용 목록은 매니페스트에 필요해서 `k8s/`에 있습니다.
 
 ## 1. 요청 경로
 
@@ -19,7 +22,17 @@ SKALA 플랫폼이 제공하는 EKS 공유 클러스터에 팀 네임스페이�
 
 ## 2. EKS 워크로드
 
-팀 네임스페이스 자원 한도는 requests 기준 **2 vCPU · 8 GiB**이고 limits는 requests의 2배입니다. 모든 파드를 1개로 두고 HPA는 쓰지 않습니다.
+팀 네임스페이스 자원 한도는 requests 기준 **4 vCPU · 16 GiB**(포털 자원 관리에서 변경, limits는 requests의 2배)입니다. 모든 파드를 1개로 두고 HPA는 쓰지 않습니다. PVC는 기본 StorageClass(EBS gp3)로 합계 20Gi · 5개까지입니다.
+
+**1차 배포(현재, `k8s/`)**
+
+| 파드 | requests | limits | 비고 |
+| --- | --- | --- | --- |
+| frontend | 50m / 64Mi | 200m / 128Mi | nginx 8080(비루트) |
+| backend | 500m / 1.5Gi | 1.5 / 2Gi | 파서 포함 이미지, PVC `backend-data` 5Gi를 `/data`에. 볼륨이 한 파드에만 붙으므로 Recreate로 교체 |
+| ai | 200m / 512Mi | 1 / 1Gi | 클러스터 내부 전용(`http://ai:8000`). 조회 DB는 팀 DB의 `ai` 스키마(`AI_DATABASE_URL`) |
+
+**목표 구성(2차)**
 
 | 파드 | 컨테이너 | 종류 | CPU | 메모리 | 역할 |
 | --- | --- | --- | --- | --- | --- |
@@ -32,9 +45,8 @@ SKALA 플랫폼이 제공하는 EKS 공유 클러스터에 팀 네임스페이�
 | **합계** | | | **1.45 vCPU** | **약 4.2Gi** | |
 
 - 남는 여유(CPU 550m, 메모리 약 3.8Gi)로 backend 롤링 업데이트(maxSurge 1)가 가능합니다.
-- JVM 힙은 limits가 아니라 requests 기준으로 잡습니다 (예: `-Xmx1g`). requests를 넘긴 메모리는 노드가 부족할 때 먼저 회수됩니다.
+- JVM 힙은 `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75`로 컨테이너 limit의 75%까지 씁니다(플랫폼 가이드 권장).
 - app과 db-mcp는 같은 파드 안에서 `localhost`로 MCP 통신합니다. db-mcp는 Service를 만들지 않아 다른 파드가 호출할 수 없습니다.
-- 엑셀 동시 파싱이 필요해 parser-worker를 늘려야 하면 한도를 4 vCPU · 8 GiB로 올립니다.
 
 ### RabbitMQ
 
@@ -64,31 +76,27 @@ SKALA 플랫폼이 제공하는 EKS 공유 클러스터에 팀 네임스페이�
 | 화면 알림 (조직 제출, 소명 회신) | 이벤트를 처리하는 backend API가 같은 트랜잭션에서 `notification` 테이블에 저장 |
 | 화면 알림 (기한 경과) | backend 예약 작업(`@Scheduled`)이 마감 시각을 확인해 저장. backend를 2개 이상으로 늘리면 ShedLock 등으로 중복 실행 방지 |
 | 화면 반영 | N1 알림 모아보기와 메뉴 배지는 주기적 조회(폴링)로 시작 |
-| 메일 | 로그인 인증코드만 실제 발송. backend가 외부 SMTP로 전송하고 계정 정보는 Secret으로 관리 |
+| 메일 | 로그인 인증코드만 발송. `SPRING_MAIL_*`(Secret `app-secrets`)가 있으면 SMTP로 보낸다. 1차 배포는 SMTP 없이 코드를 로그로 확인한다(`APP_AUTH_DEV_LOG_CODE=true`, `kubectl logs deploy/backend \| grep 인증코드`). 로그를 읽을 수 있는 반 계정도 코드를 볼 수 있으므로 발표 전 SMTP로 바꾼다 |
 
 별도 알림 서비스나 파드는 두지 않습니다.
 
 ### 코드 구조
 
 ```
-skala_final_project/
-├── .github/workflows/   # 서비스별 빌드 워크플로 (paths 필터)
-├── frontend/            # Dockerfile: node 빌드 → nginx
-├── backend/
-├── parser/              # parser-worker
-├── report-ai/
-│   ├── app/             # FastAPI 에이전트 · PDF 분석
-│   └── db-mcp/          # MCP 서버
-├── deploy/              # Argo CD가 감시하는 매니페스트 (Kustomize)
-│   ├── base/
-│   │   ├── frontend/  backend/  parser-worker/  report-ai/  rabbitmq/
-│   │   └── ingress.yaml
-│   └── kustomization.yaml   # 이미지 태그는 여기서만 바뀜
-├── contracts/           # 큐 메시지 JSON 스키마 (backend · Python 공용)
-├── experiments/parser_ai/
+PL_Management_Skala/
+├── .github/workflows/ci.yaml   # PR·develop·main: 테스트 4종 + 이미지 빌드(push 안 함)
+├── frontend/   Dockerfile      # node 빌드 → nginx
+├── backend/    Dockerfile      # JDK 21 빌드 → JRE + python3 + parser/src
+├── parser/                     # 엑셀 파서(표준 라이브러리만). 1차는 backend 이미지에 포함
+├── ai/         Dockerfile      # 보고서 AI(FastAPI). parser/src를 함께 넣음
+├── k8s/                        # kubectl apply -k 로 배포하는 매니페스트(Kustomize)
+│   ├── kustomization.yaml      # 이미지 태그는 여기서만 바뀜(scripts/deploy.sh가 갱신)
+│   └── backend.yaml  ai.yaml  frontend.yaml  ingress.yaml
 ├── docs/
-└── scripts/
+└── scripts/  deploy.sh  seed-demo.sh  upload-template.sh
 ```
+
+목표 구성(2차)에서는 `parser/`를 parser-worker 이미지로 분리하고, RabbitMQ StatefulSet과 큐 메시지 스키마를 더합니다.
 
 ## 3. 데이터
 
@@ -108,24 +116,31 @@ skala_final_project/
 - 여러 팀이 같이 쓰는 인스턴스이고 팀 DB 계정이 하나 주어집니다.
 - 제출본, 버전, 소명, master, 자료 틀, 알림을 저장합니다.
 - backend와 parser-worker는 팀 계정을 씁니다. db-mcp는 보고서용 뷰에만 SELECT 권한이 있는 읽기 전용 역할을 씁니다. SELECT 이외의 구문, 실행 시간, 행 수는 db-mcp가 실행 전에 한 번 더 검사합니다.
-- 현재 원본은 DB `stored_object`에 저장합니다. S3 `uploads/` 연결은 운영 전환 과제입니다.
+- 원본 파일의 메타데이터는 `stored_object`, 파일 자체는 1차 배포에서 backend PVC(`/data/storage`)에 둡니다. S3 `uploads/` 연결은 2차 과제입니다.
+- 팀 계정 동시 연결은 50개까지라 backend 연결 풀을 5로 둡니다(`application-prod.yml`). 접속 값은 플랫폼 Secret `rds-credentials`의 `SPRING_DATASOURCE_*`·`DATABASE_URL`을 그대로 씁니다.
+- 공용 인스턴스라 자동 스냅샷으로 팀별 복원이 안 됩니다. 발표 전 등 중요한 시점에는 `pg_dump`로 직접 백업합니다(플랫폼 가이드 "백업과 복원").
 
 ## 4. 배포
 
 | 항목 | 구성 |
 | --- | --- |
-| CI | GitHub Actions에서 빌드·테스트 후 Harbor에 이미지 push, `deploy/`의 이미지 태그 갱신 |
-| 이미지 저장소 | Harbor 팀 비공개 프로젝트 (용량 한도 있음). Trivy 스캔. 오래된 태그는 정리 |
-| CD | Argo CD가 `deploy/` 변경을 감지해 팀 네임스페이스에 동기화 |
-| 모니터링 | 플랫폼 팀 Grafana 없음. `kubectl logs`, `kubectl top`으로 확인 |
+| CI | GitHub Actions(`ci.yaml`)가 backend·parser·ai·frontend 테스트와 linux/amd64 이미지 빌드를 확인한다. Harbor push는 하지 않는다(플랫폼 안내: GitHub Actions에서 Harbor push 불가) |
+| 이미지 저장소 | Harbor 팀 비공개 프로젝트 `p1-2`(10GiB). 태그는 커밋 해시. 오래된 태그는 정리 |
+| CD | 캠퍼스 네트워크에서 `scripts/deploy.sh`: 이미지 빌드·push → `k8s/kustomization.yaml` 태그 갱신 → `kubectl apply -k k8s/` → rollout 확인. 배포한 태그는 Git에 커밋 |
+| 처음 한 번 | `scripts/seed-demo.sh`(체험 계정·조직), `scripts/upload-template.sh <양식.xlsb>`(제출 양식을 PVC에) |
+| 플랫폼이 만들어 둔 것 | Secret `rds-credentials`·`harbor-cred`·`team-tls`, ConfigMap `s3-config`, ServiceAccount `s3-access` |
+| 팀이 만드는 Secret | `app-secrets`(Git에 넣지 않음, `kubectl create secret generic`): `OPENAI_API_KEY`, `SPRING_MAIL_*` 등. 없어도 파드는 뜬다 |
+| kubectl | 토큰은 매일 06:00 재발급(26시간 유효). 만료되면 포털 가이드의 접속 명령을 다시 붙여 넣는다 |
+| 비용 | 포털 자원 관리에서 끄고 켠다. 끄지 않으면 밤·주말에도 비용이 쌓인다 |
+| 모니터링 | 플랫폼 팀 Grafana 없음. `kubectl logs`, `kubectl top`, `kubectl describe`로 확인 |
 
 ## 5. 확인 필요
 
 | 항목 | 내용 |
 | --- | --- |
 | DB 읽기 전용 역할 | 팀 계정으로 역할을 만들 수 있는지. 안 되면 운영 측에 요청하고, 그래도 안 되면 NFR-SEC-004를 db-mcp 검사 기준으로 수정 |
-| StorageClass | RabbitMQ PVC에 쓸 수 있는 StorageClass (`kubectl get storageclass`) |
-| ingressClassName | 가이드 Ingress 예시의 클래스. SSE 타임아웃 설정 방법이 달라짐 |
-| SMTP 계정 | 인증 메일을 보낼 메일 계정과 발송 한도 |
-| 현재 파서 실행 방식 | 지금 코드는 backend가 파서를 자식 프로세스로 실행하고 DB 작업 큐를 씀. parser-worker 분리와 RabbitMQ 전환 작업 필요 |
+| SMTP 계정 | 인증 메일을 보낼 메일 계정과 발송 한도. 정해지면 `app-secrets`에 `SPRING_MAIL_*`를 넣고 `APP_AUTH_DEV_LOG_CODE`를 `false`로 |
+| 파서 분리(2차) | 1차는 backend가 파서를 자식 프로세스로 실행하고 DB 작업 큐를 씀. parser-worker 분리와 RabbitMQ 전환 작업 필요 |
+| 원본 S3 전환(2차) | `LocalFileStorage`(PVC)를 S3(`s3-access`, `s3-config`)로 바꾸는 작업 |
+| SSE | 대화 편집을 스트리밍으로 보내면 Ingress에 `proxy-read-timeout`·`proxy-buffering: "off"` 주석 추가 |
 | 자료 렌더링 | 차트·표 이미지 생성을 브라우저에서 할지 서버에서 할지 결정 |
