@@ -1,95 +1,101 @@
-# 로컬 Docker 실행 환경
+# 로컬 Docker 실행 환경 (dev)
 
-저장소 루트의 [compose.yaml](../../compose.yaml)은 `skala-local` 프로젝트로 Vue 프런트, Spring Boot 백엔드와 Python 파서, PostgreSQL을 실행한다. Python은 백엔드 컨테이너의 별도 자식 프로세스로 실행하며 추가 HTTP 서비스나 공유 파일 디렉터리를 만들지 않는다.
+개발·기능 테스트는 로컬 Docker Compose(dev)에서 하고, 클러스터(`k8s/`, `https://p1-2.skala-ai.com`)는 시연·운영(prod)에만 쓴다(2026-11-24 결정). 로컬에서 만든 요청·업로드·승인 데이터는 로컬 DB 볼륨에만 남고 운영 DB에는 들어가지 않는다.
+
+저장소 루트의 [compose.yaml](../../compose.yaml)은 `skala-local` 프로젝트로 PostgreSQL, Spring Boot 백엔드(파서를 자식 프로세스로 실행), 보고서 AI(FastAPI), Vue 프론트를 띄운다. 이미지는 클러스터와 같은 Dockerfile을 쓴다.
 
 ## 구성
 
-| 서비스 | 런타임 | 로컬 주소 | 저장 위치 |
-| --- | --- | --- | --- |
-| `frontend` | Node 22에서 Vite 빌드, nginx에서 정적 파일 제공 | `http://localhost:5173` | 빌드 이미지; 런타임 임시는 메모리 `/tmp` |
-| `backend` | Java 21, Python 3.11 표준 라이브러리 | `http://localhost:8080` | 원본·파서 결과·업무 자료는 PostgreSQL; 런타임 임시는 메모리 `/tmp` |
-| `postgres` | PostgreSQL 16 | `127.0.0.1:15432` | named volume `skala-local_postgres_data` |
+| 서비스 | 로컬 주소 | 비고 |
+| --- | --- | --- |
+| `frontend` | `http://127.0.0.1:5173` | nginx. `/api`는 백엔드로 전달, Vue 경로 새로고침은 `index.html` |
+| `backend` | `http://127.0.0.1:8080` | `local` 프로필: 체험 계정·조직 시드(`db/local`), 인증코드는 로그로 확인. 업로드 원본·제출 양식은 볼륨 `backend_data`의 `/data` |
+| `ai` | `http://127.0.0.1:8000` | 조회 DB는 같은 PostgreSQL의 `ai` 스키마 |
+| `postgres` | `127.0.0.1:15432` | PostgreSQL 17, 볼륨 `postgres_data`. DBeaver 등 DB 도구로 접속(아래) |
 
-세 포트는 `127.0.0.1`에만 공개한다. Docker 내부에서는 `postgres:5432`, `backend:8080`을 사용한다. 프런트의 `/api`, `/actuator`, `/dev`는 nginx가 백엔드로 전달하며 Vue 경로 새로고침은 `index.html`로 처리한다. 브라우저에 서버 Bearer 토큰을 빌드 변수로 넣지 않는다.
+모든 포트는 `127.0.0.1`에만 열린다. 컨테이너끼리는 `postgres:5432`, `backend:8080`, `ai:8000`으로 부른다.
 
-프런트 빌드는 `package-lock.json`을 이용한 `npm ci`, 백엔드는 Gradle 8.12의 `bootJar`를 실행한다. Docker 빌드 자체는 테스트 통과를 의미하지 않는다. 원본 `Data/`, `.env`, 호스트 `node_modules`, Gradle·Python 캐시는 [.dockerignore](../../.dockerignore)로 빌드 컨텍스트에서 제외한다.
+## 설정(.env)
 
-## 로컬 비밀 설정
+```bash
+cp .env.example .env && chmod 600 .env
+```
 
-저장소 루트 `.env`를 별도로 준비한다. `.gitignore`와 `.dockerignore`가 이 파일을 제외하며 실행 스크립트는 기존 파일을 생성·덮어쓰기하지 않는다. 비밀번호와 두 토큰은 서로 다른 무작위 값으로 두고 파일 권한을 `600`으로 제한한다. 실제 기업 계정 대신 demo 전용 이메일을 사용한다.
+`POSTGRES_PASSWORD`를 로컬 전용 무작위 값으로 바꾼다(예: `openssl rand -hex 16`). `.env`는 Git에 넣지 않는다.
 
-| 필수 변수 | 의미 |
-| --- | --- |
-| `POSTGRES_DB` | demo DB 이름, 예: `skala_demo` |
-| `POSTGRES_USER` | 로컬 DB 사용자, 예: `skala` |
-| `POSTGRES_PASSWORD` | 로컬에서 생성한 DB 비밀번호 |
-| `LOCAL_PLANNER_EMAIL` | demo 경영기획 담당자 이메일 |
-| `LOCAL_PLANNER_TOKEN` | 공백 없는 32자 이상 무작위 서버용 토큰 |
-| `LOCAL_ORGANIZATION_EMAIL` | demo 조직 담당자 이메일 |
-| `LOCAL_ORGANIZATION_TOKEN` | 기획 토큰과 다른 32자 이상 무작위 서버용 토큰 |
-| `APP_DEMO_FRONTEND_ORIGIN` | demo 세션의 허용 출처 목록, `http://localhost:5173,http://127.0.0.1:5173` |
-
-Compose가 필수 값의 누락·빈 값을 거부한다. `.env`를 셸 스크립트로 `source`하지 않으며 `docker compose config --quiet`로 값 노출 없이 구성만 검사한다. 값이 들어간 전체 `docker compose config` 출력은 공유하지 않는다.
-
-이 Compose에서만 `local,demo` 프로필을 활성화한다. 기본 애플리케이션의 인증 거부 정책은 유지한다. demo 사용자·조직 초기화와 브라우저 세션 발급은 해당 백엔드 프로필의 구현이 담당하며, 이 환경 설정은 운영 로그인이나 운영 초기 자료를 정의하지 않는다. nginx는 `Host $http_host`로 원래 호스트와 포트까지 전달하므로 세션의 Origin·Host 검사가 같은 프런트 출처를 확인할 수 있다.
+- `OPENAI_API_KEY`는 선택이다. **셸에 `OPENAI_API_KEY`가 export되어 있으면 Compose가 `.env`보다 셸 값을 먼저 쓴다.** 그 경우 로컬 ai가 본인 키로 OpenAI를 부르므로 비용이 생긴다(하루 호출 상한 `AI_DAILY_CALL_LIMIT` 기본 30).
+- 이미 만든 DB 볼륨은 `.env`의 비밀번호를 바꿔도 사용자 비밀번호가 바뀌지 않는다. 처음부터 다시 만들려면 `docker compose down -v`(로컬 DB 전체 삭제)를 직접 실행한다.
 
 ## 시작과 종료
-
-Docker Desktop을 실행한 뒤 저장소 루트에서 호출한다.
 
 ```bash
 bash scripts/dev-up.sh
 ```
 
-상위 `Final/` 작업공간에서 시작한다면 먼저 `cd skala_final_project-develop`를 실행한다. 이 문서의 `scripts/...`와 `docker compose ...` 명령은 모두 그 저장소 루트를 기준으로 한다.
-
-[dev-up.sh](../../scripts/dev-up.sh)는 `.env`와 Docker 엔진을 확인하고, 비밀값을 출력하지 않는 구성 검사 후 이미지를 빌드한다. DB → 백엔드 → 프런트 순서로 healthcheck를 기다린 뒤 서비스 상태와 프런트 주소를 출력한다. 최초 실행은 이미지·의존성 다운로드가 필요하다. 이후 실행도 소스 변경을 반영하되 빌드 캐시와 DB 볼륨을 재사용한다.
+빌드 → DB·백엔드·ai·프론트 상태 확인(healthcheck)까지 기다린 뒤 주소를 출력한다. 종료는 아래 명령이고 DB·업로드 볼륨은 남는다.
 
 ```bash
 bash scripts/dev-down.sh
 ```
 
-[dev-down.sh](../../scripts/dev-down.sh)는 컨테이너와 네트워크만 내리고 DB 볼륨·이미지·캐시·`.env`를 보존한다. 이 프로젝트의 종료 절차에는 `down -v`, volume 삭제, 기존 DB 초기화를 포함하지 않는다. `.env`의 DB 비밀번호를 바꾸는 것만으로 이미 초기화된 PostgreSQL 사용자의 비밀번호가 바뀌지는 않으므로 기존 설정을 유지한다.
+## 로그인(체험 계정)
 
-## 상태 확인과 통합 검증
+| 계정 | 역할 |
+| --- | --- |
+| `kim.plan@sk.com` | 경영기획팀 |
+| `choi.infra@sk.com` | 조직 담당자(D100 네트워크인프라부문) |
+| `park.media@sk.com` | 조직 담당자(F1000 미디어사업부) |
 
-```bash
-docker compose config --quiet
-docker compose ps
-curl --fail http://localhost:5173/healthz
-curl --fail http://localhost:5173/actuator/health
-```
-
-PostgreSQL은 `pg_isready`, 백엔드는 `/actuator/health`, 프런트는 `/healthz`로 상태를 확인한다. `service_healthy` 의존성을 사용해 단순 컨테이너 시작보다 실제 준비 상태를 기다린다. [Docker Compose 시작 순서 문서](https://docs.docker.com/compose/how-tos/startup-order/)
-
-브라우저 통합 검증은 프런트의 demo 역할 선택 → 사용자 조회 → 요청함 → 전체 파일 접수 → 파싱 상태·진단 → 업무 검증·적재 확인 → 최종 제출(PENDING) → 기획자의 제출 내역 조회 순서로 수행한다. 연간 승인·마스터 발행과 후속 월간 승인·마스터를 구분한다. 검증에 사용한 접수·원본·결과는 로컬 PostgreSQL 볼륨에 남는다. 실행 결과는 아래 날짜별 검증 기록과 작업 보고에서 구분한다.
-
-같은 경로를 HTTP로 확인하는 [smoke-local.py](../../scripts/smoke-local.py)는 저장소 루트에서 다음과 같이 실행한다.
+인증코드는 백엔드 로그에서 확인한다.
 
 ```bash
-python3 -B scripts/smoke-local.py --base-url http://localhost:5173
+docker compose logs backend | grep 인증코드 | tail -1
 ```
 
-스크립트는 개발 역할 세션과 메모리 합성 양식으로 접수·멱등 재전달/충돌·권한·실제 Python 파싱·금액 문자열·원본 동일성·손상 원본 실패를 확인한다. 정상 완료 시 개발 DB에 정상·손상 초안 두 개가 추가되며, 중간 실패나 재실행 때 기존 자료를 삭제하지 않는다. 토큰·응답 본문·원본 값은 출력하지 않고 결과 이름만 콘솔에 표시한다. `Data/`와 임시 XLSX 파일은 사용하지 않는다.
+제출 양식 다운로드(UP-01)를 쓰려면 양식 파일을 볼륨에 한 번 넣는다.
 
-업무 API 계약 0.11-draft의 서비스 경로 56개가 구현되어 있으며 개발 전용 2개 경로는 그 집계에 포함하지 않는다.
+```bash
+docker compose cp "<양식 파일>.xlsb" backend:/data/templates/submission-template.xlsb
+```
 
-컨테이너의 stdout/stderr는 Docker 로그로 조회할 수 있지만 애플리케이션 안에 파일 로그를 추가하지 않는다. 파서에는 원본 바이트를 표준 입력으로 전달하고 `python3 -B`와 `PYTHONDONTWRITEBYTECODE=1`을 사용한다. nginx 프록시는 원래 요청 경로를 유지하며 업로드를 백엔드로 스트리밍한다. [nginx proxy 모듈 문서](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)
+## DB 도구(DBeaver)로 보기
 
-## 파일과 변경 경계
+**로컬 DB(dev)**: 새 연결 → PostgreSQL
+
+| 항목 | 값 |
+| --- | --- |
+| Host / Port | `127.0.0.1` / `15432` |
+| Database | `.env`의 `POSTGRES_DB` |
+| Username / Password | `.env`의 `POSTGRES_USER` / `POSTGRES_PASSWORD` |
+| SSL | 사용 안 함 |
+
+스키마: `public`(업무 테이블), `report`(AI 보고서용 뷰), `ai`(AI 조회 DB, AI가 처음 적재할 때 생김).
+
+**클러스터 DB(prod, 공용 RDS)**: 외부에서 바로 접속되지 않으므로 캠퍼스 네트워크에서 중계 파드를 띄우고 port-forward 한다(플랫폼 가이드 "내 PC 에서 DB 도구로 붙기"). 운영 데이터라 조회만 하고, 수정은 하지 않는다.
+
+```bash
+kubectl run pg-tunnel --image=alpine/socat --restart=Never -- tcp-listen:5432,fork,reuseaddr tcp-connect:"$(kubectl get secret rds-credentials -o jsonpath='{.data.PGHOST}' | base64 -d)":5432
+kubectl wait --for=condition=Ready pod/pg-tunnel && kubectl port-forward pod/pg-tunnel 25432:5432
+```
+
+DBeaver: Host `127.0.0.1`, Port `25432`, Database·Username `p1_2`, SSL `require`(호스트 이름이 localhost라 인증서 검증은 끈다). 비밀번호는 플랫폼 포털 가이드의 RDS 표(또는 `kubectl get secret rds-credentials -o jsonpath='{.data.PGPASSWORD}' | base64 -d`)에서 확인하고 저장소·채팅에 남기지 않는다. 다 쓰면 중계 파드를 지운다.
+
+```bash
+kubectl delete pod pg-tunnel
+```
+
+## 파일
 
 | 파일 | 역할 |
 | --- | --- |
-| [compose.yaml](../../compose.yaml) | 로컬 포트·필수 환경값·의존성·상태 확인·DB 볼륨 |
-| [.dockerignore](../../.dockerignore) | 비밀값·원본·호스트 산출물의 컨텍스트 제외 |
-| [backend/Dockerfile](../../backend/Dockerfile) | Gradle 빌드와 Java 21·Python 3.11 런타임 |
-| [frontend/Dockerfile](../../frontend/Dockerfile) | 잠금 파일 기반 Vue 빌드와 nginx 런타임 |
-| [frontend/nginx.conf](../../frontend/nginx.conf) | 같은 출처 API 프록시·정적 자산·SPA fallback |
-| [scripts/dev-up.sh](../../scripts/dev-up.sh) | 기존 설정 확인·빌드·시작·준비 대기 |
-| [scripts/dev-down.sh](../../scripts/dev-down.sh) | DB 볼륨을 보존하는 종료 |
-| [scripts/smoke-local.py](../../scripts/smoke-local.py) | 개발 DB에 합성 초안을 추가하는 실제 HTTP·파서 연결 검증 |
+| [compose.yaml](../../compose.yaml) | 로컬 서비스·포트·볼륨·상태 확인 |
+| [.env.example](../../.env.example) | 로컬 설정 견본 |
+| [backend/Dockerfile](../../backend/Dockerfile) · [ai/Dockerfile](../../ai/Dockerfile) · [frontend/Dockerfile](../../frontend/Dockerfile) | 클러스터와 같은 이미지 |
+| [scripts/dev-up.sh](../../scripts/dev-up.sh) · [scripts/dev-down.sh](../../scripts/dev-down.sh) | 시작·종료(볼륨 보존) |
 
-두 실행 스크립트는 별도 함수를 선언하지 않는다. 목적·입력·종료 코드·실패·부작용은 각 파일 상단 명세가 기준이다. Gradle/npm 의존성 캐시는 Docker 빌드 캐시 안에만 추가하고, 원본 데이터 경로나 호스트 소스를 컨테이너의 쓰기 볼륨으로 연결하지 않는다.
+---
+
+> **이하는 11/16–11/18 예전 백엔드(`local,demo` 프로필, 개발 세션 토큰) 기준 검증 기록이다.** 현재 백엔드와 맞지 않는 스크립트(`smoke-local.py`, `verify-*.py`)와 설정이 포함되어 있어 참고용으로만 남긴다.
 
 ## 2026-11-16 통합 검증 기록
 

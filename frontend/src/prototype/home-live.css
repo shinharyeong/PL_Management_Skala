@@ -1,0 +1,17 @@
+/* Live data uses the prototype's home composition, with bounded wide-data regions. */
+.home-live .hp-section-heading { flex-wrap: wrap; }
+.home-live .hp-summary .hp-table-scroll { max-height: 480px; overflow: auto; }
+.home-live .hp-financial-table thead { position: sticky; top: 0; z-index: 1; }
+.home-live .hp-table-scroll, .home-live .hp-waterfall-scroll { min-width: 0; max-width: 100%; }
+.home-live .hp-kpi:last-child .hp-decrease { color: #bdd5ff; }
+.home-live .hp-kpi:last-child .hp-good { color: #aff0d2; }
+.home-live .hp-kpi:last-child .hp-bad { color: #ffc4bc; }
+.home-live .hp-kpi:last-child .hp-muted { color: #c2d1e5; }
+.home-live .hp-close-steps li > b { width: auto; min-width: 44px; padding-inline: 6px; white-space: nowrap; border-radius: 20px; }
+.home-live .hp-cause-heading > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.home-live .hp-business-table { min-width: 620px; }
+@media(max-width:760px) {
+  .home-live .hp-close-steps { min-width: 390px; }
+  .home-live .hp-close-card { overflow-x: auto; }
+  .home-live .hp-todo-row .btn { max-width: 100%; }
+}

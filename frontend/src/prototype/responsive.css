@@ -1,0 +1,65 @@
+/* Shared containment: content may wrap; financial tables scroll as a single grid. */
+.app-layout, .workspace-shell, .main-content, .page-stack, .card, .cell-detail,
+.review-layout > *, .hp-top-grid > *, .hp-bottom-grid > * { min-width: 0; }
+.app-layout .row-between, .app-layout .actions { flex-wrap: wrap; }
+.app-layout .row-between > :first-child { min-width: 0; }
+.app-layout h1, .app-layout h2, .app-layout p, .app-layout .btn { overflow-wrap: anywhere; }
+.app-layout .btn { max-width: 100%; white-space: normal; height: auto; }
+.app-layout input:not([type=checkbox]):not([type=radio]), .app-layout select,
+.app-layout textarea { min-width: 0; max-width: 100%; }
+.app-layout .table-scroll { width: 100%; max-width: 100%; min-width: 0; overflow: auto; }
+.app-layout .table-scroll > table { min-width: 760px; }
+.app-layout .table-scroll th, .app-layout .table-scroll td { vertical-align: top; }
+.app-layout td.number { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.app-layout .nav-link > span:not(.nav-count) { min-width: 0; overflow-wrap: anywhere; }
+.app-layout .nav-count { flex-shrink: 0; }
+.monthly-panel .result-toolbar { flex-wrap: wrap; }
+.monthly-panel .result-toolbar label { flex-wrap: wrap; min-width: 0; }
+.monthly-panel .search-field { flex: 1 1 220px; }
+.monthly-panel .pipeline { overflow-x: auto; }
+.monthly-panel .pipeline-step { flex: 1 0 auto; }
+.monthly-panel .live-gap-table table { width: 1200px; min-width: 1200px; table-layout: fixed; }
+.monthly-panel .live-gap-table thead th:not(:first-child) { text-align: right; }
+.monthly-panel .live-gap-table thead th:last-child { text-align: left; }
+.monthly-panel .live-gap-table tbody th { white-space: normal; overflow-wrap: anywhere; }
+.monthly-panel .live-gap-table .cell-link { white-space: normal; text-align: left; overflow-wrap: anywhere; }
+.monthly-panel .live-gap-table input { flex-shrink: 0; margin-right: 10px; }
+.monthly-panel .live-version-grid table { table-layout: fixed; }
+.monthly-panel .live-version-grid th, .monthly-panel .live-version-grid td {
+  width: 200px; white-space: normal; overflow-wrap: anywhere;
+}
+.monthly-panel .live-version-grid th small { display: block; margin-top: 6px; }
+.hp-waterfall-chart { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(120px,1fr); grid-template-rows: 300px; }
+.hp-waterfall-name { white-space: normal; overflow-wrap: anywhere; }
+.hp-period-bar { flex-wrap: wrap; }
+.hp-kpi strong { overflow-wrap: anywhere; }
+.management-panel .summary-cards { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; }
+.management-panel .status-tabs { display: flex; flex-wrap: wrap; }
+.management-panel .status-tabs button { flex: 1 1 120px; }
+@media(max-width:1100px) {
+  .hp-top-grid, .hp-bottom-grid { grid-template-columns: minmax(0,1fr); }
+  .hp-period-bar > * { min-width: 0; }
+}
+@media(max-width:760px) {
+  .app-layout .main-content { padding: 20px 16px 32px; }
+  .app-layout .card { padding: 18px; }
+  .app-layout .sidebar-user { position: static; min-height: 0; padding: 12px 0 0; display: flex; flex-wrap: wrap; gap: 8px; }
+  .app-layout .sidebar-user strong, .app-layout .sidebar-user small { display: inline; }
+  .app-layout .sidebar-user .text-button { margin-left: auto; }
+  .app-layout .sidebar nav { max-width: 100%; }
+  .app-layout .sidebar .brand { padding-right: 0; }
+  .monthly-panel .selection-bar > .actions { width: 100%; }
+  .monthly-panel .selection-bar .btn.primary { min-width: 0; }
+  .monthly-panel .amount-condition, .monthly-panel .condition-toggle { flex: 1 1 240px; }
+  .hp-kpis, .management-panel .summary-cards { grid-template-columns: minmax(0,1fr); }
+  .hp-todo-row { grid-template-columns: minmax(0,1fr) auto; }
+  .hp-todo-row .btn { grid-column: 1 / -1; justify-self: end; }
+  .hp-period-switch { flex-wrap: wrap; }
+}
+.hp-close-steps li > b { width: auto; min-width: 44px; padding: 0 6px; white-space: nowrap; border-radius: 20px; }
+
+.local-auth-code { display: inline-block; margin-left: 8px; padding: 6px 12px; font-size: 24px; letter-spacing: .15em; color: #244fb5; background: #e9efff; border-radius: 8px; user-select: all; font-variant-numeric: tabular-nums; }
+
+.local-account-form{max-width:640px;width:100%}.local-account-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:24px}.local-account-button{display:flex;flex-direction:column;gap:6px;text-align:left;padding:16px 18px;border:1px solid #cbd6e5;border-radius:12px;background:#fff;color:#243b58;font:inherit;cursor:pointer}.local-account-button:first-child{grid-column:1/-1;border-color:#8ba9e1;background:#eef4ff}.local-account-button:hover{border-color:#245fdb;background:#eef4ff}.local-account-button span{font-size:13px;color:#526176}.local-account-button:disabled{opacity:.5;cursor:wait}@media(max-width:480px){.local-account-list{grid-template-columns:1fr}}
+
+.organization-reveal-row { scroll-margin-top: 20px; }

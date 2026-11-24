@@ -47,6 +47,13 @@ app:
   submission-template:
     location: ${SUBMISSION_TEMPLATE_LOCATION:file:./templates/submission-template.xlsx}
     filename: 제출양식.xlsx
+  # 보고서 AI(report-ai, 클러스터 내부). 명세 12절. token은 양쪽이 같은 REPORT_AI_TOKEN(헤더 X-Internal-Token)
+  report-ai:
+    base-url: ${REPORT_AI_URL:http://localhost:8000}
+    token: ${REPORT_AI_TOKEN:}
+    timeout-seconds: ${REPORT_AI_TIMEOUT_SECONDS:90}
+    # true면 token이 비어 있을 때 내부 보고를 거부하고 report-ai도 부르지 않는다(운영 프로필에서 켬). false는 로컬 개발용
+    require-token: ${REPORT_AI_REQUIRE_TOKEN:false}
   # 기한 경과 알림 확인 주기(KST cron). "-"이면 끈다.
   notification:
     overdue-scan:

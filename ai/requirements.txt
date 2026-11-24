@@ -1,6 +1,8 @@
 fastapi
 uvicorn
 openai
+langchain-core>=0.3  # LLM 호출 인터페이스(app/services/llm.py), LangGraph 노드가 같은 모델을 씀
+langgraph>=1.0  # text2SQL 챗봇 흐름(app/chat/graph.py)
 python-dotenv
 pytest
 httpx  # 테스트(FastAPI TestClient)에 필요

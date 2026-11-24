@@ -13,12 +13,12 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 from ..config import Settings
-from ..services import ai_reasons, openai_client
+from ..services import ai_reasons, llm
 from ..services.call_log import CallLog
 from ..services.key_messages import FORBIDDEN, numbers_in
 from . import schema
 
-SQL_VERSION, TEXT_VERSION = "chat-sql-v4", "chat-text-v1"
+SQL_VERSION, TEXT_VERSION = "chat-sql-v5", "chat-text-v1"
 SQL_SYSTEM = ("너는 재무 데이터 조회용 PostgreSQL SQL 작성 보조다. 아래 구조와 규칙만 따른다. 데이터 값은 모른다(질문과 해석된 값만 받는다). 숫자를 지어내지 않는다.\n\n"
               + schema.SCHEMA_DOC + "\n\n" + schema.RULES + "\n\n" + schema.EXAMPLES)
 TEXT_SYSTEM = ("너는 재무 조회 결과를 설명하는 보조다. 주어진 결과 행만 사용해 보고서체 1~3문장으로 쓴다. 숫자는 결과에 있는 값이나 억원 환산(소수 1자리)만 쓴다. "
@@ -73,13 +73,10 @@ def _call(s: Settings, task: str, system: str, user: str, max_tokens: int, budge
     log = CallLog(s.log_dir or s.output_dir)
     meta = {"task": task, "status": "-", "model": s.openai_model, "prompt_version": version, "facts_hash": hashlib.sha256(user.encode("utf-8")).hexdigest()[:12]}
     try:
-        client = openai_client.make_client(s)
-        resp = client.chat.completions.create(model=s.openai_model, temperature=s.ai_temperature, max_tokens=max_tokens, response_format={"type": "json_object"},
-                                              messages=[{"role": "system", "content": system}, {"role": "user", "content": user}])
-        out = json.loads(resp.choices[0].message.content)
+        reply = llm.ask_json(s, system, user, max_tokens=max_tokens)
+        out, tin, tout = reply.data, reply.input_tokens, reply.output_tokens
         if not isinstance(out, dict):
             raise ValueError("JSON object expected")
-        tin, tout = int(getattr(resp.usage, "prompt_tokens", 0) or 0), int(getattr(resp.usage, "completion_tokens", 0) or 0)
     except Exception as e:  # noqa: BLE001 — 오류 종류만 기록(키·응답 원문 없음)
         kind = type(e).__name__ + (f" HTTP {e.status_code}" if getattr(e, "status_code", None) else "")
         log.append({**meta, "outcome": "error", "input_tokens": 0, "output_tokens": 0, "error": kind})

@@ -15,7 +15,7 @@ import json
 import re
 
 from ..config import get_settings
-from ..services import openai_client
+from ..services import llm
 from ..services.call_log import CallLog
 from . import extract as X
 
@@ -85,15 +85,11 @@ def _call(s, image_png: bytes, lines) -> tuple[dict, int, int]:
     meta = {"task": "pdf_structure", "status": "-", "model": s.openai_model, "prompt_version": PROMPT_VERSION, "facts_hash": hashlib.sha256(rows.encode("utf-8")).hexdigest()[:12]}
     data_url = "data:image/png;base64," + base64.b64encode(image_png).decode()
     try:
-        client = openai_client.make_client(s)
-        resp = client.chat.completions.create(
-            model=s.openai_model, temperature=0, max_tokens=1500, response_format={"type": "json_object"},
-            messages=[{"role": "system", "content": SYSTEM},
-                      {"role": "user", "content": [{"type": "text", "text": "줄 목록:\n" + rows}, {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}}]}])
-        out = json.loads(resp.choices[0].message.content)
+        reply = llm.ask_json(s, SYSTEM, [{"type": "text", "text": "줄 목록:\n" + rows}, {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}}],
+                             max_tokens=1500, temperature=0)
+        out, tin, tout = reply.data, reply.input_tokens, reply.output_tokens
         if not isinstance(out, dict):
             raise ValueError("JSON object expected")
-        tin, tout = int(getattr(resp.usage, "prompt_tokens", 0) or 0), int(getattr(resp.usage, "completion_tokens", 0) or 0)
     except Exception as e:  # noqa: BLE001 — 오류 종류만 기록(키·응답 원문 없음)
         kind = type(e).__name__ + (f" HTTP {e.status_code}" if getattr(e, "status_code", None) else "")
         log.append({**meta, "outcome": "error", "input_tokens": 0, "output_tokens": 0, "error": kind})
@@ -180,14 +176,11 @@ def _vision_call(s, png: bytes, system: str | None = None, task: str = "pdf_stru
     if ask_text is not None:
         ask = ask_text
     try:
-        client = openai_client.make_client(s)
-        resp = client.chat.completions.create(
-            model=model, temperature=0, max_tokens=max_tokens, response_format={"type": "json_object"},
-            messages=[{"role": "system", "content": system or VISION_SYSTEM}, {"role": "user", "content": [{"type": "text", "text": ask}, {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}}]}])
-        out = json.loads(resp.choices[0].message.content)
+        reply = llm.ask_json(s, system or VISION_SYSTEM, [{"type": "text", "text": ask}, {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}}],
+                             max_tokens=max_tokens, temperature=0, model=model)
+        out, tin, tout = reply.data, reply.input_tokens, reply.output_tokens
         if not isinstance(out, dict):
             raise ValueError("JSON object expected")
-        tin, tout = int(getattr(resp.usage, "prompt_tokens", 0) or 0), int(getattr(resp.usage, "completion_tokens", 0) or 0)
     except Exception as e:  # noqa: BLE001
         kind = type(e).__name__ + (f" HTTP {e.status_code}" if getattr(e, "status_code", None) else "")
         log.append({**meta, "outcome": "error", "input_tokens": 0, "output_tokens": 0, "error": kind})

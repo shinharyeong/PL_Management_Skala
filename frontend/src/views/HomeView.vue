@@ -14,11 +14,10 @@ const error = ref('')
 const busy = ref(false)
 const now = ref(Date.now())
 const codeInput = ref(null)
-const organizationCode = ref('F10')
 const controller = new AbortController()
 const remaining = computed(() => Math.max(0, Math.ceil((new Date(challenge.value?.expiresAt).getTime() - now.value) / 1000)) || 0)
 const countdown = computed(() => `${String(Math.floor(remaining.value / 60)).padStart(2, '0')}:${String(remaining.value % 60).padStart(2, '0')}`)
-const canResend = computed(() => challenge.value && now.value >= new Date(challenge.value.resendAt).getTime())
+const canResend = computed(() => challenge.value && now.value >= new Date(challenge.value.resendAvailableAt).getTime())
 let timer
 
 /** 입력한 등록 이메일의 인증코드를 요청한다.
@@ -41,25 +40,13 @@ async function verify() {
   if (busy.value) return
   busy.value = true; error.value = ''
   try {
-    const result = await session.request('/api/v1/auth/sessions', { method: 'POST', body: JSON.stringify({ challengeId: challenge.value.challengeId, code: code.value }), signal: controller.signal })
-    const destination = roleDestination(router.currentRoute.value, result.actor.role)
-    session.accept(result); await router.replace(destination)
+    const result = await session.request('/api/v1/auth/sessions', { method: 'POST', body: JSON.stringify({ email: challenge.value.email, code: code.value }), signal: controller.signal })
+    session.accept(result)
+    await router.replace(roleDestination(router.currentRoute.value, session.actor.role))
   } catch (cause) { if (cause.name !== 'AbortError') error.value = errorText(cause) }
   finally { busy.value = false }
 }
 
-/** 로컬 확인용 계정으로 입장한다.
- * Args: role 개발 역할. Returns: Promise<void>. Raises: 없음(화면 표시). Side Effects: 개발 API·라우트 갱신.
- */
-async function enterDemo(role) {
-  busy.value = true; error.value = ''
-  try { const path = roleDestination(router.currentRoute.value, role); await session.enter(role, controller.signal, role === 'ORG_MANAGER' ? organizationCode.value : undefined); await router.replace(path) }
-  catch (cause) { if (cause.name !== 'AbortError') error.value = errorText(cause) }
-  finally { busy.value = false }
-}
-
-/** 이메일 입력 단계로 돌아간다. Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 화면 입력 초기화. */
-function changeEmail() { challenge.value = null; code.value = ''; error.value = '' }
 /** 카운트다운을 시작한다. Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 타이머 등록. */
 function initialize() { timer = setInterval(() => { now.value = Date.now() }, 1000) }
 /** 화면의 비동기 자원을 해제한다. Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 요청·타이머 해제. */
@@ -71,29 +58,28 @@ onBeforeUnmount(dispose)
 <template>
   <main class="login-page">
     <section class="login-intro">
-      <div class="entry-brand"><span class="brand-mark"></span>손익관리 플랫폼</div>
-      <div class="login-promise"><h1>월간 손익 보고,<br />2주에서 하루로.</h1><p>엑셀 취합 · Gap 소명 · 버전 관리<br />한 곳에서 끝내는 경영기획 워크스페이스</p></div>
-      <small>경영팀을 부탁해 · 손익관리 플랫폼</small>
+      <div class="entry-brand"><span class="brand-mark"></span>경영팀을 부탁해</div>
+      <div class="login-promise"><h1>제출본과 손익을<br />확인하세요.</h1><p>조직별 제출본 · 변경 내역 · 소명<br />검토와 승인 이력을 관리합니다.</p></div>
+      <small>손익관리 플랫폼</small>
     </section>
     <section class="login-content">
       <div class="login-form">
         <h2>{{ challenge ? '인증코드를 입력하세요' : '로그인' }}</h2>
         <p v-if="!challenge" class="login-description">등록된 사내 이메일로 시작하세요.</p>
-        <div v-if="error" class="alert error" role="alert">{{ error }}</div>
         <form v-if="!challenge" @submit.prevent="requestCode">
-          <label>이메일<input v-model="email" type="email" autocomplete="email" placeholder="name@company.com" required :disabled="busy" /></label>
+          <label>이메일<input v-model="email" type="email" autocomplete="email" placeholder="name@company.com" required :disabled="busy" :aria-invalid="!!error" :aria-describedby="error ? 'email-error' : undefined" /></label>
+          <p v-if="error" id="email-error" class="alert error" role="alert">{{ error }}</p>
           <button class="button dark login-submit" :disabled="busy">{{ busy ? '확인 중…' : '인증코드 받기' }}</button>
           <p class="login-help">관리자가 등록한 소속과 역할로 연결됩니다.</p>
         </form>
         <form v-else @submit.prevent="verify">
-          <div class="email-chip"><span>{{ challenge.email }}</span><button type="button" class="text-button" @click="changeEmail">변경</button></div>
+          <div class="email-chip"><span>{{ challenge.email }}</span></div>
           <label for="login-code">인증코드 6자리</label>
           <input id="login-code" ref="codeInput" v-model="code" class="code-input" :class="{ invalid: error }" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required aria-describedby="code-time" :disabled="busy" />
+          <p v-if="error" class="alert error" role="alert">{{ error }}</p>
           <div class="code-meta"><span id="code-time">{{ remaining ? `유효시간 ${countdown}` : '유효시간이 경과되어, 코드 재전송을 요청해주세요' }}</span><button type="button" class="text-button" :disabled="!canResend || busy" @click="requestCode">코드 재전송</button></div>
           <button class="button dark login-submit" :disabled="busy || !remaining || code.length !== 6">{{ busy ? '확인 중…' : '로그인' }}</button>
-          <div v-if="challenge.delivery === 'LOCAL_PREVIEW'" class="local-mailbox"><strong>로컬 인증 수신함</strong><p>현재 실행 환경에서는 메일을 발송하지 않습니다.</p><code>{{ challenge.localCode }}</code></div>
         </form>
-        <details class="local-entry"><summary>로컬 체험 계정으로 확인</summary><p>현재 적재된 데이터로 기능을 확인합니다.</p><label>사업조직 코드<input v-model="organizationCode" placeholder="F10" :disabled="busy" /></label><div class="button-row"><button class="button" :disabled="busy" @click="enterDemo('PLANNER')">경영기획팀</button><button class="button" :disabled="busy" @click="enterDemo('ORG_MANAGER')">조직 담당자</button></div></details>
       </div>
     </section>
   </main>

@@ -1,10 +1,13 @@
+import { localAuthCodePlugin } from './scripts/local-auth-code-plugin.js'
 import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 
-export default defineConfig({
-  plugins: [vue()],
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  return {
+  plugins: [vue(), localAuthCodePlugin({logPath: env.LOCAL_AUTH_LOG, apiTarget: env.API_PROXY_TARGET})],
   build: {
     rollupOptions: {
       input: {
@@ -19,9 +22,10 @@ export default defineConfig({
     },
   },
   server: {
-    // 개발 중 /api 요청은 로컬 백엔드(8080)로 넘긴다.
+    // 별도 검증 서버는 API_PROXY_TARGET으로 지정한다. 브라우저 요청은 같은 출처를 유지한다.
     proxy: {
-      '/api': 'http://localhost:8080',
+      '/api': env.API_PROXY_TARGET || 'http://localhost:8080',
     },
   },
+  }
 })

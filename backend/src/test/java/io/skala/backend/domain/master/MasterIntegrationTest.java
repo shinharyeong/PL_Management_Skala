@@ -178,6 +178,31 @@ class MasterIntegrationTest extends PostgresIntegrationTest {
                 Long.class, requestId, orgId);
     }
 
+    @Test
+    void annualMasterListingAndDownloadUseAnnualSnapshotsAndPlannerPermissions() throws Exception {
+        mvc.perform(auth(get("/api/v1/annual-masters").param("year",String.valueOf(year)),planner))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.state").value("NO_REQUEST"));
+        long request=insertRequest("ANNUAL_PLAN",null);
+        mvc.perform(auth(get("/api/v1/annual-masters").param("year",String.valueOf(year)),planner))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.state").value("WAITING"));
+        long a=insertSubmission(request,orgA,"APPROVED",1,1);
+        long b=insertSubmission(request,orgB,"APPROVED",1,1);
+        PublishedMaster master=publish(b).orElseThrow();
+        mvc.perform(auth(get("/api/v1/annual-masters").param("year",String.valueOf(year)),planner))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.state").value("CONFIRMED"))
+                .andExpect(jsonPath("$.items[0].label").value(master.label()))
+                .andExpect(jsonPath("$.items[0].organizationCount").value(2));
+        byte[] data=mvc.perform(auth(get("/api/v1/annual-masters/"+master.id()+"/file"),planner))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        try(XSSFWorkbook workbook=new XSSFWorkbook(new ByteArrayInputStream(data))){
+            assertThat(workbook.getSheet("출처").getLastRowNum()).isEqualTo(2);
+            assertThat(workbook.getSheet("손익")).isNotNull();
+        }
+        mvc.perform(auth(get("/api/v1/annual-masters").param("year",String.valueOf(year)),manager)).andExpect(status().isForbidden());
+        mvc.perform(auth(get("/api/v1/annual-masters/"+master.id()+"/file"),manager)).andExpect(status().isForbidden());
+        mvc.perform(auth(get("/api/v1/annual-masters/9223372036854775807/file"),planner)).andExpect(status().isNotFound());
+    }
+
     private Optional<PublishedMaster> publish(long submissionId) {
         return new TransactionTemplate(transactionManager).execute(status -> publisher.publishIfComplete(submissionId));
     }

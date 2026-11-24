@@ -1099,100 +1099,50 @@ components:
           format: date-time
     TemplateDefinition:
       type: object
-      description: 블록 구성·기간 규칙·확정 SQL·서식 (FR-RPT-002, 006, 008)
+      description: |-
+        자료 틀(FR-RPT-002·006·008). 형식의 기준은 AI다. 백엔드는 저장 봉투만 검사하고(JSON 스키마
+        `backend/src/main/resources/report/template-definition.schema.json`, AI `model.py StoredTemplate`에서 생성)
+        블록 세부(기간·범위·비교·표 스펙·배치·서식 등)는 AI·화면 형식 그대로 보관한다. `id`·`name`은 서버 값으로 맞춘다.
       required:
+      - schema_version
+      - name
       - blocks
+      additionalProperties: true
       properties:
+        schema_version:
+          type: integer
+          minimum: 1
+          example: 1
+        name:
+          type: string
+          maxLength: 120
         blocks:
           type: array
+          maxItems: 500
           items:
             $ref: '#/components/schemas/ReportBlock'
     ReportBlock:
       type: object
+      description: 블록. id·kind만 정해져 있고 나머지 칸은 AI·화면 형식(예 text, metric, period, scope, compare, options, bbox)
       required:
       - id
       - kind
-      - title
-      - order
+      additionalProperties: true
       properties:
         id:
           type: string
+          maxLength: 64
           example: b1
         kind:
           type: string
-          enum:
-          - TABLE
-          - LIST
-          - TEXT
-          - GAP
-          - CHART
-        title:
-          type: string
-          example: 실적 표
-        order:
-          type: integer
-        period:
-          type: object
-          description: 공통 따라감 / 기준 월 ± n / 고정 월
-          properties:
-            rule:
-              type: string
-              enum:
-              - FOLLOW
-              - OFFSET
-              - FIXED
-            offset:
-              type: integer
-              example: 1
-            fixedYear:
-              type: integer
-            fixedMonth:
-              type: integer
-            rangeMonths:
-              type: integer
-              description: 월별 추이 등 최근 n개월
-        scope:
-          type: string
-          enum:
-          - COMPANY
-          - ORGANIZATION
-        organizationId:
-          oneOf:
-          - $ref: '#/components/schemas/Id'
-          - type: 'null'
-        comparison:
-          type: string
-          enum:
-          - NONE
-          - PLAN
-          - PREV_ESTIMATE
-          - PREV_YEAR
-        metricId:
-          oneOf:
-          - $ref: '#/components/schemas/Id'
-          - type: 'null'
-        sql:
-          type:
-          - string
-          - 'null'
-          description: 자연어 질의로 확정해 저장한 SQL
-        emptyPolicy:
-          type: string
-          enum:
-          - SHOW_NO_DATA
-          - REMOVE
-          - KEEP_ORIGINAL
-        style:
-          type: object
-          properties:
-            fontFamily:
-              type: string
-            fontSize:
-              type: integer
-            width:
-              type: integer
-            height:
-              type: integer
+          maxLength: 40
+          description: AI가 정하는 종류(예 title, paragraph, table, list, chart, numbercard, footnote)
+          example: table
+        needs_review:
+          type: array
+          description: 확인 필요 사유 코드(구성 확인 단계 노란 표시)
+          items:
+            type: string
     Template:
       type: object
       properties:
@@ -1238,36 +1188,17 @@ components:
           - FAILED
         maskNumbers:
           type: boolean
-        blocks:
-          type: array
-          description: SUCCEEDED일 때 추출한 블록(구성 확인용)
-          items:
-            allOf:
-            - $ref: '#/components/schemas/ReportBlock'
-            - type: object
-              properties:
-                needsCheck:
-                  type: boolean
-                  description: 종류·데이터 연결 확인 필요(노란색)
-                sourceArea:
-                  type: object
-                  properties:
-                    page:
-                      type: integer
-                    x:
-                      type: number
-                    y:
-                      type: number
-                    w:
-                      type: number
-                    h:
-                      type: number
+        definition:
+          oneOf:
+          - $ref: '#/components/schemas/TemplateDefinition'
+          - type: 'null'
+          description: SUCCEEDED일 때 AI가 추출한 틀 초안(구성 확인용). 확인이 필요한 블록은 needs_review가 있다
         pages:
           type: array
           items:
             type: object
             properties:
-              false:
+              "no":
                 type: integer
               maskedImageUrl:
                 type: string
@@ -1275,8 +1206,17 @@ components:
           type:
           - string
           - 'null'
+          description: FAILED일 때(예 PDF_UNREADABLE, INVALID_TEMPLATE, REPORT_AI_UNAVAILABLE)
+        errorMessage:
+          type:
+          - string
+          - 'null'
         createdAt:
           $ref: '#/components/schemas/Timestamp'
+        finishedAt:
+          oneOf:
+          - $ref: '#/components/schemas/Timestamp'
+          - type: 'null'
     TableData:
       type: object
       properties:
@@ -1304,6 +1244,64 @@ components:
             type: object
             additionalProperties: true
 paths:
+  /annual-masters:
+    get:
+      operationId: listAnnualMasters
+      tags: [조직별 현황]
+      summary: 연간 계획 master 버전 목록 (경영기획팀 전용)
+      description: 선택 연도의 확정 연간 master를 최신 버전부터 반환한다. 확정 전에는 WAITING, 연간 요청이 없으면 NO_REQUEST다.
+      parameters:
+      - in: query
+        name: year
+        schema: {type: integer, minimum: 2000, maximum: 9999}
+        description: 생략하면 한국 시간 올해
+      responses:
+        '200':
+          description: 연간 master 목록
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [year, state, items]
+                properties:
+                  year: {type: integer}
+                  state: {type: string, enum: [CONFIRMED, WAITING, NO_REQUEST]}
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, year, seq, label, createdAt, createdByName, organizationCount]
+                      properties:
+                        id: {type: string}
+                        year: {type: integer}
+                        seq: {type: integer}
+                        label: {type: string, example: master_plan2026.01}
+                        createdAt: {type: string, format: date-time}
+                        createdByName: {type: string}
+                        organizationCount: {type: integer}
+        '400': {description: 연도 범위 오류}
+        '401': {description: 로그인 필요}
+        '403': {description: 경영기획팀 전용}
+  /annual-masters/{masterId}/file:
+    get:
+      operationId: downloadAnnualMaster
+      tags: [조직별 현황]
+      summary: 연간 계획 master 엑셀 다운로드 (경영기획팀 전용)
+      description: 해당 버전의 고정된 승인본에서 요청 연도 PLAN만 집계한다. 손익·출처 시트를 포함하며 15자리를 넘거나 소수가 있는 금액은 정확한 문자열로 기록한다.
+      parameters:
+      - in: path
+        name: masterId
+        required: true
+        schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: 연간 계획 master XLSX
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: {type: string, format: binary}
+        '401': {description: 로그인 필요}
+        '403': {description: 경영기획팀 전용}
+        '404': {description: 연간 master 없음}
   /auth/codes:
     post:
       operationId: requestAuthCode
@@ -4294,6 +4292,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: '`REPORT_AI_UNAVAILABLE` 보고서 AI에 연결할 수 없음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
@@ -4340,6 +4344,49 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /report/pdf-jobs/{jobId}/pages/{no}:
+    get:
+      operationId: getPdfJobPage
+      tags:
+      - AI 보고서
+      summary: RPT-02 숫자를 가린 페이지 이미지(구성 확인 화면용)
+      x-fr:
+      - FR-RPT-001
+      - FR-RPT-010
+      x-tables:
+      - pdf_job
+      parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      - name: "no"
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: PNG
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`PDF_JOB_NOT_READY` 분석이 끝나지 않음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /report/templates:
     get:
       operationId: listTemplates
@@ -4604,6 +4651,7 @@ paths:
       tags:
       - AI 보고서
       summary: RPT-09 자주 쓰는 SQL을 지표 사전으로 등록
+      description: SQL은 report-ai의 검사기(sqlguard, `/v1/sql-check`)로 검사한다(SELECT 한 문장, 보고서용 뷰만, version 조건). 목록에는 SQL을 내보내지 않고, 블록은 metricId로 가리킨다(RPT-10에서 backend가 SQL로 바꿔 넘김).
       x-fr:
       - FR-RPT-006
       x-tables:
@@ -4648,6 +4696,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '503':
+          description: '`REPORT_AI_UNAVAILABLE` SQL 검사를 맡는 보고서 AI에 연결할 수 없음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '409':
           description: '`METRIC_CODE_EXISTS` 같은 코드 존재 + 명령 공통 409'
           content:
@@ -4679,19 +4733,12 @@ paths:
             schema:
               type: object
               required:
-              - period
+              - base
+              - blocks
               properties:
-                metricId:
-                  oneOf:
-                  - $ref: '#/components/schemas/Id'
-                  - type: 'null'
-                sql:
-                  type:
-                  - string
-                  - 'null'
-                  description: metricId가 없을 때 블록에 저장된 SQL
-                period:
+                base:
                   type: object
+                  description: 기준 월. 블록마다 기간 규칙(기준 월 ± n, 고정 월, 최근 n개월)을 이 값에 적용한다
                   required:
                   - year
                   - month
@@ -4700,37 +4747,45 @@ paths:
                       type: integer
                     month:
                       type: integer
-                    rangeMonths:
-                      type: integer
-                scope:
-                  type: string
-                  enum:
-                  - COMPANY
-                  - ORGANIZATION
-                  default: COMPANY
-                organizationId:
-                  oneOf:
-                  - $ref: '#/components/schemas/Id'
-                  - type: 'null'
-                comparison:
-                  type: string
-                  enum:
-                  - NONE
-                  - PLAN
-                  - PREV_ESTIMATE
-                  - PREV_YEAR
-                  default: NONE
+                      minimum: 1
+                      maximum: 12
+                blocks:
+                  type: array
+                  description: 채울 블록(틀의 블록 그대로). `metricId`가 있으면 backend가 지표 사전의 SQL을 `sql`로 넣어 넘기고, `sql`이 있으면 report-ai가 블록 기준 월 인자(:version·:version_prev·:base_year·:base_month·:scn)로 실행한다
+                  items:
+                    $ref: '#/components/schemas/ReportBlock'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TableData'
+                type: object
+                description: report-ai가 보고서용 뷰에서 코드로 계산한 값(AI 문장 생성 없음). 저장하지 않는다
+                properties:
+                  dataStatus:
+                    $ref: '#/components/schemas/DataStatus'
+                  blocks:
+                    type: array
+                    description: 블록 id별 채운 결과(표 행·차트 계열·숫자 카드 값 등, AI 형식). 계산할 수 없는 칸은 missing=true
+                    items:
+                      type: object
+                      required:
+                      - id
+                      additionalProperties: true
+                      properties:
+                        id:
+                          type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: '`REPORT_AI_UNAVAILABLE` 보고서 AI에 연결할 수 없음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
@@ -4801,12 +4856,23 @@ paths:
                     type:
                     - string
                     - 'null'
+                  clarifyOptions:
+                    type: array
+                    description: 되묻기 선택지(CLARIFY일 때)
+                    items:
+                      type: string
                   preview:
                     $ref: '#/components/schemas/TableData'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: '`REPORT_AI_UNAVAILABLE` 보고서 AI에 연결할 수 없음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '403':
           $ref: '#/components/responses/Forbidden'
         '429':
@@ -4860,6 +4926,17 @@ paths:
                           type: integer
                         name:
                           type: string
+                        parentCode:
+                          type:
+                          - integer
+                          - 'null'
+                          description: 하위 유형이면 상위 유형 코드. 상위 유형 합계는 하위 유형 합(예 2 = 3 + 4)
+                        catchAll:
+                          type: boolean
+                          description: 분류하지 않은 소명이 자동으로 가는 '기타'
+                        assignable:
+                          type: boolean
+                          description: 카드를 직접 넣을 수 있는지(상위 유형은 false)
               example:
                 tableVersion: 3
                 items:
@@ -4888,7 +4965,11 @@ paths:
       tags:
       - AI 보고서
       summary: RPT-13 Gap 설명 블록용 승인 소명 카드 + 제안 분류
-      description: 금액은 소명이 달린 검토 항목의 Gap 금액을 코드가 계산. 같은 조직·항목 소명은 지난달 분류로 미리 채움.
+      description: |-
+        블록 = 기준 월(year, month) × 비교 종류. 그 달 version(확정 master, 없으면 조직별 최신 승인본 — 보고서용 뷰와 같은 규칙)의 제출본에서 임계값을 넘은 검토 항목이다. 실적 비교(ACTUAL_VS_PLAN)는 기준 월 항목, 추정 비교는 기준 월+1 항목(12월 기준 추정은 없음).
+        금액은 소명이 달린 검토 항목의 Gap 금액(gap_comparison). 수락된 소명만 카드(items), 수락 전은 reviewing.
+        후보: 지난달 같은 조직·항목 분류(LAST_MONTH) 우선, 없으면 답변에 유형 단어가 하나만 맞을 때(RULE).
+        분류하지 않은 카드는 '기타'(catchAll) 합계에 들어가고, 상위 유형 합계는 하위 합. gapTotal은 수락 전 소명까지 포함해 classifiedTotal과 비교한다.
       x-fr:
       - FR-RPT-007
       x-tables:
@@ -4946,6 +5027,15 @@ paths:
                           - RULE
                           - LAST_MONTH
                           - null
+                  categoryTotals:
+                    type: object
+                    description: 유형 id → 합계(원). 미분류는 '기타', 상위 유형은 하위 합
+                    additionalProperties:
+                      $ref: '#/components/schemas/Money'
+                  classifiedTotal:
+                    $ref: '#/components/schemas/Money'
+                  matchesGapTotal:
+                    type: boolean
                   reviewing:
                     type: array
                     description: 아직 승인 전이라 분류할 수 없는 소명
@@ -4968,6 +5058,7 @@ paths:
       tags:
       - AI 보고서
       summary: RPT-14 소명 카드를 분류함에 배치(빼려면 categoryId null)
+      description: 응답 합계는 그 소명이 속한 블록 기준. comparison을 생략하면 그 항목이 넘은 첫 비교(ACTUAL_VS_PLAN → ESTIMATE_VS_PREVIOUS → ESTIMATE_VS_PLAN). 상위 유형에는 넣을 수 없다(400 CATEGORY_NOT_ASSIGNABLE).
       x-fr:
       - FR-RPT-007
       x-tables:
@@ -4978,6 +5069,11 @@ paths:
         required: true
         schema:
           $ref: '#/components/schemas/Id'
+      - name: comparison
+        in: query
+        description: 합계를 돌려줄 블록의 비교 종류(생략 가능)
+        schema:
+          $ref: '#/components/schemas/Comparison'
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
@@ -5000,6 +5096,12 @@ paths:
               schema:
                 type: object
                 properties:
+                  explanationId:
+                    $ref: '#/components/schemas/Id'
+                  categoryId:
+                    oneOf:
+                    - $ref: '#/components/schemas/Id'
+                    - type: 'null'
                   categoryTotals:
                     type: object
                     additionalProperties:
@@ -5060,6 +5162,18 @@ paths:
               schema:
                 type: object
                 properties:
+                  status:
+                    type: string
+                    enum:
+                    - EDIT
+                    - CLARIFY
+                    - REFUSED
+                    - UNAVAILABLE
+                    description: 변경안 있음 / 되묻기 / 거절(숫자 변경 요청 등) / AI 사용 불가
+                  message:
+                    type:
+                    - string
+                    - 'null'
                   proposals:
                     type: array
                     items:
@@ -5067,12 +5181,13 @@ paths:
                       properties:
                         op:
                           type: string
+                          description: AI 편집 조작(report-ai chat_edit). 숫자 값은 바꾸지 않는다
                           enum:
-                          - ADD_BLOCK
-                          - REMOVE_BLOCK
-                          - MOVE_BLOCK
-                          - SET_FONT
-                          - SET_SIZE
+                          - add_block
+                          - remove_block
+                          - move_block
+                          - set_style
+                          - add_column
                         target:
                           type: string
                         description:
@@ -5087,6 +5202,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: '`REPORT_AI_UNAVAILABLE` 보고서 AI에 연결할 수 없음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '403':
           $ref: '#/components/responses/Forbidden'
         '429':
@@ -5106,8 +5227,11 @@ paths:
       operationId: exportReport
       tags:
       - AI 보고서
-      summary: RPT-16 자료 내보내기(1개씩, 저장하지 않음)
-      description: 서버에 설치된 글꼴만 사용(PDF 호환). 잠정 월이면 '잠정' 표시를 붙인다.
+      summary: RPT-16 자료 XLSX 내보내기(1개씩, 저장하지 않음)
+      description: |-
+        서버는 XLSX만 만든다. PNG·PDF는 화면에 보이는 그대로 브라우저에서 만든다(배치를 서버에서 다시 그리지 않음).
+        화면에서 받은 숫자를 쓰지 않고, 저장된 틀(templateId·version)과 기준 월(period)로 report-ai에 다시 채워(RPT-10과 같은 경로)
+        숫자를 원 단위 값 그대로 넣는다. 잠정 월이면 제목에 '(잠정)'. version을 비우면 최신, blockId를 주면 그 블록만.
       x-fr:
       - FR-RPT-008
       - FR-RPT-009
@@ -5119,14 +5243,17 @@ paths:
               type: object
               required:
               - templateId
-              - version
               - period
               - format
               properties:
                 templateId:
                   $ref: '#/components/schemas/Id'
                 version:
-                  type: integer
+                  type:
+                  - integer
+                  - 'null'
+                  minimum: 1
+                  description: 비우면 최신 버전
                 period:
                   type: object
                   required:
@@ -5145,10 +5272,8 @@ paths:
                 format:
                   type: string
                   enum:
-                  - PDF
-                  - PPTX
                   - XLSX
-                  - PNG
+                  description: PNG·PDF는 화면에서 만든다
       responses:
         '200':
           $ref: '#/components/responses/FileStream'
@@ -5161,7 +5286,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '503':
-          description: '`PROCESSING_UNAVAILABLE` 렌더링 서비스 일시 불가'
+          description: '`REPORT_AI_UNAVAILABLE` 숫자를 다시 채울 보고서 AI에 연결할 수 없음'
           content:
             application/problem+json:
               schema:

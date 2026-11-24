@@ -85,25 +85,6 @@ def test_sqlguard_rejects_postgres_catalog_schema_function_and_set_tricks_but_al
     con.close()
 
 
-def test_read_connection_cannot_see_other_schemas_and_data_sets_round_trip_through_schemas():
-    from app.chat import datasets
-    _seed()
-    saved = datasets.save_current_as("테스트 묶음")
-    assert saved.startswith(db.schema_name()) and datasets.list_sets()["sets"][0]["name"] == "테스트 묶음" and datasets.list_sets()["sets"][0]["orgs"] == 2
-    db.clear_all()
-    with pytest.raises(FileNotFoundError):
-        db.open_readonly().execute("SELECT 1 FROM fact LIMIT 1").fetchall() or (_ for _ in ()).throw(FileNotFoundError("비었음"))
-    r = datasets.select("테스트 묶음")
-    assert r["active"] == "테스트 묶음"
-    con = db.open_readonly()
-    assert con.execute("SELECT COUNT(DISTINCT org_code) FROM dim_org").fetchone()[0] == 2 and con.execute("SELECT COUNT(*) FROM fact").fetchone()[0] > 0
-    assert con.execute("SELECT COUNT(*) FROM pg_namespace WHERE nspname = current_schema()").fetchone()[0] == 1
-    other = {x["table_name"] for x in con.execute("SELECT table_name FROM information_schema.tables WHERE table_schema <> current_schema() AND table_schema NOT IN ('pg_catalog','information_schema') AND table_schema LIKE 't\\_%'")}
-    assert other  # 다른(묶음) 스키마는 실제로 존재하지만
-    assert con.execute("SELECT to_regclass('dataset_set')").fetchone()[0] is not None
-    with pytest.raises(FileNotFoundError):
-        datasets.select("없는 묶음")
-    con.close()
 
 
 def test_missing_database_is_reported_as_file_not_found_for_callers():

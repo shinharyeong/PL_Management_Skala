@@ -1,5 +1,5 @@
-"""보고서용 뷰 초안(docs/report_views.sql)을 실제 백엔드 스키마(V1)에 올려 홈과 같은 규칙으로 숫자가 나오는지 확인한다. PostgreSQL 이 없으면 건너뛴다.
-외래키만 뺀 V1 스키마 + 손으로 계산한 작은 시나리오. AI 쪽 코드(조회·SQL 가드·값 채우기)가 뷰를 그대로 읽는지도 같이 본다."""
+"""백엔드 마이그레이션(V1 이후 전부, 보고서용 뷰 포함)을 올려 홈과 같은 규칙으로 숫자가 나오는지 확인한다. PostgreSQL 이 없으면 건너뛴다.
+외래키만 뺀 스키마 + 손으로 계산한 작은 시나리오. 홈 화면과의 숫자 대조는 백엔드 ReportViewsIntegrationTest 에도 있다. AI 쪽 코드(조회·SQL 가드·값 채우기)가 뷰를 그대로 읽는지도 같이 본다."""
 from __future__ import annotations
 
 import os
@@ -12,8 +12,9 @@ import pytest
 from app.chat import db, sqlguard
 
 ROOT = Path(__file__).resolve().parents[2]
-V1 = ROOT / "backend/src/main/resources/db/migration/V1__init_schema.sql"
-VIEWS = Path(__file__).resolve().parents[1] / "docs" / "report_views.sql"
+MIGRATIONS = ROOT / "backend/src/main/resources/db/migration"
+V1 = MIGRATIONS / "V1__init_schema.sql"
+VIEWS = MIGRATIONS / "V20261124_1500__report_views.sql"
 pytestmark = pytest.mark.skipif(not V1.exists(), reason="백엔드 마이그레이션 파일 없음")
 
 SHA = "a" * 64
@@ -29,6 +30,9 @@ def _setup(rpt: str):
     ddl = V1.read_text(encoding="utf-8")
     ddl = re.sub(r'ALTER TABLE "[a-z_]+" ADD CONSTRAINT "[a-z_0-9]+" FOREIGN KEY.*?;', "", ddl, flags=re.S)      # 시나리오를 단순하게 넣기 위해 외래키만 뺀다(열·검사 제약은 그대로)
     con.execute(ddl)
+    for later in sorted(MIGRATIONS.glob("V2*.sql")):                     # V1 뒤 마이그레이션(컬럼 추가 등). 뷰는 아래에서 스키마 이름을 바꿔 올린다
+        if later != VIEWS:
+            con.execute(later.read_text(encoding="utf-8"))
     views = VIEWS.read_text(encoding="utf-8").replace("CREATE SCHEMA IF NOT EXISTS report;", f'CREATE SCHEMA IF NOT EXISTS "{rpt}";')
     con.execute(re.sub(r"\breport\.", f'"{rpt}".', views))
     return con
@@ -98,8 +102,9 @@ def test_views_follow_the_home_rules_on_the_real_backend_schema():
     s = _rpt()
     con = db.open_readonly(s)
     q = lambda sql, *a: [tuple(r) for r in con.execute(sql, a).fetchall()]
-    # dim_version: 한 달에 하나, master 가 있으면 최신 master(seq 2 도 같은 내용), 없으면 잠정. 가장 최근 달이 is_latest
-    assert q("SELECT version, kind, year, month, is_latest FROM dim_version ORDER BY month") == [("master-2030-05", "master", 2030, 5, 0), ("provisional-2030-06", "provisional", 2030, 6, 1)]
+    # dim_version: 한 달에 하나, master 가 있으면 최신 master(seq 2 도 같은 내용), 없으면 잠정.
+    # is_latest 는 RPT-07 기본 기준 "최근 확정 월": 6월이 잠정이어도 확정된 5월
+    assert q("SELECT version, kind, year, month, is_latest FROM dim_version ORDER BY month") == [("master-2030-05", "master", 2030, 5, 1), ("provisional-2030-06", "provisional", 2030, 6, 0)]
     assert q("SELECT org_code, org_name FROM dim_org ORDER BY 1") == [("A1", "사업부1"), ("A2", "사업부2")]                 # 쉬는 조직(active=false) 제외
     # 확정: 전년 값(999)·월간 시트의 PLAN(777)·합계(DERIVED 600)는 빠지고, 계획은 확정 연간 계획 제출본에서 온다
     assert q("SELECT org_code, scenario, revenue_won, cost_won, op_won FROM v_op WHERE version='master-2030-05' AND month=5 ORDER BY org_code, scenario") == [
@@ -115,7 +120,8 @@ def test_views_follow_the_home_rules_on_the_real_backend_schema():
     # gap: 임계값을 넘은 비교만, 상태는 ReviewTabs 규칙. explanation: 원문은 수락된 것만
     assert q("SELECT gap_id, basis, previous_won, current_won, diff_won, rate_percent, status, explanation_status FROM gap WHERE version='master-2030-05' ORDER BY gap_id") == [
         ("RI-1-PLAN", "PLAN", 900, 1000, 100, "11.11", "ACCEPTED", "수락"), ("RI-2-PLAN", "PLAN", 350, 400, 50, "14.29", "IN_PROGRESS", "검토중"), ("RI-3-PLAN", "PLAN", 900, 1000, 100, "11.11", "RE_REVIEW", "검토중")]
-    assert q("SELECT gap_key, status, answer FROM explanation WHERE version='master-2030-05' ORDER BY gap_key") == [("RI-1", "수락", "수락된 원문입니다"), ("RI-2", "검토중", None), ("RI-3", "검토중", None)]
+    assert q("SELECT gap_key, gap_id, link_type, status, answer FROM explanation WHERE version='master-2030-05' ORDER BY gap_key") == [
+        ("RI-1", "RI-1-PLAN", "GAP", "수락", "수락된 원문입니다"), ("RI-2", "RI-2-PLAN", "GAP", "검토중", None), ("RI-3", "RI-3-PLAN", "GAP", "검토중", None)]
     ai_schema = os.environ["AI_DB_SCHEMA"] + "_ai"
     db.open_writer(schema_override=ai_schema).close()                           # AI 가 지금 쓰는 표(chat/schema.py)를 따로 만들어 컬럼 이름·순서를 그대로 비교한다
     cols = lambda sc, t: [tuple(r) for r in con.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position", (sc, t)).fetchall()]

@@ -1,3 +1,4 @@
+import { matchesGapFilter } from '../lib/gap-result-filter.js'
 // All money in these fixtures is an exact, safe integer in KRW. Display units never affect filtering.
 export const statuses = ['검토 필요', '검토 완료', '소명 진행중', '재검토 필요', '소명 승인 완료', '제외됨']
 export const statusTones = ['review', 'submitted', 'progress', 'recheck', 'approved', 'excluded']
@@ -9,6 +10,7 @@ export const gapFixtures = [
   { id: 'A7', cell: 'A7', name: '교육비', group: '인력운영비', category: '교육비', plan: 50000000, actual: 51000000, previousEstimate: 50000000, estimate: 52000000, source: 'OpEx!BD218', status: '검토 필요' },
 ]
 export function valuesFor(item, type = comparisonTypes[0]) {
+  if ('baselineAmount' in item) return { base:item.baselineAmount,current:item.currentAmount }
   if (type === '추정 vs 추정') return { base: item.previousEstimate, current: item.estimate }
   if (type === '추정 vs 계획') return { base: item.plan, current: item.estimate }
   return { base: item.plan, current: item.actual }
@@ -19,6 +21,7 @@ export function differenceRate(base, current) {
   return (current - base) / Math.abs(base) * 100
 }
 export function matchesConditions(item, conditions) {
+  if ('baselineAmount' in item) return matchesGapFilter(item,{percentEnabled:conditions.rateEnabled,amountEnabled:conditions.amountEnabled,percent:String(conditions.rate),amount:String(conditions.minimum)})
   const { base, current } = valuesFor(item, conditions.type)
   if (![base, current].every(Number.isSafeInteger) || base === current) return false
   const diff = BigInt(current) - BigInt(base)

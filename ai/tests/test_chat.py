@@ -7,7 +7,7 @@ import openpyxl
 import pytest
 from fastapi.testclient import TestClient
 
-from app.chat import db, loader_excel, loader_run, schema, service, sqlguard
+from app.chat import db, schema, service, sqlguard
 from app.main import app
 from app.services import openai_client
 
@@ -268,87 +268,7 @@ def test_file_endpoint_rejects_bad_id():
 
 
 # ------------------------------------------------------------------ 적재기
-def _fake_workbook(path, org="F10", rev=100, cost=50):
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = loader_excel.REV_SHEET
-    ws["V3"], ws["AJ3"] = "'26년 계획", "'26년 실적/추정"
-    ws["A5"], ws["B5"], ws["C5"], ws["D5"], ws["E5"] = "사업부1", "음성기본료", "1200 기본료", "음성기본료(영상)", "담당자_F10"
-    for m in range(1, 13):
-        ws.cell(5, 22 + m).value = rev + m                    # 계획 블록 W..AH
-        ws.cell(5, 36 + m).value = rev + 10 * m               # 실적/추정 블록 AK..AV
-    ws["A6"], ws["D6"] = "사업부1", "빈 항목"                 # 값이 없는 행은 fact 가 생기지 않는다
-    ws2 = wb.create_sheet(loader_excel.OPX_SHEET)
-    ws2["AE4"], ws2["AS4"] = "'26년 계획", "'26년 실적/추정"
-    vals = ["마케팅비용", "고객모집비용", "위탁모집수수료", "사업부1", None, None, "팀1", None, "샘플 1", None, None, None, None, "담당자_F10"]
-    for c, v in enumerate(vals, start=1):
-        ws2.cell(6, c).value = v
-    for m in range(1, 13):
-        ws2.cell(6, 31 + m).value = cost + m
-        ws2.cell(6, 45 + m).value = cost + 10 * m
-    wb.save(path)
 
 
-def test_excel_loader_units_scenarios_and_versions(tmp_path):
-    f1, f2 = tmp_path / "F10_2026-10.xlsx", tmp_path / "F20_2026-10.xlsx"
-    _fake_workbook(f1)
-    _fake_workbook(f2, rev=200)
-    assert loader_excel.is_org_file(f1) and not loader_excel.is_org_file(tmp_path / "18_전체마스터.xlsx") and not loader_excel.is_org_file(tmp_path / "~$F10.xlsx")
-    t = loader_excel.load_excel([f1, f2], "close-2026-10", 2026, 10, workers=1)
-    assert t["files"] == 2 and t["rows"] == 2 * (24 + 24) and t["avg_file_seconds"] >= 0
-    con = db.open_readonly()
-    one = con.execute("SELECT amount_won, scenario, cat1, cat2, item, manager, src FROM fact WHERE org_code='F10' AND kind='매출' AND month=3 AND scenario='ACTUAL'").fetchone()
-    assert one["amount_won"] == (100 + 30) * 1000 and one["cat1"] == "음성기본료" and one["manager"] == "담당자_F10" and one["src"] == "매출_세부_IFRS15後!AM5"   # 천원 → 원
-    assert con.execute("SELECT amount_won FROM fact WHERE org_code='F10' AND kind='매출' AND month=11 AND scenario='ESTIMATE'").fetchone()[0] == (100 + 110) * 1000      # 마감월(10) 이후는 추정
-    assert con.execute("SELECT amount_won FROM fact WHERE org_code='F10' AND kind='매출' AND month=2 AND scenario='PLAN'").fetchone()[0] == 102 * 1000
-    c = con.execute("SELECT cat1, cat2, item, team, detail, manager, scenario FROM fact WHERE org_code='F10' AND kind='영업비용' AND month=10 AND scenario='ACTUAL'").fetchone()
-    assert tuple(c) == ("마케팅비용", "고객모집비용", "위탁모집수수료", "팀1", "샘플 1", "담당자_F10", "ACTUAL")
-    vs = [dict(r) for r in con.execute("SELECT version, kind, row_count, is_latest FROM dim_version")]
-    assert vs == [{"version": "close-2026-10", "kind": "close", "row_count": 96, "is_latest": 1}]
-    idx = {r["indexname"] for r in con.execute("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()")}
-    assert "ix_fact_main" in idx and con.execute("SELECT COUNT(*) FROM pg_stats WHERE schemaname = current_schema() AND tablename = 'fact'").fetchone()[0] > 0            # 인덱스·ANALYZE
-    con.close()
-    loader_excel.load_excel([f1], "close-2026-10", 2026, 10, workers=1)                                           # 같은 버전 다시 적재는 교체
-    con = db.open_readonly()
-    assert con.execute("SELECT COUNT(*) FROM fact WHERE version='close-2026-10'").fetchone()[0] == 48
-    con.close()
 
 
-def test_run_loader_only_smallest_rows_and_accepted_answers_only(isolated):
-    from app.config import get_settings
-    s = get_settings()
-    rid = "20261116-000000-aaaaaa"
-    run = s.ai_cache_dir / "runs" / rid
-    (run / "output").mkdir(parents=True)
-    rows = [{"path": ["매출"], "level": 1, "row": 10, "current": {}, "plan": {}},
-            {"path": ["매출", "기본료"], "level": 2, "row": 11, "current": {}, "plan": {}},
-            {"path": ["매출", "기본료", "음성"], "level": 3, "row": 12, "current": {"10": "100", "11": "110", "12": "120"}, "plan": {"11": "105"}},
-            {"path": ["매출", "기본료", "데이터"], "level": 3, "row": 13, "current": {"11": "50"}, "plan": {}},
-            {"path": ["매출", "통화료"], "level": 2, "row": 14, "current": {"11": "70"}, "plan": {}},
-            {"path": ["영업비용"], "level": 1, "row": 20, "current": {}, "plan": {}},
-            {"path": ["영업비용", "마케팅"], "level": 2, "row": 21, "current": {"11": "60"}, "plan": {}},
-            {"path": ["영업이익"], "level": 1, "row": 30, "current": {"11": "999"}, "plan": {}}]
-    sbm = {str(m): ("actual" if m <= 11 else "estimate") for m in range(1, 13)}
-    org = {"org_code": "F10", "org_name": "사업부1", "scenario_by_month": sbm, "rows": rows}
-    (run / "output" / "master_final.json").write_text(json.dumps({"approved_orgs": 20, "requested_orgs": 20, "master": {"version": "master-2026-11-01", "month": "2026-11", "answer_sheet": {"F10": org}}}), encoding="utf-8")
-    (run / "output" / "master_provisional.json").write_text(json.dumps({"approved_orgs": 19, "requested_orgs": 20, "provisional_aggregate": {"month": "2026-11", "answer_sheet": {"F10": org}}}), encoding="utf-8")
-    rec = lambda i, st, ans: {"id": f"F10:K{i}", "org_code": "F10", "org_name": "사업부1", "kind": "매출", "item": f"항목{i}", "year": 2026, "month": 11, "scenario": "ACTUAL", "link_type": "NO_GAP",
-                              "st_final": [st], "st_prov": ["검토중"], "latest_verdict": "ACCEPTED", "history": [{"explanation_id": f"EXP-{i}"}], "latest_answer": ans, "sheet": "시트", "cell": "A1"}
-    gap = {"gap_id": "G1", "gap_type": "OP_GAP", "org_code": "F10", "org_name": "사업부1", "item": "영업이익", "year": 2026, "month": 11, "scenario": "ACTUAL", "basis": "PLAN", "previous_value_won": "100",
-           "current_value_won": "150", "diff_won": "50", "rate_percent": "50.0", "status_in_final": "ACTIVE", "explanation_status": "연결됨", "explanations": [{"legacy_gap_key": "F10:K1"}]}
-    result = {"stages": {"gaps": {"gaps": [gap]}, "report": {"data": {"records": [rec(1, "수락", "수락된 소명"), rec(2, "검토중", "아직 수락 전")], "gaps": [gap]}}}}
-    (run / "result.json").write_text(json.dumps(result), encoding="utf-8")
-    out = loader_run.load_run()                                                  # run_id 생략 = 최신 실행
-    assert out["run_id"] == rid and {v["version"] for v in out["versions"]} == {"master-2026-11-01", "provisional-2026-11"}
-    con = db.open_readonly()
-    f = [tuple(r) for r in con.execute("SELECT cat1, cat2, item, month, scenario, amount_won FROM fact WHERE version='master-2026-11-01' AND item IN ('음성','데이터','통화료','마케팅') ORDER BY item, month, scenario")]
-    assert ("기본료", "음성", "음성", 11, "ACTUAL", 110) in f and ("기본료", "음성", "음성", 12, "ESTIMATE", 120) in f and ("기본료", "음성", "음성", 11, "PLAN", 105) in f
-    assert con.execute("SELECT COUNT(*) FROM fact WHERE version='master-2026-11-01' AND item IN ('매출','기본료','영업이익')").fetchone()[0] == 0        # 합계 행·영업이익 행은 없음
-    assert {r[0] for r in con.execute("SELECT DISTINCT item FROM fact WHERE version='master-2026-11-01'")} == {"음성", "데이터", "통화료", "마케팅"}
-    ans = {r["explanation_id"]: r["answer"] for r in con.execute("SELECT explanation_id, answer FROM explanation WHERE version='master-2026-11-01'")}
-    assert ans == {"EXP-1": "수락된 소명", "EXP-2": None}                                                                       # 수락된 원문만 저장
-    prov_ans = [r["answer"] for r in con.execute("SELECT answer FROM explanation WHERE version='provisional-2026-11'")]
-    assert prov_ans == [None, None]                                                                                              # 잠정 기준으로는 아직 수락 아님
-    assert con.execute("SELECT explanation_id FROM explanation WHERE version='master-2026-11-01' AND gap_id='G1'").fetchone() is not None
-    assert db.latest_version(con) in ("master-2026-11-01",)
-    con.close()
