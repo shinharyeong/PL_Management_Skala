@@ -5,7 +5,10 @@ import io.skala.backend.domain.request.repository.SubmissionRequestRepository;
 import io.skala.backend.domain.request.value.RequestType;
 import io.skala.backend.domain.review.repository.ReviewItemRepository;
 import io.skala.backend.domain.review.service.ExplanationTargetService;
+import io.skala.backend.domain.review.dto.SubmissionReviewDetail;
+import io.skala.backend.domain.review.service.SubmissionReviewDetailService;
 import io.skala.backend.domain.submission.dto.BaselineResponse;
+import io.skala.backend.domain.submission.dto.SubmissionDetailResponse;
 import io.skala.backend.domain.submission.dto.SubmissionResponse;
 import io.skala.backend.domain.submission.dto.SubmissionResponse.FileRef;
 import io.skala.backend.domain.submission.dto.SubmissionResponse.OrganizationRef;
@@ -48,10 +51,39 @@ public class SubmissionQueryService {
     private final ExplanationTargetService explanationTargetService;
     private final BaselineResolver baselineResolver;
     private final SubmissionDiagnosticsService submissionDiagnosticsService;
+    private final SubmissionReviewDetailService submissionReviewDetailService;
 
     @Transactional(readOnly = true)
-    public SubmissionResponse get(Long submissionId, AuthenticatedUser user) {
-        return toResponse(submissionAccess.loadForRead(submissionId, user));
+    public SubmissionDetailResponse get(Long submissionId, AuthenticatedUser user) {
+        Submission submission = submissionAccess.loadForRead(submissionId, user);
+        SubmissionReviewDetail review = submissionReviewDetailService.detail(submission);
+        return new SubmissionDetailResponse(toResponse(submission), review.explanations(),
+                review.inheritedExplanations(), review.rejectedItems(), history(submission));
+    }
+
+    /**
+     * 같은 요청·조직의 처리 이력(초안 제외, 회차 순): 첫 제출 SUBMITTED, 이후 제출 RESUBMITTED,
+     * 반려 RESUBMIT_REQUESTED, 승인 APPROVED.
+     */
+    private List<SubmissionDetailResponse.HistoryEvent> history(Submission submission) {
+        SubmissionRequest request = submissionRequestRepository.findById(submission.getRequestId()).orElseThrow();
+        List<SubmissionDetailResponse.HistoryEvent> events = new java.util.ArrayList<>();
+        submissionRepository.findSubmitted(submission.getOrganizationId(), submission.getRequestId(), null, null, null)
+                .stream()
+                .sorted(java.util.Comparator.comparing(Submission::getSeq))
+                .forEach(s -> {
+                    String label = SubmissionLabels.of(s, request);
+                    events.add(new SubmissionDetailResponse.HistoryEvent(s.getSeq() == 1 ? "SUBMITTED" : "RESUBMITTED",
+                            user(s.getSubmittedBy()), s.getSubmittedAt(), label));
+                    if (s.getStatus() == SubmissionStatus.REJECTED) {
+                        events.add(new SubmissionDetailResponse.HistoryEvent("RESUBMIT_REQUESTED",
+                                user(s.getReviewedBy()), s.getReviewedAt(), label));
+                    } else if (s.getStatus() == SubmissionStatus.APPROVED) {
+                        events.add(new SubmissionDetailResponse.HistoryEvent("APPROVED", user(s.getReviewedBy()),
+                                s.getReviewedAt(), SubmissionLabels.approved(s, request)));
+                    }
+                });
+        return events;
     }
 
     /**

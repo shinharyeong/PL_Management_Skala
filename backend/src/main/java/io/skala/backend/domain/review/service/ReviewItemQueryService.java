@@ -239,7 +239,7 @@ public class ReviewItemQueryService {
     }
 
     /** 소명 한 건을 첨부와 함께 응답으로 */
-    ExplanationResponse toResponse(ReviewExplanation e) {
+    public ExplanationResponse toResponse(ReviewExplanation e) {
         return toResponse(e, attachmentsOf(List.of(e)).getOrDefault(e.getId(), List.of()));
     }
 

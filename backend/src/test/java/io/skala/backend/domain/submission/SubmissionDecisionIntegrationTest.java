@@ -155,6 +155,13 @@ class SubmissionDecisionIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.masterPublished.state").value("CONFIRMED"));
         decide(nov, Map.of("decision", "APPROVE"), beforeApproval).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("RESOURCE_CHANGED"));
+        // HIST-02 처리 이력: 제출 → 승인, 조직이 쓴 소명 2건
+        mvc.perform(get("/api/v1/submissions/{id}", nov).with(manager))
+                .andExpect(jsonPath("$.history[0].event").value("SUBMITTED"))
+                .andExpect(jsonPath("$.history[1].event").value("APPROVED"))
+                .andExpect(jsonPath("$.history[1].label").value("ver11.01"))
+                .andExpect(jsonPath("$.explanations.length()").value(2))
+                .andExpect(jsonPath("$.status").value("APPROVED"));
         JsonNode approved = json(mvc.perform(get("/api/v1/submissions").param("displayStatus", "APPROVED")
                 .param("year", String.valueOf(planYear)).with(manager)).andExpect(status().isOk()));
         assertThat(approved.findValuesAsText("displayStatus")).containsOnly("APPROVED");
@@ -177,6 +184,14 @@ class SubmissionDecisionIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.masterPublished").doesNotExist());
         assertThat(jdbc.queryForObject("select rejected from review_item where id = ?", Boolean.class,
                 Long.parseLong(rent))).isTrue();
+        // HIST-02 반려 항목: 임차료, 반려 사유, 마지막 소명
+        mvc.perform(get("/api/v1/submissions/{id}", nov).with(manager))
+                .andExpect(jsonPath("$.rejectedItems.length()").value(1))
+                .andExpect(jsonPath("$.rejectedItems[0].reviewItemId").value(rent))
+                .andExpect(jsonPath("$.rejectedItems[0].item").value("임차료 · 11월 추정"))
+                .andExpect(jsonPath("$.rejectedItems[0].sourceCell").value("비용!O5"))
+                .andExpect(jsonPath("$.rejectedItems[0].reason").value("임차료 근거가 부족합니다."))
+                .andExpect(jsonPath("$.rejectedItems[0].previousExplanation.answer").value("변경 사유"));
 
         // 같은 값으로 재제출: 매출은 반려본과 같아 대상 아님, 임차료는 반려 항목이라 다시 소명
         long resubmission = draft(novRequest, "nov2", novemberLines());
@@ -192,6 +207,18 @@ class SubmissionDecisionIntegrationTest extends PostgresIntegrationTest {
                 .value(planYear + "-11-02"));
         assertThat(jdbc.queryForObject("select previous_submission_id from submission where id = ?", Long.class,
                 resubmission)).isEqualTo(nov);
+        mvc.perform(get("/api/v1/submissions/{id}", resubmission).with(manager))
+                .andExpect(jsonPath("$.history[*].event").value(org.hamcrest.Matchers.contains(
+                        "SUBMITTED", "RESUBMIT_REQUESTED", "RESUBMITTED")));
+
+        // unit: 원 단위 값은 그대로, 화면 단위 값이 옆에 붙는다. 잘못된 단위는 400
+        mvc.perform(get("/api/v1/review-items").param("view", "ORG").param("submissionId", String.valueOf(resubmission))
+                        .param("unit", "THOUSAND").with(manager))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.groups[0].months[0].items[0].current").value("50"))
+                .andExpect(jsonPath("$.groups[0].months[0].items[0].displayCurrent").value("0"));
+        mvc.perform(get("/api/v1/submissions/{id}/submit-preview", resubmission).param("unit", "WEIRD").with(manager))
+                .andExpect(status().isBadRequest());
 
         // HIST-01: 반려본은 대체됨, 재제출본은 검토 대기
         JsonNode history = json(mvc.perform(get("/api/v1/submissions").param("year", String.valueOf(planYear))
