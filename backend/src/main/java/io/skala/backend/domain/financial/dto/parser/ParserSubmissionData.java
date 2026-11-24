@@ -53,6 +53,10 @@ public record ParserSubmissionData(
             String teamCode,
             String taskCode,
             String description,
+            String personInCharge,
+            String teamName,
+            String taskName,
+            String headquartersName,
             List<Value> values
     ) {
 

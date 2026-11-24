@@ -247,6 +247,10 @@ Table "financial_line" {
   "actual_basis" varchar(500)
   "cost_type" varchar(500)
   "description" text
+  "headquarters_name" varchar(500)
+  "team_name" varchar(500)
+  "task_name" varchar(500)
+  "person_in_charge" varchar(500)
   "source_sheet" varchar(255) [not null]
   "source_row" integer [not null]
 

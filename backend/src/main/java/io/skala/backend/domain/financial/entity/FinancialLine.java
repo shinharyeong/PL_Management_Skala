@@ -64,6 +64,18 @@ public class FinancialLine {
     @Column(name = "description", columnDefinition = "text")
     private String description;
 
+    @Column(name = "headquarters_name", length = 500)
+    private String headquartersName;
+
+    @Column(name = "team_name", length = 500)
+    private String teamName;
+
+    @Column(name = "task_name", length = 500)
+    private String taskName;
+
+    @Column(name = "person_in_charge", length = 500)
+    private String personInCharge;
+
     @Column(name = "source_sheet", nullable = false, length = 255)
     private String sourceSheet;
 
@@ -75,7 +87,8 @@ public class FinancialLine {
                                     String detailId, String detailRevision, String headquartersCode,
                                     String teamCode, String taskCode, String managementCategory,
                                     String actualBasis, String costType, String description,
-                                    String sourceSheet, Integer sourceRow) {
+                                    String headquartersName, String teamName, String taskName,
+                                    String personInCharge, String sourceSheet, Integer sourceRow) {
         FinancialLine line = new FinancialLine();
         line.submission = submission;
         line.accountItem = accountItem;
@@ -89,6 +102,10 @@ public class FinancialLine {
         line.actualBasis = actualBasis;
         line.costType = costType;
         line.description = description;
+        line.headquartersName = headquartersName;
+        line.teamName = teamName;
+        line.taskName = taskName;
+        line.personInCharge = personInCharge;
         line.sourceSheet = sourceSheet;
         line.sourceRow = sourceRow;
         return line;
