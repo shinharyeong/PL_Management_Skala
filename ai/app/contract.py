@@ -87,6 +87,9 @@ def analyze_pdf(pdf: bytes, filename: str | None, mask_numbers: bool, settings: 
 def report_pdf_result(job_id: str, body: dict, settings: Settings | None = None) -> bool:
     """backend POST /internal/pdf-jobs/{jobId}/result. 보고 실패는 기록만 한다(backend 가 작업 상태로 시간 초과를 처리)."""
     s = settings or get_settings()
+    if s.require_internal_token and not s.report_service_token:
+        log.warning("REPORT_AI_TOKEN 이 없어 PDF 분석 결과를 보고하지 않았습니다(job %s, AI_REQUIRE_INTERNAL_TOKEN=true)", job_id)
+        return False
     if not s.backend_url:
         log.warning("AI_BACKEND_URL 이 없어 PDF 분석 결과를 보고하지 못했습니다(job %s)", job_id)
         return False

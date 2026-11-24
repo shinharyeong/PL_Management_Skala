@@ -77,3 +77,12 @@ def test_internal_token_is_required_when_configured(monkeypatch):
     assert client.post("/v1/nl-query", json=body).status_code == 401
     assert client.post("/v1/nl-query", json=body, headers={"X-Internal-Token": "wrong"}).status_code == 401
     assert client.post("/v1/nl-query", json=body, headers={"X-Internal-Token": "t0k"}).status_code == 200
+
+
+def test_missing_token_is_rejected_when_required(monkeypatch):
+    monkeypatch.delenv("REPORT_AI_TOKEN", raising=False)
+    monkeypatch.setenv("AI_REQUIRE_INTERNAL_TOKEN", "true")
+    assert client.post("/v1/nl-query", json={"question": "x", "baseYear": 2034, "baseMonth": 7}).status_code == 401
+    monkeypatch.setenv("AI_BACKEND_URL", "http://backend:8080")
+    monkeypatch.setattr(contract.httpx, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("보내면 안 됨")))
+    assert contract.report_pdf_result("1", {"status": "FAILED"}) is False                 # 토큰 없이 backend 에 보고하지 않는다

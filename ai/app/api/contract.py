@@ -4,8 +4,10 @@ POST /v1/nl-query   text2SQL(RPT-11). 흐름은 LangGraph(app/chat/graph.py)
 POST /v1/data       블록 데이터 채우기(RPT-10). AI 문장 없음, 숫자는 보고서용 뷰에서 코드가 계산
 POST /v1/edit       대화 편집 변경안(RPT-15). 숫자는 바꾸지 않음
 POST /v1/pdf-jobs   PDF 틀 추출 요청(RPT-01, 1차 전송). 202 를 먼저 돌려주고 끝나면 backend 에 결과를 보고한다
-REPORT_AI_TOKEN 이 있으면 X-Internal-Token 헤더가 같아야 한다.
+REPORT_AI_TOKEN 이 있으면 X-Internal-Token 헤더가 같아야 한다. 운영(AI_REQUIRE_INTERNAL_TOKEN=true)은 토큰이 설정되지 않았으면 모두 거부한다.
 """
+import hmac
+
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -18,8 +20,13 @@ MAX_PDF_MB = 30
 
 
 def internal_only(x_internal_token: str | None = Header(default=None)) -> None:
-    expected = get_settings().report_service_token
-    if expected and x_internal_token != expected:
+    s = get_settings()
+    expected = s.report_service_token
+    if not expected:
+        if s.require_internal_token:                     # 운영: 토큰 없이 열어 두지 않는다(공용 클러스터)
+            raise HTTPException(status_code=401, detail="내부 토큰이 설정되지 않아 요청을 받지 않습니다.")
+        return
+    if not hmac.compare_digest(x_internal_token or "", expected):
         raise HTTPException(status_code=401, detail="내부 토큰이 맞지 않습니다.")
 
 
