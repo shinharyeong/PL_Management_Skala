@@ -114,7 +114,7 @@ def load_run(run_id: str | None = None, settings: Settings | None = None) -> dic
                 facts = []
                 for org in v["answer"].values():
                     facts += fact_rows(ver, org, v["year"])
-                    con.execute("INSERT OR REPLACE INTO dim_org(org_code, org_name) VALUES(?,?)", (org["org_code"], org["org_name"]))
+                    db.upsert_org(con, org["org_code"], org["org_name"])
                 con.executemany("INSERT INTO fact VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", facts)
                 con.executemany("INSERT INTO gap VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                                 [(ver, g["gap_id"], g["gap_type"], g["org_code"], g["org_name"], g["item"], g["year"], g["month"], g["scenario"], g["basis"], _int(g["previous_value_won"]),

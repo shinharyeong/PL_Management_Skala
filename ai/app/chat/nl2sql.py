@@ -18,8 +18,8 @@ from ..services.call_log import CallLog
 from ..services.key_messages import FORBIDDEN, numbers_in
 from . import schema
 
-SQL_VERSION, TEXT_VERSION = "chat-sql-v2", "chat-text-v1"
-SQL_SYSTEM = ("너는 재무 데이터 조회용 SQLite SQL 작성 보조다. 아래 구조와 규칙만 따른다. 데이터 값은 모른다(질문과 해석된 값만 받는다). 숫자를 지어내지 않는다.\n\n"
+SQL_VERSION, TEXT_VERSION = "chat-sql-v3", "chat-text-v1"
+SQL_SYSTEM = ("너는 재무 데이터 조회용 PostgreSQL SQL 작성 보조다. 아래 구조와 규칙만 따른다. 데이터 값은 모른다(질문과 해석된 값만 받는다). 숫자를 지어내지 않는다.\n\n"
               + schema.SCHEMA_DOC + "\n\n" + schema.RULES + "\n\n" + schema.EXAMPLES)
 TEXT_SYSTEM = ("너는 재무 조회 결과를 설명하는 보조다. 주어진 결과 행만 사용해 보고서체 1~3문장으로 쓴다. 숫자는 결과에 있는 값이나 억원 환산(소수 1자리)만 쓴다. "
                "새 숫자, 원인, 추측, 전망을 쓰지 않는다. 결과가 0행이면 '해당 데이터가 없습니다.'라고만 쓴다. "

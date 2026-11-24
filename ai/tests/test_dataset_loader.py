@@ -20,11 +20,9 @@ ROOT = Path(os.environ.get("AI_DATASET_DIR", "")) if os.environ.get("AI_DATASET_
 
 @pytest.mark.skipif(not ROOT or not ROOT.exists(), reason="AI_DATASET_DIR 로 데이터 묶음 폴더를 지정하면 실행")
 def test_real_dataset_matches_expected_values(tmp_path, monkeypatch):
-    import dataclasses
-
     from app.chat import loader_set
     from app.config import get_settings
-    s = dataclasses.replace(get_settings(), chat_db_path=tmp_path / "t.db")
+    s = get_settings()                                                  # 테스트마다 격리된 PostgreSQL 스키마(conftest)
     r = loader_set.load_dataset(ROOT, s, workers=1)
     v = loader_set.verify_against(ROOT, s)
     assert r["orgs"] >= 1 and v["financial"]["wrong"] == 0 and v["financial"]["missing"] == 0

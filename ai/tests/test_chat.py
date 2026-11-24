@@ -1,6 +1,6 @@
 """챗봇(AI 작업실) 테스트: SQL 검사기, 되묻기, 자기 수정, 문장 숫자 검증, 엑셀 숫자 == SQL 결과, 버전 필터, 적재기. 실제 OpenAI 호출 없음(모의 클라이언트)."""
 import json
-import sqlite3
+import psycopg
 from types import SimpleNamespace
 
 import openpyxl
@@ -100,8 +100,8 @@ def test_authorizer_blocks_functions_and_readonly_connection():
     p = {"version": "master-2026-11-01", "version_prev": "close-2026-10", "base_year": 2026, "base_month": 11, "scn": "ACTUAL"}
     with pytest.raises(sqlguard.SqlRejected) as e:                       # 허용되지 않은 함수
         sqlguard.execute(con, "SELECT load_extension('x') FROM fact WHERE version = :version", p)
-    assert e.value.code in ("NOT_AUTHORIZED", "SQL_ERROR", "FORBIDDEN_KEYWORD")
-    with pytest.raises(sqlite3.OperationalError):                        # 연결 자체가 읽기 전용
+    assert e.value.code == "FUNCTION_NOT_ALLOWED"
+    with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):           # 연결 자체가 읽기 전용
         con.execute("DELETE FROM fact")
     res = sqlguard.execute(con, GOOD_SQL, p)
     assert res.columns == ["org_name", "revenue_won", "cost_won", "op_won"] and res.row_count == 2
@@ -305,8 +305,8 @@ def test_excel_loader_units_scenarios_and_versions(tmp_path):
     assert tuple(c) == ("마케팅비용", "고객모집비용", "위탁모집수수료", "팀1", "샘플 1", "담당자_F10", "ACTUAL")
     vs = [dict(r) for r in con.execute("SELECT version, kind, row_count, is_latest FROM dim_version")]
     assert vs == [{"version": "close-2026-10", "kind": "close", "row_count": 96, "is_latest": 1}]
-    idx = {r["name"] for r in con.execute("SELECT name FROM sqlite_master WHERE type='index'")}
-    assert "ix_fact_main" in idx and con.execute("SELECT COUNT(*) FROM sqlite_stat1").fetchone()[0] > 0            # 인덱스·ANALYZE
+    idx = {r["indexname"] for r in con.execute("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()")}
+    assert "ix_fact_main" in idx and con.execute("SELECT COUNT(*) FROM pg_stats WHERE schemaname = current_schema() AND tablename = 'fact'").fetchone()[0] > 0            # 인덱스·ANALYZE
     con.close()
     loader_excel.load_excel([f1], "close-2026-10", 2026, 10, workers=1)                                           # 같은 버전 다시 적재는 교체
     con = db.open_readonly()

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 
 from ..chat import db
 from ..report_template import periods
@@ -18,7 +17,7 @@ COMPARE_WORDS = (("전년", "전년 동월"), ("전월", "직전 월"), ("지난
 DERIVED = {"영업이익": "v_op"}                      # 합계 행이 없어 DB 뷰가 계산하는 지표(챗봇과 같은 규칙: 매출 − 영업비용)
 
 
-def _con() -> sqlite3.Connection | None:
+def _con() -> db.Conn | None:
     try:
         return db.open_readonly()
     except Exception:  # noqa: BLE001 — DB 가 아직 없으면 '데이터 없음' 으로 답한다
@@ -554,7 +553,7 @@ def _breakdown(con, info, base, metric):
     if ver is None or metric not in ("영업비용", "매출"):
         return [[{"text": "항목"}, {"text": "당월"}, {"text": "계획比"}]], True
     q = ("SELECT cat1, SUM(CASE WHEN scenario='ACTUAL' THEN amount_won ELSE 0 END) a, SUM(CASE WHEN scenario='PLAN' THEN amount_won ELSE 0 END) p, "
-         "SUM(scenario='PLAN') pn FROM fact WHERE version=? AND kind=? AND year=? AND month=? AND scenario IN ('ACTUAL','PLAN') GROUP BY cat1 ORDER BY ABS(a) DESC LIMIT 6")
+         "SUM(CASE WHEN scenario='PLAN' THEN 1 ELSE 0 END) pn FROM fact WHERE version=? AND kind=? AND year=? AND month=? AND scenario IN ('ACTUAL','PLAN') GROUP BY cat1 ORDER BY ABS(SUM(CASE WHEN scenario='ACTUAL' THEN amount_won ELSE 0 END)) DESC LIMIT 6")
     rows = con.execute(q, (ver, metric, y, m)).fetchall()
     out = [[{"text": f"{metric} 상세 (억원)"}, {"text": f"{m}월"}, {"text": "계획比"}]]
     for r in rows:

@@ -77,7 +77,6 @@ def load_period(version: str, year: int, month: int, rows: list[tuple], source: 
     """한 마감월의 fact 를 조회 DB 에 적재(같은 버전은 교체)."""
     con = db.open_writer(settings)
     try:
-        con.execute("PRAGMA synchronous=OFF")
         rows = [(version, *r[1:]) for r in rows]
         with con:
             con.execute("DELETE FROM fact WHERE version=?", (version,))
@@ -90,7 +89,7 @@ def load_period(version: str, year: int, month: int, rows: list[tuple], source: 
                 if r[2]:
                     names.setdefault(r[1], Counter())[r[2]] += 1
             seen = {org: (names[org].most_common(1)[0][0] if org in names else org) for org in {r[1] for r in rows}}     # 가장 많이 나온 이름(없으면 코드)
-            con.executemany("INSERT OR REPLACE INTO dim_org(org_code, org_name) VALUES(?,?)", list(seen.items()))
+            db.upsert_orgs(con, seen.items())
             con.execute("INSERT INTO dim_version(version, kind, label, year, month, loaded_at, source, row_count, is_latest) VALUES(?,?,?,?,?,?,?,?,0)",
                         (version, "close", f"{month}월 마감", year, month, datetime.now().isoformat(timespec="seconds"), source, len(rows)))
         con.executescript(schema.INDEXES)
