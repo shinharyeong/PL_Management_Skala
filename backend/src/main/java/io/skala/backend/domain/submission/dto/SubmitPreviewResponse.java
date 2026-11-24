@@ -7,7 +7,7 @@ import java.util.List;
 public record SubmitPreviewResponse(FileInfo file, String expectedLabel, BaselineResponse baseline, List<Item> items,
                                     boolean canSubmit, String stateToken) {
 
-    /** savedAs: 제출하면 보관되는 이름(예: D100_2027-PLAN-01.xlsx) */
+    /** savedAs: 제출하면 보관되는 이름(예: D100_2027-PLAN-01.xlsx). 확장자는 올린 파일과 같다 */
     public record FileInfo(String name, String savedAs) {
     }
 

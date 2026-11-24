@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * 파서 브리지를 자식 프로세스로 실행한다(infrastructure.md "현재 파서 실행 방식").
- * stdin으로 xlsx 바이트를 넣고 stdout JSON 한 건을 받는다. 제한 시간을 넘기면 프로세스를 끝내고 실패로 본다(NFR-REL-001).
+ * stdin으로 엑셀(xlsx·xlsb) 바이트를 넣고 stdout JSON 한 건을 받는다. 제한 시간을 넘기면 프로세스를 끝내고 실패로 본다(NFR-REL-001).
  * TODO(infra): parser-worker·RabbitMQ(parse.jobs)로 옮기면 이 클래스를 큐 발행으로 바꾼다.
  */
 @Slf4j
