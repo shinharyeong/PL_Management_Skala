@@ -1,4 +1,4 @@
-# 빌드에 필요한 세 소스 트리만 허용한다.
+# 빌드에 필요한 소스 트리만 허용한다.
 **
 !backend/
 !backend/**
@@ -7,6 +7,10 @@
 !parser/
 !parser/src/
 !parser/src/**
+!ai/
+!ai/requirements.txt
+!ai/app/
+!ai/app/**
 
 # 비밀값·원본·호스트 캐시는 어느 빌드 단계에도 전달하지 않는다.
 **/.env
