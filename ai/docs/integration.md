@@ -48,6 +48,12 @@ python -m pytest -q                    # 모의 호출만 사용(실제 네트�
 - 기준 월의 version(확정 master, 없으면 잠정)으로 아래 챗봇과 **같은 LangGraph 그래프**(`app/chat/graph.py`)를 돌린다. 그 달 version 이 없으면 `UNKNOWN`. 데이터를 바꾸라는 요청·조회 불가도 `UNKNOWN`(설명에 이유).
 - 그래프: 차단 확인 → DB 열기 → 해석 → 후속 질문 규칙 → (되묻기) → 준비 → 규칙 / 예시 질문 / AI(저장된 SQL → SQL 생성 ⇄ 검사·실행, 실패하면 고쳐서 다시 `CHAT_MAX_FIX` 번) / AI 없으면 기본 질의 → 설명 문장 → 엑셀 → 기억 갱신. LLM 은 `app/services/llm.py`(LangChain).
 
+### backend 계약 `POST /v1/data` · `/v1/edit` · `/v1/pdf-jobs` (RPT-10·15·01, 명세 12절)
+- 공통: `REPORT_AI_TOKEN` 이 있으면 요청 헤더 `X-Internal-Token` 이 같아야 한다(없으면 401). 비우면 검사하지 않는다(로컬 개발).
+- `POST /v1/data` `{base{year,month}, blocks[{id,kind,…}]}` → `{dataStatus: CONFIRMED|PROVISIONAL|NONE, blocks[{id,…}]}`. `data_select.fill_report` 그대로, AI 문장 없음.
+- `POST /v1/edit` `{definition, instruction}` → `{status: EDIT|CLARIFY|REFUSED|UNAVAILABLE, message, proposals[{op, target, description, patch}]}`. `chat_edit.interpret`(LLM 의도 → 코드 검증). 숫자 변경 요청은 AI 호출 없이 REFUSED, 조회 요청은 편집이 아니라 REFUSED(자연어 질의 안내).
+- `POST /v1/pdf-jobs` (multipart `jobId`, `maskNumbers`(기본 true), `file`) → `202 {jobId, accepted}`. 백그라운드에서 추출해 `AI_BACKEND_URL` 의 `POST /internal/pdf-jobs/{jobId}/result` 로 `{status: SUCCEEDED|FAILED, definition(틀 초안, 저장 봉투 모양), pages[{no,width,height,imagePng(base64, maskNumbers 면 숫자 가림)}], error{code,message}}` 를 보낸다. 1차 전송이며, 2차는 `pdf.jobs` 큐·S3 에서 PDF 를 읽는 것만 다르다(보고 본문은 같음).
+
 ### AI 작업실(챗봇) `POST /v1/chat` (초안, 데모 화면용 — #62 에서 백엔드 경유로 바꾼 뒤 정리)
 - **흐름:** 질문 → 코드가 조직·월·버전(시점)을 먼저 해석(모르면 `unknown`, 모호하면 `clarify` 로 되묻기) → AI 가 SQL 작성(같은 질문은 저장된 SQL 재사용) → SQL 검사기 → 최대 2번 자기 수정 → **읽기 전용** PostgreSQL 조회 → 설명 문장(AI, 숫자 검증 실패 시 기본문구) → 엑셀(요약/결과/근거). AI 키가 없거나 상한 초과·실패면 빠른 질문 5개의 고정 SQL 로 대신 답한다("AI 없이 기본 질의").
 - **원칙:** AI 는 SQL 과 설명 문장만 쓰고 숫자는 전부 DB 조회 결과에서 나온다. 데이터 값은 SQL 생성 AI 에 보내지 않는다. 기존 하루 호출 상한(`AI_DAILY_CALL_LIMIT`)과 호출 기록(`ai_call_log.json`, task=chat_sql/chat_text)을 그대로 쓴다.

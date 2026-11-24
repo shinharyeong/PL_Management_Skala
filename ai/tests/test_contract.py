@@ -1,0 +1,79 @@
+"""backend 계약 /v1/data·/v1/edit·/v1/pdf-jobs(명세 12절). 실제 OpenAI·backend 호출 없음."""
+import base64
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app import contract
+from app.main import app
+from test_pdf_structure import _AiClient, _seed_report_db, make_pdf
+from app.services import openai_client
+
+client = TestClient(app)
+DEF = {"schema_version": 1, "name": "월 보고", "baseRule": {"mode": "fixed", "year": 2034, "month": 7},
+       "blocks": [{"id": "b1", "kind": "title", "text": "제목", "level": 1}, {"id": "b2", "kind": "paragraph", "text": "문장"},
+                  {"id": "b3", "kind": "table", "label": "실적 표", "columns": ["(단위: 억원)", "'34.7월", "계획", "전월"]}]}
+
+
+def test_data_fills_blocks_with_view_values_and_status():
+    _seed_report_db()
+    r = client.post("/v1/data", json={"base": {"year": 2034, "month": 7}, "blocks": [{"id": "t1", "kind": "title", "text": "보고"}]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["dataStatus"] in ("CONFIRMED", "PROVISIONAL") and body["blocks"][0]["id"] == "t1" and body["blocks"][0]["text"] == "보고"
+    none = client.post("/v1/data", json={"base": {"year": 2001, "month": 1}, "blocks": []}).json()
+    assert none["dataStatus"] == "NONE"
+    assert client.post("/v1/data", json={"base": {"year": 2034, "month": 7}, "blocks": [{"kind": "title"}]}).status_code == 422
+
+
+def test_edit_returns_proposals_and_refuses_number_changes_and_queries(monkeypatch):
+    _seed_report_db()
+    c = _AiClient({"intent": "edit", "edits": [{"op": "remove_block", "target": {"id": "b3"}}]})
+    monkeypatch.setattr(openai_client, "make_client", lambda s: c)
+    r = client.post("/v1/edit", json={"definition": DEF, "instruction": "실적 표 빼줘"}).json()
+    assert r["status"] == "EDIT" and r["proposals"][0]["op"] == "remove_block" and r["proposals"][0]["target"] == "b3"
+    assert r["proposals"][0]["description"]
+    r = client.post("/v1/edit", json={"definition": DEF, "instruction": "영업이익을 30억으로 바꿔줘"}).json()      # AI 호출 없이 거절
+    assert r["status"] == "REFUSED" and r["proposals"] == []
+    c2 = _AiClient({"intent": "query", "query": {"type": "value", "metric": "영업이익", "month": 7}})
+    monkeypatch.setattr(openai_client, "make_client", lambda s: c2)
+    r = client.post("/v1/edit", json={"definition": DEF, "instruction": "7월 전사 영업이익"}).json()                # 조회는 편집이 아님
+    assert r["status"] == "REFUSED" and r["message"] == contract.NOT_AN_EDIT
+
+
+def test_pdf_job_accepts_then_reports_a_draft_template(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "")                                   # 규칙 추출만(AI 호출 없음)
+    sent = []
+    monkeypatch.setattr(contract, "report_pdf_result", lambda job_id, body, settings=None: sent.append((job_id, body)) or True)
+    r = client.post("/v1/pdf-jobs", data={"jobId": "42", "maskNumbers": "true"}, files={"file": ("월보고.pdf", make_pdf(), "application/pdf")})
+    assert r.status_code == 202 and r.json() == {"jobId": "42", "accepted": True}
+    job_id, body = sent[0]                                                     # TestClient 는 응답 뒤 백그라운드 작업을 바로 실행
+    assert job_id == "42" and body["status"] == "SUCCEEDED" and body["error"] is None
+    d = body["definition"]
+    assert d["schema_version"] == 1 and d["name"] == "월보고" and d["blocks"] and all(b["id"] and b["kind"] for b in d["blocks"])
+    assert body["pages"][0]["no"] == 1 and base64.b64decode(body["pages"][0]["imagePng"])[:4] == b"\x89PNG"
+    client.post("/v1/pdf-jobs", data={"jobId": "43"}, files={"file": ("x.pdf", b"not a pdf", "application/pdf")})
+    assert sent[1][1]["status"] == "FAILED" and sent[1][1]["error"]["code"] == "PDF_UNREADABLE" and sent[1][1]["definition"] is None
+
+
+def test_report_pdf_result_posts_to_backend_with_token(monkeypatch):
+    calls = []
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+    monkeypatch.setattr(contract.httpx, "post", lambda url, json, headers, timeout: calls.append((url, headers, json)) or _Resp())
+    monkeypatch.setenv("AI_BACKEND_URL", "http://backend:8080/")
+    monkeypatch.setenv("REPORT_AI_TOKEN", "t0k")
+    assert contract.report_pdf_result("7", {"status": "FAILED"}) is True
+    assert calls == [("http://backend:8080/internal/pdf-jobs/7/result", {"X-Internal-Token": "t0k"}, {"status": "FAILED"})]
+    monkeypatch.delenv("AI_BACKEND_URL")
+    assert contract.report_pdf_result("7", {}) is False                         # 주소가 없으면 보고하지 않고 기록만
+
+
+def test_internal_token_is_required_when_configured(monkeypatch):
+    monkeypatch.setenv("REPORT_AI_TOKEN", "t0k")
+    body = {"question": "x", "baseYear": 2034, "baseMonth": 7}
+    assert client.post("/v1/nl-query", json=body).status_code == 401
+    assert client.post("/v1/nl-query", json=body, headers={"X-Internal-Token": "wrong"}).status_code == 401
+    assert client.post("/v1/nl-query", json=body, headers={"X-Internal-Token": "t0k"}).status_code == 200
