@@ -231,7 +231,7 @@ Side Effects:
 정적 호출 관계: `pipeline.run_parser` 등 경로 호출자 → `file_fingerprint`, `_extract_workbook_source`.
 
 ```text
-한 xlsx/xlsm 파일의 모든 시트를 읽기 전용으로 추출한다.
+한 xlsx/xlsm/xlsb 파일의 모든 시트를 읽기 전용으로 추출한다. xlsb는 패키지 내용으로 판정해 `xlsb.extract_xlsb`가 같은 구조로 읽는다.
 
 Args:
     path: 원본 OOXML 파일 경로.
@@ -1112,7 +1112,7 @@ Args:
         확인한다. self.input_dir를 기준으로 파일 목록을 읽는다.
 
 Returns:
-    대소문자와 관계없이 .xlsx 또는 .xlsb인 파일의 경로 목록.
+    대소문자와 관계없이 .xlsx·.xlsm·.xlsb인 파일의 경로 목록.
     '~$'로 시작하는 파일은 제외한다. 전체 경로의 casefold() 결과로
     정렬하고 같으면 원래 경로 문자열로 비교한다. 대상이 없으면 빈 목록.
 

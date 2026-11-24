@@ -303,6 +303,163 @@ def _cell_issues(expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
     return issues
 
 
+_XLSB_ERRORS = {0x00: "#NULL!", 0x07: "#DIV/0!", 0x0F: "#VALUE!", 0x17: "#REF!", 0x1D: "#NAME?",
+                0x24: "#NUM!", 0x2A: "#N/A", 0x2B: "#GETTING_DATA"}
+
+
+def _xlsb_records(data: bytes):
+    """추출기와 별개로 BIFF12 레코드를 다시 읽는다(종류 1~2바이트, 길이 1~4바이트 7비트 가변)."""
+    position = 0
+    while position < len(data):
+        kind = data[position]
+        position += 1
+        if kind & 0x80:
+            kind = (kind & 0x7F) | ((data[position] & 0x7F) << 7)
+            position += 1
+        size = shift = 0
+        while True:
+            byte = data[position]
+            position += 1
+            size |= (byte & 0x7F) << shift
+            shift += 7
+            if not byte & 0x80 or shift >= 28:
+                break
+        yield kind, data[position:position + size]
+        position += size
+
+
+def _xlsb_wide(body: bytes, offset: int) -> tuple[str, int]:
+    count = int.from_bytes(body[offset:offset + 4], "little")
+    start = offset + 4
+    return body[start:start + count * 2].decode("utf-16-le"), start + count * 2
+
+
+def _xlsb_number(raw: bytes, rk: bool) -> Decimal:
+    """RK·배정밀도 저장값을 비교용 Decimal로."""
+    import struct
+
+    if not rk:
+        return Decimal(repr(struct.unpack("<d", raw)[0]))
+    value = int.from_bytes(raw, "little")
+    if value & 0x02:
+        number = Decimal((value >> 2) - (1 << 30) if value & 0x80000000 else value >> 2)
+    else:
+        number = Decimal(repr(struct.unpack("<d", ((value & 0xFFFFFFFC) << 32).to_bytes(8, "little"))[0]))
+    return number.scaleb(-2) if value & 0x01 else number
+
+
+def _validate_xlsb(path: Any, workbook: dict[str, Any]) -> dict[str, Any]:
+    """xlsb 원본 레코드와 추출 결과의 시트·셀 주소·저장값·수식 유무를 독립 비교한다.
+
+    Args:
+        path: 읽기 전용 원본 xlsb 경로.
+        workbook: extract_workbook이 반환한 통합문서 결과.
+    Returns:
+        validate_extraction과 같은 모양의 보고서(source_format=xlsb).
+    Raises:
+        OSError, KeyError: 원본을 읽을 수 없거나 필수 파트가 없는 경우.
+    Side Effects:
+        원본 ZIP을 다시 읽기만 한다. 생산 파서의 xlsb 모듈을 쓰지 않는다.
+    """
+    report: dict[str, Any] = {"passed": True, "source_file": str(path), "source_format": "xlsb",
+                              "sheet_count": 0, "source_xml_cells": 0, "source_content_cells": 0,
+                              "source_formula_cells": 0, "preserved_cells": 0, "issues": [], "sheets": []}
+    actual_sheets = {sheet["name"]: sheet for sheet in workbook["sheets"]}
+    with ZipFile(path) as archive:
+        root = ET.fromstring(archive.read("_rels/.rels"))
+        book = next(node.get("Target").lstrip("/") for node in root
+                    if node.get("Type", "").endswith("/officeDocument"))
+        folder = posixpath.dirname(book)
+        rels_part = posixpath.join(folder, "_rels", posixpath.basename(book) + ".rels")
+        targets = {node.get("Id"): posixpath.normpath(posixpath.join(folder, node.get("Target")))
+                   for node in ET.fromstring(archive.read(rels_part))}
+        strings_part = next((targets[node.get("Id")] for node in ET.fromstring(archive.read(rels_part))
+                             if node.get("Type", "").endswith("/sharedStrings")), None)
+        strings = []
+        if strings_part:
+            for kind, body in _xlsb_records(archive.read(strings_part)):
+                if kind == 0x13:
+                    strings.append(_xlsb_wide(body, 1)[0])
+        expected = []
+        for kind, body in _xlsb_records(archive.read(book)):
+            if kind == 0x9C:
+                relation_count = int.from_bytes(body[8:12], "little")
+                offset = 12 + (0 if relation_count == 0xFFFFFFFF else relation_count * 2)
+                relation_id = None if relation_count == 0xFFFFFFFF else body[12:offset].decode("utf-16-le")
+                name, _ = _xlsb_wide(body, offset)
+                expected.append({"name": name, "part": targets.get(relation_id)})
+        if [sheet["name"] for sheet in workbook["sheets"]] != [sheet["name"] for sheet in expected]:
+            report["issues"].append({"code": "SHEET_LIST_MISMATCH"})
+        for entry in expected:
+            summary = {"sheet": entry["name"], "source_xml_cells": 0, "source_content_cells": 0,
+                       "source_formula_cells": 0, "preserved_cells": 0, "passed": True}
+            actual = actual_sheets.get(entry["name"])
+            issues = []
+            if actual is None:
+                issues.append({"code": "MISSING_SHEET"})
+            elif entry["part"] and entry["part"].endswith(".bin") and entry["part"] in archive.namelist():
+                cells = {cell["address"]: cell for cell in actual["cells"]}
+                preserved = _preserved_addresses(actual)
+                addresses, row, previous = set(), -1, -1
+                for kind, body in _xlsb_records(archive.read(entry["part"])):
+                    if kind == 0x00:
+                        row, previous = int.from_bytes(body[:4], "little"), -1
+                        continue
+                    if not 1 <= kind <= 18:
+                        continue
+                    short = kind >= 12
+                    column = previous + 1 if short else int.from_bytes(body[:4], "little")
+                    previous = column
+                    offset = 4 if short else 8
+                    base_kind = kind - 11 if short else kind
+                    address = f"{_column_label(column + 1)}{row + 1}"
+                    addresses.add(address)
+                    summary["source_xml_cells"] += 1
+                    if base_kind == 1:
+                        continue
+                    summary["source_content_cells"] += 1
+                    cell = cells.get(address)
+                    if cell is None:
+                        issues.append({"code": "PAYLOAD_NOT_PRESERVED", "cell": address})
+                        continue
+                    if 8 <= base_kind <= 11:
+                        summary["source_formula_cells"] += 1
+                        if cell.get("formula") is None:
+                            issues.append({"code": "CELL_MISMATCH", "cell": address, "fields": ["formula"]})
+                    if base_kind in {2, 5, 9}:
+                        width = 4 if base_kind == 2 else 8
+                        try:
+                            same = Decimal(str(cell["value"])) == _xlsb_number(body[offset:offset + width],
+                                                                              base_kind == 2)
+                        except (InvalidOperation, TypeError):
+                            same = False
+                    elif base_kind == 7:
+                        index = int.from_bytes(body[offset:offset + 4], "little")
+                        same = index < len(strings) and cell["value"] == strings[index]
+                    elif base_kind in {6, 8}:
+                        same = cell["value"] == _xlsb_wide(body, offset)[0]
+                    elif base_kind in {4, 10}:
+                        same = cell["value"] == (body[offset] != 0)
+                    else:
+                        same = cell["value"] == _XLSB_ERRORS.get(body[offset], "#N/A")
+                    if not same:
+                        issues.append({"code": "CELL_MISMATCH", "cell": address, "fields": ["value"]})
+                summary["preserved_cells"] = len(preserved)
+                missing, unexpected = sorted(addresses - preserved), sorted(preserved - addresses)
+                if missing:
+                    issues.append({"code": "MISSING_CELLS", "count": len(missing), "cells": missing})
+                if unexpected:
+                    issues.append({"code": "UNEXPECTED_CELLS", "count": len(unexpected), "cells": unexpected})
+            summary["passed"] = not issues
+            for key in ("source_xml_cells", "source_content_cells", "source_formula_cells", "preserved_cells"):
+                report[key] += summary[key]
+            report["sheet_count"] += 1
+            report["sheets"].append(summary)
+            report["issues"].extend({**issue, "sheet": entry["name"]} for issue in issues)
+    report["passed"] = not report["issues"]
+    return report
+
+
 def validate_extraction(path: Path, workbook: dict[str, Any]) -> dict[str, Any]:
     """원본 OOXML과 추출 결과의 전체 시트·셀·구조를 독립 비교한다.
 
@@ -330,6 +487,8 @@ def validate_extraction(path: Path, workbook: dict[str, Any]) -> dict[str, Any]:
         "issues": [],
         "sheets": [],
     }
+    if (workbook.get("package_metadata") or {}).get("format") == "xlsb":
+        return _validate_xlsb(path, workbook)
     actual_sheets = {sheet["name"]: sheet for sheet in workbook["sheets"]}
     with ZipFile(path) as archive:
         expected_sheets = _index_sheets(archive)

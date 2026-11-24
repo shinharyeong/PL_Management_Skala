@@ -236,6 +236,9 @@ def read_comments(archive: ZipFile, sheet_part: str) -> dict[str, list[dict]]:
         ):
             continue
         part = relationship["part"]
+        if not part.lower().endswith(".xml"):
+            # xlsb의 바이너리 메모(comments*.bin)는 xlsb.read_comments_xlsb가 읽는다.
+            continue
         root = ET.fromstring(archive.read(part))
         authors = [node.text or "" for node in root.findall("./{*}authors/{*}author")]
         for node in root.iter():

@@ -17,6 +17,10 @@ from .ooxml import (
     relationships,
     xml_text,
 )
+from .xlsb import extract_xlsb, is_xlsb
+
+# 원본 추출 지원 형식. xlsb는 패키지 내용으로 판정해 xlsb 모듈이 읽는다.
+SUPPORTED_EXTENSIONS = frozenset({".xlsx", ".xlsm", ".xlsb"})
 
 
 def file_fingerprint(path: Path) -> str:
@@ -372,9 +376,9 @@ def extract_workbook(path: Path, root: Path | None = None) -> dict:
         원본을 읽기만 한다. Excel 실행·재계산·파일 생성은 하지 않는다.
     """
     path = Path(path).resolve()
-    if path.suffix.lower() not in {".xlsx", ".xlsm"}:
+    if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
         raise ValueError(
-            f"원본 추출 미지원 형식: {path.suffix}. xlsx/xlsm을 사용하세요."
+            f"원본 추출 미지원 형식: {path.suffix}. xlsx/xlsm/xlsb를 사용하세요."
         )
     fingerprint = file_fingerprint(path)
     display_path = (
@@ -396,7 +400,7 @@ def extract_workbook(path: Path, root: Path | None = None) -> dict:
 
 
 def extract_workbook_bytes(content: bytes, filename: str) -> dict:
-    """메모리의 xlsx 바이트를 기존 추출 계약으로 읽는다.
+    """메모리의 xlsx·xlsb 바이트를 기존 추출 계약으로 읽는다.
 
     Args:
         content: 이미 읽은 OOXML 바이트. 서비스 입력 한도는 브리지에서 검사한다.
@@ -416,9 +420,9 @@ def extract_workbook_bytes(content: bytes, filename: str) -> dict:
         or len(filename) > 255
         or any(character in filename for character in "/\\")
         or any(ord(character) < 32 or ord(character) == 127 for character in filename)
-        or Path(filename).suffix.lower() != ".xlsx"
+        or Path(filename).suffix.lower() not in {".xlsx", ".xlsb"}
     ):
-        raise ValueError("메모리 추출에는 경로가 아닌 xlsx 파일명이 필요합니다.")
+        raise ValueError("메모리 추출에는 경로가 아닌 xlsx/xlsb 파일명이 필요합니다.")
     fingerprint = hashlib.sha256(content).hexdigest()
     file = {
         "file_id": fingerprint,
@@ -428,7 +432,7 @@ def extract_workbook_bytes(content: bytes, filename: str) -> dict:
         "path": filename,
         "name": filename,
         "size_bytes": len(content),
-        "extension": ".xlsx",
+        "extension": Path(filename).suffix.lower(),
     }
     return _extract_workbook_source(BytesIO(content), file)
 
@@ -457,6 +461,9 @@ def _extract_workbook_source(source: Path | BytesIO, file: dict) -> dict:
         "diagnostics": [],
     }
     with ZipFile(source) as archive:
+        if is_xlsb(archive):
+            # 확장자가 아니라 패키지 내용으로 판정한다. xlsb는 같은 구조의 결과를 만든다.
+            return extract_xlsb(archive, file)
         root_relations = relationships(archive, "")
         book_part = next(
             (

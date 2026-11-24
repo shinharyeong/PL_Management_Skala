@@ -197,7 +197,7 @@ class PipelineTests(unittest.TestCase):
         result = self._run_memory(
             inputs=[
                 PROJECT_ROOT / "__memory__/supported.xlsx",
-                PROJECT_ROOT / "__memory__/unsupported.xlsb",
+                PROJECT_ROOT / "__memory__/unsupported.xls",
             ]
         )
         self.assertEqual(result["input_file_count"], 2)
