@@ -3,7 +3,6 @@ package io.skala.backend.domain.submission.service;
 import io.skala.backend.domain.request.entity.SubmissionRequest;
 import io.skala.backend.domain.request.repository.SubmissionRequestRepository;
 import io.skala.backend.domain.request.value.RequestType;
-import io.skala.backend.domain.review.repository.ReviewItemRepository;
 import io.skala.backend.domain.review.service.ExplanationTargetService;
 import io.skala.backend.domain.review.dto.SubmissionReviewDetail;
 import io.skala.backend.domain.review.service.SubmissionReviewDetailService;
@@ -47,7 +46,6 @@ public class SubmissionQueryService {
     private final ParsingJobRepository parsingJobRepository;
     private final SubmissionRequestRepository submissionRequestRepository;
     private final OrganizationRepository organizationRepository;
-    private final ReviewItemRepository reviewItemRepository;
     private final ExplanationTargetService explanationTargetService;
     private final BaselineResolver baselineResolver;
     private final SubmissionDiagnosticsService submissionDiagnosticsService;
@@ -128,6 +126,7 @@ public class SubmissionQueryService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
         ParsingJob job = parsingJobRepository.findBySubmissionId(submission.getId()).orElse(null);
         String title = title(request);
+        Baseline resolved = resolveBaseline(submission, request);
         Submission previous = submission.getPreviousSubmission();
         Submission next = submissionRepository.findFirstByPreviousSubmissionIdOrderByIdDesc(submission.getId())
                 .orElse(null);
@@ -153,13 +152,13 @@ public class SubmissionQueryService {
                 user(submission.getReviewedBy()),
                 submission.getReviewedAt(),
                 job == null ? null : ParsingJobResponse.of(job),
-                validation(submission, job),
-                baseline(submission, request),
+                validation(submission, job, resolved),
+                baseline(resolved),
                 previous == null ? null : summary(previous),
                 next == null ? null : summary(next));
     }
 
-    private Validation validation(Submission submission, ParsingJob job) {
+    private Validation validation(Submission submission, ParsingJob job, Baseline baseline) {
         if (job == null || job.getStatus() != ParsingJobStatus.SUCCEEDED) {
             return new Validation(false, null);
         }
@@ -167,29 +166,36 @@ public class SubmissionQueryService {
             return new Validation(false, submissionDiagnosticsService.report(submission.getId(), job)
                     .map(ValidationReport::errorCount).orElse(null));
         }
-        boolean validated = !reviewItemRepository.findAllWithReportItemBySubmissionId(submission.getId()).isEmpty();
-        boolean canSubmit = submission.getStatus() == SubmissionStatus.DRAFT && validated
+        // 제출하기(SUBMIT-02)와 같은 기준: 비교 기준을 고를 수 있고 변경 확인을 마쳤으며 소명을 다 썼는지
+        boolean canSubmit = submission.getStatus() == SubmissionStatus.DRAFT && baseline != null
+                && explanationTargetService.prepared(submission, baseline.submission())
                 && explanationTargetService.progress(submission.getId()).complete();
         return new Validation(canSubmit, 0);
     }
 
-    /** 초안이면 지금 기준으로 고른 비교 기준. 고를 수 없는 상태(검토 대기 중 등)면 null */
-    private BaselineResponse baseline(Submission submission, SubmissionRequest request) {
+    /** 초안이면 지금 기준으로 고른 비교 기준. 초안이 아니거나 고를 수 없는 상태(검토 대기 중 등)면 null */
+    private Baseline resolveBaseline(Submission submission, SubmissionRequest request) {
         if (submission.getStatus() != SubmissionStatus.DRAFT) {
             return null;
         }
         try {
-            Baseline baseline = baselineResolver.resolve(submission, request);
-            if (baseline.submission() == null) {
-                return new BaselineResponse(BaselineKind.NONE, null, null);
-            }
-            Submission base = baseline.submission();
-            SubmissionRequest baseRequest = submissionRequestRepository.findById(base.getRequestId()).orElseThrow();
-            return new BaselineResponse(baseline.kind(), String.valueOf(base.getId()),
-                    SubmissionLabels.of(base, baseRequest));
+            return baselineResolver.resolve(submission, request);
         } catch (BusinessException e) {
             return null;
         }
+    }
+
+    private BaselineResponse baseline(Baseline baseline) {
+        if (baseline == null) {
+            return null;
+        }
+        if (baseline.submission() == null) {
+            return new BaselineResponse(BaselineKind.NONE, null, null);
+        }
+        Submission base = baseline.submission();
+        SubmissionRequest baseRequest = submissionRequestRepository.findById(base.getRequestId()).orElseThrow();
+        return new BaselineResponse(baseline.kind(), String.valueOf(base.getId()),
+                SubmissionLabels.of(base, baseRequest));
     }
 
     private String displayStatus(Submission submission) {

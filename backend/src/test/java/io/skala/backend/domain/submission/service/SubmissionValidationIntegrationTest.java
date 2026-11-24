@@ -53,6 +53,10 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
     ParsingJobRepository parsingJobRepository;
     @Autowired
     TransactionTemplate tx;
+    @Autowired
+    SubmissionSubmitService submitService;
+    @Autowired
+    SubmissionQueryService queryService;
 
     @Test
     void 전월_승인본과_비교해_바뀐_항목만_소명_대상으로_만들고_그대로인_항목은_소명을_이어받는다() {
@@ -204,6 +208,52 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         assertThat(result.diagnostics()).extracting("rule").containsExactly("PERIOD_OUT_OF_RANGE");
         assertThat(result.diagnostics()).extracting("sourceCell").containsExactly("매출!Z10");
         assertThat(result.valueCount()).isEqualTo(1);
+    }
+
+    @Test
+    void 요청_연도_금액이_모두_빈칸이면_소명_대상_없이_제출할_수_있다() {
+        long orgId = insert("insert into organization(code, name) values ('ORG7', '빈칸사업부') returning id");
+        long planner = insert("insert into app_user(email, name, role) values ('p7@x.io', '기획', 'PLANNER') returning id");
+        long manager = insert("insert into app_user(email, name, role, organization_id) values ('o7@x.io', '담당', 'ORG_MANAGER', "
+                + orgId + ") returning id");
+        long plan = insert("insert into annual_plan(year, status) values (2026, 'CONFIRMED') "
+                + "on conflict (year) do update set year = excluded.year returning id");
+        long req = request(plan, 5, planner);
+        jdbc.update("insert into request_target(request_id, organization_id) values (?, ?)", req, orgId);
+        long submission = draft(req, orgId, manager, "drafts/blank.xlsx", SHA_OCT);
+        storeFile("drafts/blank.xlsx"); // 제출하면 보존 위치로 복사하므로 실제 파일이 있어야 한다
+
+        // 빈 양식: 요청 연도 칸은 모두 빈칸, 전년 실적만 있음
+        IngestionResult result = complete(job(submission), new ParserSubmissionData("financial-submission/1.0",
+                SHA_OCT, new Owner("ORG7", "빈칸사업부", "RESOLVED"),
+                List.of(new ReportItem(SALES_KEY, "REVENUE", "제품매출", List.of("매출", "제품매출"), "RESOLVED")),
+                List.of(line("1:10", "REVENUE", SALES_KEY, "매출", 10, "A-1", priorYear(5, "1", "B10"),
+                        new Value(2026, 5, "ACTUAL", null, "MISSING", "STORED_BLANK", "N10", "slot:n10"))),
+                List.of()));
+        assertThat(result.diagnostics()).isEmpty();
+
+        AuthenticatedUser user = new AuthenticatedUser(manager, UserRole.ORG_MANAGER, orgId);
+        ValidationResponse validation = validationService.validate(submission, token(submission), user);
+        assertThat(validation.progress().required()).isZero();
+        assertThat(validation.canSubmit()).isTrue();
+        assertThat(submitService.preview(submission, user).canSubmit()).isTrue();
+        Boolean statusCanSubmit = tx.execute(st -> queryService.toResponse(
+                submissionRepository.findById(submission).orElseThrow()).validation().canSubmit());
+        assertThat(statusCanSubmit).isTrue(); // UP-04도 같은 기준
+
+        submitService.submit(submission, user, null, token(submission));
+        assertThat(jdbc.queryForObject("select status from submission where id = ?", String.class, submission))
+                .isEqualTo("PENDING");
+    }
+
+    private static void storeFile(String key) {
+        try {
+            java.nio.file.Path path = java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "skala-test-storage", key);
+            java.nio.file.Files.createDirectories(path.getParent());
+            java.nio.file.Files.write(path, new byte[] {'P', 'K', 3, 4});
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private String token(long submissionId) {

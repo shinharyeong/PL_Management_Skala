@@ -151,10 +151,21 @@ public class ExplanationTargetService {
                 .map(e -> e.getReviewItem().getId()).sorted().toList();
     }
 
-    /** 변경 확인(PROOF-01)을 했는지: 소명 대상 항목이 만들어졌는지 */
+    /**
+     * 변경 확인(PROOF-01)을 마쳤는지. 소명 대상 행이 있으면 마친 것이다.
+     * 현재 제출본과 비교 기준 모두 요청 연도 금액이 하나도 없으면 만들 행이 없으므로 마친 것으로 본다
+     * (예: 빈칸뿐인 양식). 이 경우를 막으면 검증은 제출 가능이라고 하는데 제출은 VALIDATION_REQUIRED로 끝없이 막힌다.
+     *
+     * @param baseline 비교 기준 제출본. 없으면 null
+     */
     @Transactional(readOnly = true)
-    public boolean prepared(Long submissionId) {
-        return !reviewItemRepository.findAllWithReportItemBySubmissionId(submissionId).isEmpty();
+    public boolean prepared(Submission submission, Submission baseline) {
+        if (!reviewItemRepository.findAllWithReportItemBySubmissionId(submission.getId()).isEmpty()) {
+            return true;
+        }
+        return financialValueRepository.findRequestYearValuesBySubmissionId(submission.getId()).isEmpty()
+                && (baseline == null
+                || financialValueRepository.findRequestYearValuesBySubmissionId(baseline.getId()).isEmpty());
     }
 
     /**
