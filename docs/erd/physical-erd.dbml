@@ -671,10 +671,14 @@ Table "explanation_category" {
   "code" integer [not null, note: '1 월정액 추정 Gap / 2 일시적·비경상 / 3 이연 효과 / 4 일시적 효과 / 5 기타']
   "name" varchar(100) [not null]
   "display_order" integer [not null, default: 0]
+  "parent_code" integer
+  "catch_all" boolean [not null, default: false]
+  "suggest_keywords" varchar(500)
 
   Indexes {
     id [pk, name: "explanation_category_pkey"]
     (table_version, code) [unique, name: "explanation_category_key"]
+    table_version [unique, name: "explanation_category_catch_all_key", note: 'catch_all = true 인 행만(부분 유일 인덱스)']
   }
 
   Note: '추가: 소명 사유 유형 분류표 (FR-RPT-007, AI 보고서 04 소명 분류). 관리 화면(FR-SET-004)은 삭제됐으므로 고정값으로 넣어 둠'
