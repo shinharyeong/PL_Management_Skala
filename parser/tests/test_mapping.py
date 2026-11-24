@@ -367,6 +367,39 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(record["value"]["status"], "unresolved")
         self.assertEqual(record["formula"]["text"], "=B2-B3")
 
+    def test_quarter_total_column_is_mapped_as_quarter(self) -> None:
+        """월 없이 1Q만 있는 답안지 열은 분기 합계로, 1Q 아래 월 열은 월로 매핑한다(#4).
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 분기 열이 기간 미확정으로 빠지거나 월 열의 집계가 바뀐 경우.
+        Side Effects:
+            없음. 메모리 워크북만 사용한다.
+        """
+        raw = memory_workbook(
+            [
+                ("A1", "단위: 원", "string"),
+                ("B2", "2027년", "string"), ("C2", "2027년", "string"), ("D2", "2027년", "string"),
+                ("B3", "계획", "string"), ("C3", "계획", "string"), ("D3", "계획", "string"),
+                ("B4", "1Q", "string"), ("C4", "1Q", "string"), ("D4", "2Q", "string"),
+                ("C5", "1월", "string"),
+                ("A6", "영업이익", "string"),
+                ("B6", "30", "number"), ("C6", "10", "number"), ("D6", "40", "number"),
+            ]
+        )
+        records = {record["source"]["cell"]: record for record in map_workbook(raw)["records"]}
+        quarter, month, second = records["B6"], records["C6"], records["D6"]
+        self.assertEqual((quarter["period"]["aggregation"], quarter["period"]["quarter"], quarter["period"]["month"]),
+                         ("quarter", 1, None))
+        self.assertNotIn("대상 기간 미확정", quarter["mapping"]["reasons"])
+        self.assertEqual((second["period"]["aggregation"], second["period"]["quarter"]), ("quarter", 2))
+        self.assertEqual((month["period"]["aggregation"], month["period"]["quarter"], month["period"]["month"]),
+                         ("month", 1, 1))
+        self.assertFalse(quarter["role"]["aggregatable"])
+
     def test_merged_headers_keep_anchor_provenance(self) -> None:
         """병합 헤더의 기준 셀을 연결하고 원본 빈 헤더를 생성하지 않는다.
 

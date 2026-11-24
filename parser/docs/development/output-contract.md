@@ -81,7 +81,7 @@ xlsb는 xlsx와 같은 ZIP 패키지지만 통합 문서·시트·공유 문자�
 | `organization` | object | 코드·원래 조직명·범위·출처. 불명확하면 null/unknown |
 | `item` | object | 원본 항목 코드·이름·헤더 경로·근거·GAP metric_code |
 | `dimensions` | object | 원본에 있는 팀·과제·계정 등 추가 구분 |
-| `period` | object | 연도·월·분기·month/annual/unknown 집계 범위·시나리오·헤더 출처 |
+| `period` | object | 연도·월·분기·month/quarter/annual/unknown 집계 범위·시나리오·헤더 출처. 월 없이 `1Q`~`4Q`만 있는 열은 `quarter`(분기 합계), 분기 아래 월이 있으면 `month`이고 `quarter`에 소속 분기를 남김 |
 | `role` | object | 상세·소계·합계·비율·비재무 등 역할과 집계 가능 여부 |
 | `value` | object | 원문·Decimal 정규화 값·단위·통화·배율·규칙·확인 상태 |
 | `submission` | object | 제출 월·버전 원문·월별 회차·개정번호·확인 상태 |
