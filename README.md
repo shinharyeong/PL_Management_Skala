@@ -9,7 +9,7 @@ SKALA 최종 프로젝트 모노레포입니다.
 | [`frontend/`](frontend/) | 웹 프론트엔드 | Vue 3, Vite, Vue Router, Pinia |
 | [`backend/`](backend/) | API 서버 | Spring Boot 3.4, Java 21, Gradle |
 | [`ai/`](ai/) | AI 기능 | FastAPI, LangChain (구성 예정) |
-| [`parser/`](parser/) | 경영기획 Excel 파싱·검증 | Python 3.11+ (표준 라이브러리) |
+| [`parser/`](parser/) | 경영기획 Excel 파싱·검증 (.xlsx·.xlsm·.xlsb) | Python 3.11+ (표준 라이브러리) |
 | [`docs/`](docs/) | 공통 문서 | |
 
 ## 로컬 실행
