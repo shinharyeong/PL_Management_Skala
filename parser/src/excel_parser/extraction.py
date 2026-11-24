@@ -2,11 +2,13 @@
 
 import hashlib
 import re
+from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
 from .ooxml import (
+    CellAddresses,
     cell_position,
     is_date_format,
     local_name,
@@ -16,6 +18,10 @@ from .ooxml import (
     relationships,
     xml_text,
 )
+from .xlsb import extract_xlsb, is_xlsb
+
+# 원본 추출 지원 형식. xlsb는 패키지 내용으로 판정해 xlsb 모듈이 읽는다.
+SUPPORTED_EXTENSIONS = frozenset({".xlsx", ".xlsm", ".xlsb"})
 
 
 def file_fingerprint(path: Path) -> str:
@@ -178,14 +184,18 @@ def _extract_sheet(
     ]
     merge_bounds = [(range_bounds(merge["range"]), merge) for merge in merges]
     shared_formulas = {}
-    for node in root.findall("./{*}sheetData/{*}row/{*}c"):
-        formula = node.find("{*}f")
-        if formula is not None and formula.get("t") == "shared" and formula.text:
-            shared_formulas[formula.get("si")] = {
-                "address": node.attrib["r"],
-                "raw_text": formula.text,
-                "attributes": dict(formula.attrib),
-            }
+    prepass = CellAddresses()
+    for row_node in root.findall("./{*}sheetData/{*}row"):
+        prepass.next_row(row_node.get("r"))
+        for node in row_node.findall("{*}c"):
+            address = prepass.next_cell(node.get("r"))
+            formula = node.find("{*}f")
+            if formula is not None and formula.get("t") == "shared" and formula.text:
+                shared_formulas[formula.get("si")] = {
+                    "address": address,
+                    "raw_text": formula.text,
+                    "attributes": dict(formula.attrib),
+                }
     dimension = root.find("{*}dimension")
     sheet_format = root.find("{*}sheetFormatPr")
     default_hidden = sheet_format is not None and sheet_format.get("zeroHeight") in {
@@ -214,14 +224,16 @@ def _extract_sheet(
                     {"range": child.get("sqref"), "raw_xml": raw, "evaluated": False}
                 )
     seen = set()
+    addresses = CellAddresses()
     for row_node in root.findall("./{*}sheetData/{*}row"):
+        addresses.next_row(row_node.get("r"))
         sheet["rows"].append(dict(row_node.attrib))
         row_hidden = row_node.get("hidden", "true" if default_hidden else "false") in {
             "1",
             "true",
         }
         for node in row_node.findall("{*}c"):
-            address = node.attrib["r"]
+            address = addresses.next_cell(node.get("r"))
             seen.add(address)
             row, column_index, column = cell_position(address)
             sheet["counts"]["xml_cells"] += 1
@@ -240,9 +252,9 @@ def _extract_sheet(
                 ),
                 {},
             )
-            style_id = int(
-                node.get("s", row_node.get("s", column_info.get("style", "0")))
-            )
+            # OOXML c@s 기본값은 0이다. 행·열 서식은 c 요소가 없는 칸에만 적용되므로 대체하지 않는다
+            # (출력 계약 style_id). 행·열 서식은 rows/columns 메타데이터로 따로 보존된다.
+            style_id = int(node.get("s", "0"))
             style = (
                 styles["cell_formats"][style_id]
                 if style_id < len(styles["cell_formats"])
@@ -371,9 +383,9 @@ def extract_workbook(path: Path, root: Path | None = None) -> dict:
         원본을 읽기만 한다. Excel 실행·재계산·파일 생성은 하지 않는다.
     """
     path = Path(path).resolve()
-    if path.suffix.lower() not in {".xlsx", ".xlsm"}:
+    if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
         raise ValueError(
-            f"원본 추출 미지원 형식: {path.suffix}. xlsx/xlsm을 사용하세요."
+            f"원본 추출 미지원 형식: {path.suffix}. xlsx/xlsm/xlsb를 사용하세요."
         )
     fingerprint = file_fingerprint(path)
     display_path = (
@@ -391,6 +403,63 @@ def extract_workbook(path: Path, root: Path | None = None) -> dict:
         "size_bytes": path.stat().st_size,
         "extension": path.suffix.lower(),
     }
+    return _extract_workbook_source(path, file)
+
+
+def extract_workbook_bytes(content: bytes, filename: str) -> dict:
+    """메모리의 xlsx·xlsb 바이트를 기존 추출 계약으로 읽는다.
+
+    Args:
+        content: 이미 읽은 OOXML 바이트. 서비스 입력 한도는 브리지에서 검사한다.
+        filename: 경로 구분자와 제어 문자가 없는 출처 표시용 xlsx 파일명.
+    Returns:
+        경로 API와 같은 추출 사전. file.path는 로컬 경로 대신 파일명이다.
+    Raises:
+        ValueError: 파일명이 잘못되었거나 xlsx 형식이 아닌 경우.
+        BadZipFile: ZIP 패키지가 손상된 경우.
+        ET.ParseError: XML 파트가 손상된 경우.
+        KeyError: 필요한 OOXML 관계 또는 파트가 없는 경우.
+    Side Effects:
+        BytesIO만 읽는다. 파일·임시 폴더·캐시를 생성하지 않는다.
+    """
+    if (
+        not filename
+        or len(filename) > 255
+        or any(character in filename for character in "/\\")
+        or any(ord(character) < 32 or ord(character) == 127 for character in filename)
+        or Path(filename).suffix.lower() not in {".xlsx", ".xlsb"}
+    ):
+        raise ValueError("메모리 추출에는 경로가 아닌 xlsx/xlsb 파일명이 필요합니다.")
+    fingerprint = hashlib.sha256(content).hexdigest()
+    file = {
+        "file_id": fingerprint,
+        "source_id": hashlib.sha256(
+            (filename + "\0" + fingerprint).encode()
+        ).hexdigest()[:24],
+        "path": filename,
+        "name": filename,
+        "size_bytes": len(content),
+        "extension": Path(filename).suffix.lower(),
+    }
+    return _extract_workbook_source(BytesIO(content), file)
+
+
+def _extract_workbook_source(source: Path | BytesIO, file: dict) -> dict:
+    """경로·메모리 입력에 동일한 OOXML 추출 본문을 적용한다.
+
+    Args:
+        source: 읽기 전용 원본 경로 또는 메모리 스트림.
+        file: 호출자가 구성한 파일 해시·표시 경로·크기 메타데이터.
+    Returns:
+        file, sheets, styles, package_metadata, diagnostics를 가진 추출 결과.
+    Raises:
+        OSError: 경로 입력을 읽을 수 없는 경우.
+        BadZipFile: ZIP 구조가 잘못된 경우.
+        ET.ParseError: XML 구조가 잘못된 경우.
+        ValueError, KeyError: 셀·파트·관계 정보가 유효하지 않은 경우.
+    Side Effects:
+        입력을 읽기만 한다. 파일 생성·수식 실행·외부 관계 접속은 없다.
+    """
     result = {
         "file": file,
         "sheets": [],
@@ -398,7 +467,10 @@ def extract_workbook(path: Path, root: Path | None = None) -> dict:
         "package_metadata": {},
         "diagnostics": [],
     }
-    with ZipFile(path) as archive:
+    with ZipFile(source) as archive:
+        if is_xlsb(archive):
+            # 확장자가 아니라 패키지 내용으로 판정한다. xlsb는 같은 구조의 결과를 만든다.
+            return extract_xlsb(archive, file)
         root_relations = relationships(archive, "")
         book_part = next(
             (

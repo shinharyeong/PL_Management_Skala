@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 CONFIG_FILE = Path("config/paths.toml")
-WORKBOOK_EXTENSIONS = frozenset({".xlsx", ".xlsb"})
+WORKBOOK_EXTENSIONS = frozenset({".xlsx", ".xlsm", ".xlsb"})
 
 
 def _paths_overlap(first: Path, second: Path) -> bool:
@@ -160,7 +160,7 @@ class ProjectPaths:
                 확인한다. self.input_dir를 기준으로 파일 목록을 읽는다.
 
         Returns:
-            대소문자와 관계없이 .xlsx 또는 .xlsb인 파일의 경로 목록.
+            대소문자와 관계없이 .xlsx·.xlsm·.xlsb인 파일의 경로 목록.
             '~$'로 시작하는 파일은 제외한다. 전체 경로의 casefold() 결과로
             정렬하고 같으면 원래 경로 문자열로 비교한다. 대상이 없으면 빈 목록.
 

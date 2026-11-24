@@ -19,3 +19,31 @@ Thumbs.db
 Data/
 output/
 logs/
+
+# 개발용 장표 스크립트가 생성한 미리보기·내보내기 결과
+/frontend/public/previews/
+
+# 제거한 AI 실험의 기존 로컬 비밀 설정·캐시·결과는 추적하지 않는다.
+/parser_ai/
+
+# 원본 스프레드시트·DB 덤프와 로컬 DB 파일
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb
+*.csv
+*.tsv
+*.dump
+*.backup
+*.sql.gz
+*.sqlite
+*.sqlite3
+*.db
+
+# 기준 요구사항 문서(PRD)는 원본 데이터가 아니므로 예외로 추적한다.
+!docs/경영팀을부탁해_PRD_ver1.xlsx
+
+# Python 실행 캐시
+__pycache__/
+*.py[cod]
+.pytest_cache/

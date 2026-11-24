@@ -1,0 +1,5189 @@
+openapi: 3.1.0
+info:
+  title: 경영팀을 부탁해 API
+  version: 0.1.0-draft
+  description: '손익 제출·Gap 소명·버전 관리·AI 보고서 플랫폼의 브라우저용 공개 API 명세(초안)입니다.
+
+
+    - 기준: PRD ver1 기능 요구사항(유효 77개), 물리 ERD 설계안 `docs/erd/physical-erd.dbml`, 인프라 구성 `docs/infrastructure.md`
+
+    - 개요·FR 대응·정할 것은 `docs/api/api-spec.md`를 함께 봅니다.
+
+    - 각 operation의 `x-fr`는 대응 기능 요구사항, `x-tables`는 관련 테이블입니다.
+
+
+    **공통 규칙**
+
+    - 금액은 원 단위 십진수 문자열, 값이 없으면 `null`(0으로 바꾸지 않음). 기준값이 0이면 비율은 `null`.
+
+    - 상태 변경 명령(POST·PUT·PATCH·DELETE)은 `Idempotency-Key` 헤더가 필수이고, 기존 리소스를 바꾸는 명령은 본문에 `expectedStateToken`을 넣습니다.
+
+    - 오류는 RFC 9457 Problem Details(`application/problem+json`)에 `code`·`requestId`·`errors`를 더해 내려줍니다. 화면 분기는 `code`로 합니다.
+
+    - 파일 업로드는 `multipart/form-data`로 backend에 보내고, backend가 형식·크기·조직을 검사한 뒤 S3에 저장합니다. 다운로드는 backend가 권한을 확인하고 S3에서 읽어 그대로 내려줍니다(presigned URL 미사용).
+
+    - 모든 응답에 `X-Request-ID`, `Cache-Control: private, no-store` 헤더가 붙습니다.
+
+    '
+servers:
+- url: /api/v1
+  description: Ingress `/api/*` → backend
+security:
+- bearerAuth: []
+tags:
+- name: 로그인·사용자
+  description: FR-AUTH, FR-MENU
+- name: 알림 모아보기
+  description: FR-NOTI-A (경영기획팀)
+- name: 홈·전사 손익
+  description: FR-HOME (경영기획팀)
+- name: 제출 요청
+  description: FR-YEAR, FR-MONTH-001~003 (경영기획팀)
+- name: Gap 검토
+  description: FR-MONTH-004~012 (경영기획팀)
+- name: 조직별 현황
+  description: FR-ARCH (경영기획팀)
+- name: 요청함
+  description: FR-NOTI-U (조직 담당자)
+- name: 업로드·검증
+  description: FR-UPLOAD (조직 담당자)
+- name: 소명·제출
+  description: FR-PROOF, FR-RESUB (조직 담당자)
+- name: 제출 이력
+  description: FR-HIST, FR-RESUB-001 (조직 담당자)
+- name: AI 보고서
+  description: FR-RPT (경영기획팀)
+- name: 파일
+  description: 서버 경유 업로드·다운로드(S3 저장)
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: AUTH-02(`POST /auth/sessions`)에서 받은 세션 토큰
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 명령 재전송 시 첫 성공 응답을 그대로 돌려받기 위한 키(24시간 보관). 같은 키에 다른 본문이면 `409 IDEMPOTENCY_KEY_REUSED`.
+      schema:
+        type: string
+        pattern: ^[A-Za-z0-9._:-]{8,128}$
+      example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: 클라이언트 추적 ID. 없으면 서버가 만들어 응답 헤더로 돌려줌
+      schema:
+        type: string
+        maxLength: 64
+    Cursor:
+      name: cursor
+      in: query
+      description: 이전 응답의 `nextCursor`
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      description: 페이지 크기
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    Unit:
+      name: unit
+      in: query
+      description: 화면 표시 단위. 지정하면 금액 필드 옆에 `displayAmount`를 함께 내려줌(원 단위 값은 항상 유지)
+      schema:
+        type: string
+        enum:
+        - WON
+        - THOUSAND
+        - MILLION
+        - HUNDRED_MILLION
+        default: WON
+    Year:
+      name: year
+      in: query
+      required: true
+      schema:
+        type: integer
+        minimum: 2000
+        maximum: 9999
+      example: 2026
+    YearOptional:
+      name: year
+      in: query
+      schema:
+        type: integer
+        minimum: 2000
+        maximum: 9999
+    Month:
+      name: month
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 12
+      example: 10
+    SubmissionId:
+      name: submissionId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    RequestIdPath:
+      name: requestId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    ReviewItemId:
+      name: reviewItemId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    OrganizationId:
+      name: organizationId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    MasterId:
+      name: masterId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    TemplateId:
+      name: templateId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    HomeQueryPeriod:
+      name: period
+      in: query
+      description: 월간/연간 탭 (FR-HOME-004)
+      schema:
+        type: string
+        enum:
+        - MONTH
+        - YEAR
+        default: MONTH
+    HomeQueryMaster:
+      name: masterId
+      in: query
+      description: 이전 master를 볼 때 지정. 없으면 그 달 최신 master(없으면 잠정 계산)
+      schema:
+        $ref: '#/components/schemas/Id'
+  headers:
+    XRequestId:
+      description: 요청 추적 ID
+      schema:
+        type: string
+    CacheControl:
+      description: 항상 `private, no-store`
+      schema:
+        type: string
+        example: private, no-store
+    Location:
+      description: 만든 리소스 또는 상태 조회 경로
+      schema:
+        type: string
+    IdempotencyReplayed:
+      description: 같은 `Idempotency-Key` 재전송으로 첫 응답을 돌려준 경우 `true`
+      schema:
+        type: string
+        enum:
+        - 'true'
+    RetryAfter:
+      description: 재시도까지 기다릴 초
+      schema:
+        type: integer
+  responses:
+    NoContent:
+      description: 처리 완료(본문 없음)
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+    FileStream:
+      description: 파일 스트림. backend가 S3(또는 DB 숫자로 생성)에서 읽어 그대로 전달
+      headers:
+        Content-Disposition:
+          description: '`attachment; filename*=UTF-8''''...`'
+          schema:
+            type: string
+      content:
+        application/octet-stream:
+          schema:
+            type: string
+            format: binary
+        application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+          schema:
+            type: string
+            format: binary
+        application/pdf:
+          schema:
+            type: string
+            format: binary
+    BadRequest:
+      description: '`INVALID_REQUEST` 필수 값·형식·범위 오류, `INVALID_CURSOR` 잘못된 커서'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Bad Request
+            status: 400
+            detail: 요청 형식과 입력값을 확인해 주세요.
+            instance: /api/v1/submission-requests
+            code: INVALID_REQUEST
+            requestId: 8f3c2a1e-4b7d-4c1a-9a0e-2f6d1c3b5a77
+            errors:
+            - field: dueAt
+              code: INVALID_VALUE
+    Unauthorized:
+      description: '`UNAUTHENTICATED` 토큰 없음·만료 → 로그인 화면으로'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Unauthorized
+            status: 401
+            detail: 인증이 필요합니다.
+            instance: /api/v1/me
+            code: UNAUTHENTICATED
+            requestId: 8f3c2a1e
+            errors: []
+    Forbidden:
+      description: '`FORBIDDEN` 역할이 맞지 않거나 다른 조직의 데이터'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Forbidden
+            status: 403
+            detail: 현재 권한으로 접근할 수 없습니다.
+            instance: /api/v1/submissions/12
+            code: FORBIDDEN
+            requestId: 8f3c2a1e
+            errors: []
+    NotFound:
+      description: '`RESOURCE_NOT_FOUND`(또는 `SUBMISSION_NOT_FOUND`, `REVIEW_ITEM_NOT_FOUND` 등) 리소스 없음'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Not Found
+            status: 404
+            detail: 요청한 자료를 찾을 수 없습니다.
+            instance: /api/v1/submissions/999
+            code: RESOURCE_NOT_FOUND
+            requestId: 8f3c2a1e
+            errors: []
+    CommandConflict:
+      description: '명령 공통 409 — `RESOURCE_CHANGED`(상태 토큰 불일치, 다시 조회 후 재시도),
+
+        `IDEMPOTENCY_KEY_REUSED`(같은 키에 다른 본문), `REQUEST_IN_PROGRESS`(같은 키 처리 중, `Retry-After: 1`)
+
+        '
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Conflict
+            status: 409
+            detail: 다른 사용자가 먼저 변경했습니다. 다시 조회해 주세요.
+            instance: /api/v1/submissions/12/submit
+            code: RESOURCE_CHANGED
+            requestId: 8f3c2a1e
+            errors: []
+    TooLarge:
+      description: '`FILE_TOO_LARGE` 업로드 한도 초과'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ServerError:
+      description: '`INTERNAL_ERROR` 예상하지 못한 오류(화면에 requestId 표시), `PROCESSING_UNAVAILABLE`(503) 처리 서비스 일시 불가'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Internal Server Error
+            status: 500
+            detail: 요청 처리 중 오류가 발생했습니다.
+            instance: /api/v1/home/pnl
+            code: INTERNAL_ERROR
+            requestId: 8f3c2a1e
+            errors: []
+    UnsupportedFile:
+      description: '`UNSUPPORTED_FILE_TYPE` 허용하지 않는 확장자·형식'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Id:
+      type: string
+      pattern: ^[1-9][0-9]{0,18}$
+      description: DB ID(bigint)를 문자열로 표기
+      example: '12'
+    Money:
+      type:
+      - string
+      - 'null'
+      pattern: ^-?[0-9]{1,24}(\.[0-9]{1,6})?$
+      description: 원 단위 십진수 문자열. 값이 없거나 계산할 수 없으면 null
+      example: '1240000000'
+    Rate:
+      type:
+      - string
+      - 'null'
+      pattern: ^-?[0-9]+(\.[0-9]+)?$
+      description: 비율(%). 기준값이 0이면 null(화면 표시 '산정 불가')
+      example: '14.8'
+    Timestamp:
+      type: string
+      format: date-time
+      example: '2026-11-12T09:00:00Z'
+    StateToken:
+      type: string
+      description: 리소스의 현재 상태 지문. 수정 명령의 `expectedStateToken`에 그대로 넣음
+      example: st_3f9a1c
+    Label:
+      type: string
+      description: 화면 표시용 버전 이름(`2026-11-01`, `ver10.01`, `2027-PLAN-01`, `master_ver10.01`, `master_plan2027.01`)
+      example: '2026-11-01'
+    Scenario:
+      type: string
+      enum:
+      - PLAN
+      - ACTUAL
+      - ESTIMATE
+      description: 계획 / 실적 / 추정
+    Comparison:
+      type: string
+      enum:
+      - ACTUAL_VS_PLAN
+      - ESTIMATE_VS_PREVIOUS
+      - ESTIMATE_VS_PLAN
+      description: 실적 vs 계획 / 추정 vs 직전 추정 / 추정 vs 계획 (FR-MONTH-005)
+    RequestType:
+      type: string
+      enum:
+      - ANNUAL_PLAN
+      - MONTHLY_ACTUAL
+      description: 연간 계획 요청 / 월간 시트(실적·추정) 요청
+    SubmissionStatus:
+      type: string
+      enum:
+      - DRAFT
+      - PENDING
+      - REJECTED
+      - APPROVED
+      description: 업로드만 함 / 검토 대기 / 재제출 요청됨 / 승인
+    WorkflowTab:
+      type: string
+      enum:
+      - NEEDS_REVIEW
+      - SELECTED
+      - IN_PROGRESS
+      - RE_REVIEW
+      - ACCEPTED
+      - EXCLUDED
+      - ALL
+      description: Gap 상태 탭 (FR-MONTH-006). IN_PROGRESS·RE_REVIEW·ACCEPTED는 소명 회차로 계산
+    DataStatus:
+      type: string
+      enum:
+      - CONFIRMED
+      - PROVISIONAL
+      - NONE
+      description: master 있음 / master 없이 승인본만으로 계산한 잠정 / 데이터 없음
+    Problem:
+      type: object
+      required:
+      - type
+      - title
+      - status
+      - detail
+      - instance
+      - code
+      - requestId
+      - errors
+      properties:
+        type:
+          type: string
+          example: about:blank
+        title:
+          type: string
+          example: Conflict
+        status:
+          type: integer
+          example: 409
+        detail:
+          type: string
+          description: 화면에 보여 줄 수 있는 한국어 설명
+        instance:
+          type: string
+          description: 오류가 난 요청 경로(쿼리 제외)
+        code:
+          type: string
+          pattern: ^[A-Z][A-Z0-9_]{0,63}$
+          description: 프론트 분기용 오류 코드
+        requestId:
+          type: string
+        errors:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/FieldError'
+    FieldError:
+      type: object
+      required:
+      - field
+      - code
+      properties:
+        field:
+          type: string
+          example: dueAt
+        code:
+          type: string
+          example: INVALID_VALUE
+    PageInfo:
+      type: object
+      required:
+      - nextCursor
+      properties:
+        nextCursor:
+          type:
+          - string
+          - 'null'
+          description: 마지막 페이지면 null
+    StateTokenInput:
+      type: object
+      required:
+      - expectedStateToken
+      properties:
+        expectedStateToken:
+          $ref: '#/components/schemas/StateToken'
+    OrganizationRef:
+      type: object
+      required:
+      - id
+      - code
+      - name
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        code:
+          type: string
+          example: D100
+        name:
+          type: string
+          example: 네트워크인프라부문
+    UserRef:
+      type: object
+      required:
+      - id
+      - name
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        name:
+          type: string
+          example: 최인프 매니저
+    Organization:
+      allOf:
+      - $ref: '#/components/schemas/OrganizationRef'
+      - type: object
+        properties:
+          managers:
+            type: array
+            description: 수신 담당자(조직 담당자 계정)
+            items:
+              type: object
+              properties:
+                id:
+                  $ref: '#/components/schemas/Id'
+                name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+    Me:
+      type: object
+      required:
+      - user
+      - role
+      - menus
+      properties:
+        user:
+          type: object
+          properties:
+            id:
+              $ref: '#/components/schemas/Id'
+            name:
+              type: string
+              example: 김기획 매니저
+            email:
+              type: string
+              format: email
+        role:
+          type: string
+          enum:
+          - PLANNER
+          - ORG_MANAGER
+        organization:
+          description: 조직 담당자만. 경영기획팀은 null
+          oneOf:
+          - $ref: '#/components/schemas/OrganizationRef'
+          - type: 'null'
+        homePath:
+          type: string
+          example: /planning
+        menus:
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+                example: NOTIFICATIONS
+              label:
+                type: string
+                example: 알림 모아보기
+              path:
+                type: string
+    Link:
+      type: object
+      description: 이동할 화면과 미리 선택할 대상
+      properties:
+        path:
+          type: string
+          example: /planning/gap
+        query:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            requestId: '31'
+            organizationId: '4'
+            reviewItemId: '880'
+    Notification:
+      type: object
+      required:
+      - id
+      - type
+      - title
+      - organization
+      - occurredAt
+      - read
+      - link
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        type:
+          type: string
+          enum:
+          - SUBMISSION
+          - REPLY
+          - OVERDUE
+        title:
+          type: string
+          example: 10월 매출 Gap 소명 회신 도착
+        organization:
+          $ref: '#/components/schemas/OrganizationRef'
+        actor:
+          description: 회신자(기한 경과는 null)
+          oneOf:
+          - $ref: '#/components/schemas/UserRef'
+          - type: 'null'
+        occurredAt:
+          $ref: '#/components/schemas/Timestamp'
+        read:
+          type: boolean
+        link:
+          $ref: '#/components/schemas/Link'
+    SubmissionRequest:
+      type: object
+      required:
+      - id
+      - type
+      - year
+      - status
+      - dueAt
+      - requestedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        type:
+          $ref: '#/components/schemas/RequestType'
+        year:
+          type: integer
+          example: 2026
+        month:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+          maximum: 12
+          description: 연간 요청은 null
+        title:
+          type: string
+          example: 2026년 10월 월간 시트
+        status:
+          type: string
+          enum:
+          - OPEN
+          - CLOSED
+        message:
+          type: string
+        dueAt:
+          $ref: '#/components/schemas/Timestamp'
+        requestedAt:
+          $ref: '#/components/schemas/Timestamp'
+        requestedBy:
+          $ref: '#/components/schemas/UserRef'
+        submittedCount:
+          type: integer
+        targetCount:
+          type: integer
+        stateToken:
+          $ref: '#/components/schemas/StateToken'
+    RequestTarget:
+      type: object
+      required:
+      - organization
+      - displayStatus
+      properties:
+        organization:
+          $ref: '#/components/schemas/Organization'
+        selected:
+          type: boolean
+          description: 실제로 요청을 보낸 조직인지(false면 필수 대상이지만 아직 요청 안 함)
+        requestedAt:
+          $ref: '#/components/schemas/Timestamp'
+        dueAt:
+          $ref: '#/components/schemas/Timestamp'
+        displayStatus:
+          type: string
+          enum:
+          - SUBMITTED
+          - OVERDUE
+          - WAITING
+          description: 제출 완료 / 기한 경과 / 회신 대기 (FR-YEAR-002, FR-MONTH-002). 최신 제출본 상태와 기한으로 계산
+        latestSubmission:
+          oneOf:
+          - $ref: '#/components/schemas/SubmissionSummary'
+          - type: 'null'
+    SubmissionSummary:
+      type: object
+      required:
+      - id
+      - status
+      - label
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        status:
+          $ref: '#/components/schemas/SubmissionStatus'
+        displayStatus:
+          type: string
+          enum:
+          - DRAFT
+          - PENDING
+          - APPROVED
+          - RESUBMIT_REQUESTED
+          - SUPERSEDED
+          description: 화면 상태. 반려됐고 새 제출본이 없으면 RESUBMIT_REQUESTED(재제출 요청), 새 제출본으로 대체됐으면 SUPERSEDED(반려된 제출본)
+        label:
+          $ref: '#/components/schemas/Label'
+        approvedLabel:
+          type:
+          - string
+          - 'null'
+          description: 승인 버전(`ver10.01`). APPROVED일 때만
+        requestId:
+          $ref: '#/components/schemas/Id'
+        requestTitle:
+          type: string
+        period:
+          type: string
+          example: '2026.11'
+        submittedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        stateToken:
+          $ref: '#/components/schemas/StateToken'
+    FileRef:
+      type: object
+      properties:
+        name:
+          type: string
+          example: D100_2026-11.xlsx
+        url:
+          type: string
+          description: 다운로드 API 경로
+    Submission:
+      allOf:
+      - $ref: '#/components/schemas/SubmissionSummary'
+      - type: object
+        properties:
+          kind:
+            $ref: '#/components/schemas/RequestType'
+          title:
+            type: string
+            example: 2026년 11월 월간 실적·추정 제출
+          organization:
+            $ref: '#/components/schemas/OrganizationRef'
+          file:
+            $ref: '#/components/schemas/FileRef'
+          replyMessage:
+            type:
+            - string
+            - 'null'
+            description: 조직 담당자 회신 메시지
+          reviewComment:
+            type:
+            - string
+            - 'null'
+            description: 경영기획팀 코멘트(재제출 요청 시 필수)
+          submittedBy:
+            $ref: '#/components/schemas/UserRef'
+          reviewedBy:
+            oneOf:
+            - $ref: '#/components/schemas/UserRef'
+            - type: 'null'
+          reviewedAt:
+            type:
+            - string
+            - 'null'
+            format: date-time
+          parsingJob:
+            $ref: '#/components/schemas/ParsingJob'
+          validation:
+            type: object
+            properties:
+              canSubmit:
+                type: boolean
+              errorCount:
+                type: integer
+          baseline:
+            $ref: '#/components/schemas/Baseline'
+          previousSubmission:
+            oneOf:
+            - $ref: '#/components/schemas/SubmissionSummary'
+            - type: 'null'
+          nextSubmission:
+            oneOf:
+            - $ref: '#/components/schemas/SubmissionSummary'
+            - type: 'null'
+    ParsingJob:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - QUEUED
+          - RUNNING
+          - SUCCEEDED
+          - FAILED
+        attemptNo:
+          type: integer
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        finishedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    Baseline:
+      type: object
+      description: 소명 비교 기준 버전
+      properties:
+        kind:
+          type: string
+          enum:
+          - PREV_MONTH_APPROVED
+          - ANNUAL_PLAN
+          - REJECTED
+          - NONE
+          description: 전월 승인 제출본 / 확정 연간 계획(1월 월간 시트, 같은 구분끼리만 비교) / 반려된 제출본(재제출) / 비교 기준 없음(연간 계획 첫 제출, 계획 없는 조직)
+        submissionId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        label:
+          type:
+          - string
+          - 'null'
+          example: '2026-10-02'
+    Diagnostic:
+      type: object
+      properties:
+        sourceCell:
+          type: string
+          example: 손익제출!N40
+        item:
+          type: string
+          example: 설비 임차료
+        rule:
+          type: string
+          example: 금액 누락
+        guide:
+          type: string
+          example: 필수 셀에 금액을 입력해 주세요.
+    GapThreshold:
+      type: object
+      required:
+      - comparison
+      - percentEnabled
+      - amountEnabled
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        comparison:
+          $ref: '#/components/schemas/Comparison'
+        percentEnabled:
+          type: boolean
+        percent:
+          type: string
+          example: '5'
+        amountEnabled:
+          type: boolean
+        amount:
+          $ref: '#/components/schemas/Money'
+        appliedAt:
+          $ref: '#/components/schemas/Timestamp'
+        appliedBy:
+          $ref: '#/components/schemas/UserRef'
+    GapThresholdInput:
+      type: object
+      required:
+      - comparison
+      - percentEnabled
+      - percent
+      - amountEnabled
+      - amount
+      description: 두 기준 중 하나 이상 켜야 함(둘 다 켜면 모두 충족하는 항목만 Gap)
+      properties:
+        comparison:
+          $ref: '#/components/schemas/Comparison'
+        percentEnabled:
+          type: boolean
+        percent:
+          type: string
+          pattern: ^[0-9]+(\.[0-9]+)?$
+          example: '5'
+        amountEnabled:
+          type: boolean
+        amount:
+          type: string
+          pattern: ^[0-9]+$
+          description: 원 단위
+          example: '50000000'
+    ReviewTreeNode:
+      type: object
+      description: 대/중/소/상세 계층형 표의 한 행
+      properties:
+        reportItemId:
+          $ref: '#/components/schemas/Id'
+        name:
+          type: string
+          example: 고객모집비용
+        level:
+          type: integer
+          minimum: 1
+          maximum: 4
+        plan:
+          $ref: '#/components/schemas/Money'
+        actual:
+          $ref: '#/components/schemas/Money'
+        diff:
+          $ref: '#/components/schemas/Money'
+        rate:
+          $ref: '#/components/schemas/Rate'
+        stage:
+          type:
+          - integer
+          - 'null'
+          minimum: 1
+          maximum: 5
+          description: 진행 단계 1 차이 항목 확인 ~ 5 승인 및 확정
+        tab:
+          $ref: '#/components/schemas/WorkflowTab'
+        reviewItemId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        stateToken:
+          $ref: '#/components/schemas/StateToken'
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReviewTreeNode'
+    OrgReviewItem:
+      type: object
+      description: 조직 담당자 화면의 소명 대상 셀(Gap 기준은 내려주지 않음)
+      properties:
+        reviewItemId:
+          $ref: '#/components/schemas/Id'
+        name:
+          type: string
+          example: 네트워크 서비스 매출
+        sourceCell:
+          type: string
+          example: 손익제출!M18
+        baseline:
+          $ref: '#/components/schemas/Money'
+        previous:
+          allOf:
+          - $ref: '#/components/schemas/Money'
+          description: 재제출일 때 직전 제출값(누락이면 null → '비교 불가')
+        current:
+          $ref: '#/components/schemas/Money'
+        rate:
+          $ref: '#/components/schemas/Rate'
+        answerState:
+          type: string
+          enum:
+          - EMPTY
+          - WRITTEN
+          - INHERITED
+        stateToken:
+          $ref: '#/components/schemas/StateToken'
+    Explanation:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        round:
+          type: integer
+          minimum: 1
+        requestNote:
+          type:
+          - string
+          - 'null'
+          description: 경영기획팀 요청 메모(첫 회차는 null)
+        requestedBy:
+          oneOf:
+          - $ref: '#/components/schemas/UserRef'
+          - type: 'null'
+        requestedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        dueAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        answer:
+          type:
+          - string
+          - 'null'
+        answeredBy:
+          oneOf:
+          - $ref: '#/components/schemas/UserRef'
+          - type: 'null'
+        answeredAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        verdict:
+          type: string
+          enum:
+          - PENDING
+          - ACCEPTED
+          - REJECTED
+          description: 판단 전 / 수락 / 재요청
+        reviewNote:
+          type:
+          - string
+          - 'null'
+        approvedLabel:
+          type:
+          - string
+          - 'null'
+          description: 수락으로 확정된 버전(`v1.01`)
+        inheritedFrom:
+          description: 값이 그대로라 이어받은 지난 승인 소명
+          oneOf:
+          - type: object
+            properties:
+              explanationId:
+                $ref: '#/components/schemas/Id'
+              label:
+                type: string
+          - type: 'null'
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+    Attachment:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        name:
+          type: string
+          example: 제휴계약_변경합의서.pdf
+        size:
+          type: integer
+        contentType:
+          type: string
+        uploadedAt:
+          $ref: '#/components/schemas/Timestamp'
+        url:
+          type: string
+    Master:
+      type: object
+      properties:
+        id:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+          description: 생성 대기(WAITING)면 null
+        year:
+          type: integer
+        month:
+          type:
+          - integer
+          - 'null'
+          description: 연간 계획 master(master_plan)면 null
+        seq:
+          type:
+          - integer
+          - 'null'
+          description: 같은 월 안의 master 회차. 생성 대기면 null
+        label:
+          type: string
+          description: 생성 대기면 처음 만들어질 이름
+          example: master_ver10.01
+        state:
+          type: string
+          enum:
+          - WAITING
+          - CONFIRMED
+          description: 생성 대기 / 확정
+        createdAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    TemplateDefinition:
+      type: object
+      description: 블록 구성·기간 규칙·확정 SQL·서식 (FR-RPT-002, 006, 008)
+      required:
+      - blocks
+      properties:
+        blocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportBlock'
+    ReportBlock:
+      type: object
+      required:
+      - id
+      - kind
+      - title
+      - order
+      properties:
+        id:
+          type: string
+          example: b1
+        kind:
+          type: string
+          enum:
+          - TABLE
+          - LIST
+          - TEXT
+          - GAP
+          - CHART
+        title:
+          type: string
+          example: 실적 표
+        order:
+          type: integer
+        period:
+          type: object
+          description: 공통 따라감 / 기준 월 ± n / 고정 월
+          properties:
+            rule:
+              type: string
+              enum:
+              - FOLLOW
+              - OFFSET
+              - FIXED
+            offset:
+              type: integer
+              example: 1
+            fixedYear:
+              type: integer
+            fixedMonth:
+              type: integer
+            rangeMonths:
+              type: integer
+              description: 월별 추이 등 최근 n개월
+        scope:
+          type: string
+          enum:
+          - COMPANY
+          - ORGANIZATION
+        organizationId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        comparison:
+          type: string
+          enum:
+          - NONE
+          - PLAN
+          - PREV_ESTIMATE
+          - PREV_YEAR
+        metricId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        sql:
+          type:
+          - string
+          - 'null'
+          description: 자연어 질의로 확정해 저장한 SQL
+        emptyPolicy:
+          type: string
+          enum:
+          - SHOW_NO_DATA
+          - REMOVE
+          - KEEP_ORIGINAL
+        style:
+          type: object
+          properties:
+            fontFamily:
+              type: string
+            fontSize:
+              type: integer
+            width:
+              type: integer
+            height:
+              type: integer
+    Template:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        name:
+          type: string
+          example: 월 마감 실적 보고(연결)
+        latestVersion:
+          type: integer
+        version:
+          type: integer
+        definition:
+          $ref: '#/components/schemas/TemplateDefinition'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+    Metric:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        code:
+          type: string
+          example: OP_BY_ORG
+        name:
+          type: string
+          example: 조직별 영업이익
+        description:
+          type: string
+    PdfJob:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        status:
+          type: string
+          enum:
+          - QUEUED
+          - RUNNING
+          - SUCCEEDED
+          - FAILED
+        maskNumbers:
+          type: boolean
+        blocks:
+          type: array
+          description: SUCCEEDED일 때 추출한 블록(구성 확인용)
+          items:
+            allOf:
+            - $ref: '#/components/schemas/ReportBlock'
+            - type: object
+              properties:
+                needsCheck:
+                  type: boolean
+                  description: 종류·데이터 연결 확인 필요(노란색)
+                sourceArea:
+                  type: object
+                  properties:
+                    page:
+                      type: integer
+                    x:
+                      type: number
+                    y:
+                      type: number
+                    w:
+                      type: number
+                    h:
+                      type: number
+        pages:
+          type: array
+          items:
+            type: object
+            properties:
+              false:
+                type: integer
+              maskedImageUrl:
+                type: string
+        errorCode:
+          type:
+          - string
+          - 'null'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+    TableData:
+      type: object
+      properties:
+        dataStatus:
+          $ref: '#/components/schemas/DataStatus'
+        columns:
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+              label:
+                type: string
+              type:
+                type: string
+                enum:
+                - TEXT
+                - MONEY
+                - RATE
+                - INTEGER
+        rows:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+paths:
+  /auth/codes:
+    post:
+      operationId: requestAuthCode
+      tags:
+      - 로그인·사용자
+      summary: AUTH-01 인증 메일 요청·재전송
+      description: 등록된 사내 도메인·계정에만 6자리 인증코드를 보냄. 코드 유효시간 3분, 재전송은 1분 후 가능. 로그인 전이라 사용자를 알 수 없어 Idempotency-Key를 받지 않는다(재전송 대기 1분으로 중복 발송을 막음).
+      x-fr:
+      - FR-AUTH-001
+      - FR-AUTH-002
+      x-tables:
+      - app_user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  maxLength: 320
+            example:
+              email: kim.plan@sk.com
+      responses:
+        '202':
+          description: 인증 메일 발송
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  email:
+                    type: string
+                  expiresAt:
+                    $ref: '#/components/schemas/Timestamp'
+                  resendAvailableAt:
+                    $ref: '#/components/schemas/Timestamp'
+              example:
+                email: kim.plan@sk.com
+                expiresAt: '2026-11-12T09:03:00Z'
+                resendAvailableAt: '2026-11-12T09:01:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          description: '`UNREGISTERED_EMAIL` 등록되지 않은 계정·도메인 → ''등록되지 않은 계정입니다. 메일 주소를 확인해주세요'''
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: '`CODE_RESEND_WAIT` 재전송 대기 시간(1분) 전'
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /auth/sessions:
+    post:
+      operationId: createSession
+      tags:
+      - 로그인·사용자
+      summary: AUTH-02 인증코드로 로그인
+      description: 성공하면 역할에 따라 홈 경로를 함께 돌려줌(경영기획팀 → 전사 손익 현황, 조직 담당자 → 요청함). 로그인 전이라 Idempotency-Key를 받지 않는다(코드는 한 번만 쓸 수 있음). 토큰 유효시간 기본 12시간.
+      x-fr:
+      - FR-AUTH-002
+      - FR-AUTH-003
+      - FR-AUTH-004
+      x-tables:
+      - app_user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - email
+              - code
+              properties:
+                email:
+                  type: string
+                  format: email
+                code:
+                  type: string
+                  pattern: ^[0-9]{6}$
+            example:
+              email: kim.plan@sk.com
+              code: '482913'
+      responses:
+        '201':
+          description: 로그인 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - token
+                - expiresAt
+                - me
+                properties:
+                  token:
+                    type: string
+                  expiresAt:
+                    $ref: '#/components/schemas/Timestamp'
+                  me:
+                    $ref: '#/components/schemas/Me'
+        '400':
+          description: '`INVALID_AUTH_CODE` 코드 불일치(''인증 코드가 일치하지 않습니다'') 또는 만료(''유효시간이 경과되어, 코드 재전송을 요청해주세요''). 이유는 `errors[0].code`=MISMATCH·EXPIRED·TOO_MANY_ATTEMPTS(5번 틀리면 재전송 필요)'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /auth/session:
+    delete:
+      operationId: deleteSession
+      tags:
+      - 로그인·사용자
+      summary: AUTH-03 로그아웃
+      x-fr:
+      - FR-AUTH-007
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          $ref: '#/components/responses/NoContent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me:
+    get:
+      operationId: getMe
+      tags:
+      - 로그인·사용자
+      summary: AUTH-04 로그인 사용자·역할·메뉴
+      description: 조직 담당자는 소속 조직이 고정되어 내려감(FR-MENU-002).
+      x-fr:
+      - FR-AUTH-004
+      - FR-MENU-001
+      - FR-MENU-002
+      x-tables:
+      - app_user
+      - organization
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+              example:
+                user:
+                  id: '3'
+                  name: 최인프 매니저
+                  email: choi.infra@sk.com
+                role: ORG_MANAGER
+                organization:
+                  id: '4'
+                  code: D100
+                  name: 네트워크인프라부문
+                homePath: /requests
+                menus:
+                - key: INBOX
+                  label: 요청함
+                  path: /requests
+                - key: HISTORY
+                  label: 제출 이력 관리
+                  path: /history
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/badges:
+    get:
+      operationId: getMenuBadges
+      tags:
+      - 로그인·사용자
+      summary: AUTH-05 메뉴 배지 건수
+      description: 0이면 프론트에서 배지를 숨김.
+      x-fr:
+      - FR-MENU-004
+      x-tables:
+      - notification
+      - review_item
+      - submission
+      - request_target
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unreadNotifications:
+                    type: integer
+                    description: 경영기획팀
+                  monthlyReviewNeeded:
+                    type: integer
+                    description: 경영기획팀
+                  annualReviewNeeded:
+                    type: integer
+                    description: 경영기획팀
+                  openRequests:
+                    type: integer
+                    description: 조직 담당자
+              example:
+                unreadNotifications: 8
+                monthlyReviewNeeded: 27
+                annualReviewNeeded: 5
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags:
+      - 알림 모아보기
+      summary: NOTI-01 알림 목록(날짜 묶음) + 요약 지표
+      x-fr:
+      - FR-NOTI-A-001
+      - FR-NOTI-A-002
+      - FR-NOTI-A-003
+      - FR-NOTI-A-005
+      x-tables:
+      - notification
+      parameters:
+      - name: type
+        in: query
+        schema:
+          type: string
+          enum:
+          - ALL
+          - SUBMISSION
+          - REPLY
+          - OVERDUE
+          default: ALL
+      - name: unreadOnly
+        in: query
+        schema:
+          type: boolean
+          default: false
+      - name: sort
+        in: query
+        schema:
+          type: string
+          enum:
+          - LATEST
+          default: LATEST
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  properties:
+                    summary:
+                      type: object
+                      properties:
+                        unreadCount:
+                          type: integer
+                        replyPendingCount:
+                          type: integer
+                          description: 회신 검토 대기
+                        overdueOrganizationCount:
+                          type: integer
+                    typeCounts:
+                      type: object
+                      properties:
+                        ALL:
+                          type: integer
+                        SUBMISSION:
+                          type: integer
+                        REPLY:
+                          type: integer
+                        OVERDUE:
+                          type: integer
+                    groups:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          date:
+                            type: string
+                            format: date
+                          unreadCount:
+                            type: integer
+                          items:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Notification'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /notifications/read:
+    post:
+      operationId: markNotificationsRead
+      tags:
+      - 알림 모아보기
+      summary: NOTI-02 읽음 처리(선택 또는 모두)
+      x-fr:
+      - FR-NOTI-A-004
+      x-tables:
+      - notification
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+                required:
+                - ids
+                properties:
+                  ids:
+                    type: array
+                    minItems: 1
+                    maxItems: 200
+                    items:
+                      $ref: '#/components/schemas/Id'
+              - type: object
+                required:
+                - all
+                properties:
+                  all:
+                    const: true
+            example:
+              all: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unreadCount:
+                    type: integer
+              example:
+                unreadCount: 0
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/CommandConflict'
+  /home/status:
+    get:
+      operationId: getHomeStatus
+      tags:
+      - 홈·전사 손익
+      summary: HOME-01 데이터 상태와 마감 진행 막대
+      x-fr:
+      - FR-HOME-001
+      - FR-HOME-002
+      x-tables:
+      - master_version
+      - submission_request
+      - request_target
+      - submission
+      - review_item
+      parameters:
+      - $ref: '#/components/parameters/Year'
+      - $ref: '#/components/parameters/Month'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dataStatus:
+                    $ref: '#/components/schemas/DataStatus'
+                  master:
+                    oneOf:
+                    - $ref: '#/components/schemas/Master'
+                    - type: 'null'
+                  masters:
+                    type: array
+                    description: 이전 master 선택용
+                    items:
+                      $ref: '#/components/schemas/Master'
+                  dueAt:
+                    type:
+                    - string
+                    - 'null'
+                    format: date-time
+                  dDay:
+                    type:
+                    - integer
+                    - 'null'
+                    example: 2
+                  steps:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                          enum:
+                          - REQUESTED
+                          - SUBMITTED
+                          - GAP_REVIEW
+                          - EXPLAINED
+                          - MASTER
+                        label:
+                          type: string
+                        done:
+                          type: integer
+                        total:
+                          type: integer
+                        date:
+                          type:
+                          - string
+                          - 'null'
+                          format: date
+              example:
+                dataStatus: PROVISIONAL
+                master: null
+                masters: []
+                dueAt: '2026-11-13T09:00:00Z'
+                dDay: 2
+                steps:
+                - key: REQUESTED
+                  label: 제출 요청
+                  done: 1
+                  total: 1
+                  date: '2026-11-03'
+                - key: SUBMITTED
+                  label: 조직 제출
+                  done: 18
+                  total: 22
+                - key: GAP_REVIEW
+                  label: Gap 검토
+                  done: 14
+                  total: 41
+                - key: EXPLAINED
+                  label: 소명 완료
+                  done: 5
+                  total: 22
+                - key: MASTER
+                  label: master 생성
+                  done: 0
+                  total: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /home/todos:
+    get:
+      operationId: getHomeTodos
+      tags:
+      - 홈·전사 손익
+      summary: HOME-02 오늘 할 일(연간/월간 탭)
+      x-fr:
+      - FR-HOME-003
+      x-tables:
+      - submission_request
+      - request_target
+      - submission
+      - review_item
+      parameters:
+      - name: tab
+        in: query
+        required: true
+        schema:
+          type: string
+          enum:
+          - ANNUAL
+          - MONTHLY
+      - $ref: '#/components/parameters/Year'
+      - $ref: '#/components/parameters/Month'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                          enum:
+                          - REQUEST_NEEDED
+                          - NOT_SUBMITTED
+                          - REVIEW_NEEDED
+                          - EXPLANATION_REVIEW_NEEDED
+                          description: 요청 필요 · 미제출 · 검토 필요 조직 · 소명 검토 필요 조직(재요청한 소명에 답이 왔고 판단 전)
+                        label:
+                          type: string
+                          example: 월간 시트 미제출
+                        count:
+                          type: integer
+                        link:
+                          $ref: '#/components/schemas/Link'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /home/pnl:
+    get:
+      operationId: getHomePnl
+      tags:
+      - 홈·전사 손익
+      summary: HOME-03 핵심 KPI 3개 + 전사 손익 요약표
+      description: |-
+        행은 답안지 시트 순서(매출 → 영업비용 → 영업이익). Gap 기준을 넘는 셀은 `gapExceeded`, 툴팁용 수락 소명은 `explanation`.
+        실적은 그 달 master(없으면 조직별 최신 승인본, 잠정), 계획은 요청 때 고정한 확정 연간 계획, 전월 추정은 전월 최신 master의 이번 달 추정.
+        `period=YEAR`는 연간 전체(고른 달 시트의 누적 실적 + 남은 달 추정 vs 1~12월 계획, 전월 대비는 전월 시트의 연간 전망). 영업이익률은 비율이라 `opMargin`으로 따로 준다.
+      x-fr:
+      - FR-HOME-001
+      - FR-HOME-004
+      - FR-HOME-005
+      - FR-HOME-006
+      x-tables:
+      - master_source
+      - financial_line
+      - financial_value
+      - report_item
+      - gap_comparison
+      - review_explanation
+      parameters:
+      - $ref: '#/components/parameters/HomeQueryPeriod'
+      - $ref: '#/components/parameters/Year'
+      - $ref: '#/components/parameters/Month'
+      - $ref: '#/components/parameters/HomeQueryMaster'
+      - $ref: '#/components/parameters/Unit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dataStatus:
+                    $ref: '#/components/schemas/DataStatus'
+                  kpis:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                          enum:
+                          - REVENUE
+                          - COST
+                          - OP
+                        actual:
+                          $ref: '#/components/schemas/Money'
+                        vsPlanRate:
+                          $ref: '#/components/schemas/Rate'
+                        vsPlanAmount:
+                          $ref: '#/components/schemas/Money'
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        reportItemId:
+                          oneOf:
+                          - $ref: '#/components/schemas/Id'
+                          - type: 'null'
+                          description: kind=OP면 null
+                        kind:
+                          type: string
+                          enum:
+                          - ITEM
+                          - OP
+                          description: 보고 항목 / 영업이익(매출 − 영업비용)
+                        name:
+                          type: string
+                          example: 마케팅비
+                        level:
+                          type: integer
+                        actual:
+                          $ref: '#/components/schemas/Money'
+                        vsPlanRate:
+                          $ref: '#/components/schemas/Rate'
+                        vsPlanAmount:
+                          $ref: '#/components/schemas/Money'
+                        vsPrevEstimateRate:
+                          $ref: '#/components/schemas/Rate'
+                        vsPrevEstimateAmount:
+                          $ref: '#/components/schemas/Money'
+                        gapExceeded:
+                          type: boolean
+                          description: 승인본의 이 항목(실적)이 Gap 기준을 넘었으면 true
+                        explanation:
+                          type:
+                          - string
+                          - 'null'
+                          description: '마지막 수락 소명. "조직명: 소명", 여러 조직이면 줄바꿈으로 잇는다'
+                  opMargin:
+                    type: object
+                    description: 영업이익률(영업이익 / 매출 × 100)과 계획·전월 추정 대비 차이(%p)
+                    properties:
+                      actualRate:
+                        $ref: '#/components/schemas/Rate'
+                      planRate:
+                        $ref: '#/components/schemas/Rate'
+                      vsPlanPoint:
+                        $ref: '#/components/schemas/Rate'
+                      prevEstimateRate:
+                        $ref: '#/components/schemas/Rate'
+                      vsPrevEstimatePoint:
+                        $ref: '#/components/schemas/Rate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /home/op-drivers:
+    get:
+      operationId: getHomeOpDrivers
+      tags:
+      - 홈·전사 손익
+      summary: HOME-04 조직별 영업이익 변동 원인 Top 5(계획 대비)
+      x-fr:
+      - FR-HOME-007
+      x-tables:
+      - master_source
+      - financial_value
+      - annual_master_source
+      parameters:
+      - $ref: '#/components/parameters/HomeQueryPeriod'
+      - $ref: '#/components/parameters/Year'
+      - $ref: '#/components/parameters/Month'
+      - $ref: '#/components/parameters/HomeQueryMaster'
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+      - $ref: '#/components/parameters/Unit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dataStatus:
+                    $ref: '#/components/schemas/DataStatus'
+                  total:
+                    $ref: '#/components/schemas/Money'
+                    description: 전사 영업이익 계획 대비 차이
+                  items:
+                    type: array
+                    description: 조직별 영업이익 계획 대비 차이의 절댓값이 큰 순(계획이 없는 조직은 뒤)
+                    items:
+                      type: object
+                      properties:
+                        organization:
+                          $ref: '#/components/schemas/OrganizationRef'
+                        opDiff:
+                          $ref: '#/components/schemas/Money'
+                        opDiffRate:
+                          $ref: '#/components/schemas/Rate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /home/divisions:
+    get:
+      operationId: getHomeDivisions
+      tags:
+      - 홈·전사 손익
+      summary: HOME-05 사업부별 손익(사업부 = 제출 조직)
+      x-fr:
+      - FR-HOME-008
+      x-tables:
+      - master_source
+      - financial_value
+      parameters:
+      - $ref: '#/components/parameters/HomeQueryPeriod'
+      - $ref: '#/components/parameters/Year'
+      - $ref: '#/components/parameters/Month'
+      - $ref: '#/components/parameters/HomeQueryMaster'
+      - $ref: '#/components/parameters/Unit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dataStatus:
+                    $ref: '#/components/schemas/DataStatus'
+                  columns:
+                    type: array
+                    description: 조직 코드 순. vsPlanAmount는 영업이익 계획 대비 차이
+                    items:
+                      type: object
+                      properties:
+                        organization:
+                          $ref: '#/components/schemas/OrganizationRef'
+                        revenue:
+                          $ref: '#/components/schemas/Money'
+                        op:
+                          $ref: '#/components/schemas/Money'
+                        opContributionRate:
+                          $ref: '#/components/schemas/Rate'
+                        opMarginRate:
+                          $ref: '#/components/schemas/Rate'
+                        vsPlanAmount:
+                          $ref: '#/components/schemas/Money'
+                  total:
+                    type: object
+                    properties:
+                      revenue:
+                        $ref: '#/components/schemas/Money'
+                      op:
+                        $ref: '#/components/schemas/Money'
+                      opMarginRate:
+                        $ref: '#/components/schemas/Rate'
+                      vsPlanAmount:
+                        $ref: '#/components/schemas/Money'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /home/waterfall:
+    get:
+      operationId: getHomeWaterfall
+      tags:
+      - 홈·전사 손익
+      summary: HOME-06 손익 흐름(워터폴)
+      description: 답안지에 매출원가·매출총이익·영업외손익이 없어 매출(TOTAL) → 영업비용 중계정마다(DEDUCTION) → 영업이익(TOTAL) 순으로 준다.
+      x-fr:
+      - FR-HOME-009
+      x-tables:
+      - report_item
+      - financial_value
+      parameters:
+      - $ref: '#/components/parameters/HomeQueryPeriod'
+      - $ref: '#/components/parameters/Year'
+      - $ref: '#/components/parameters/Month'
+      - $ref: '#/components/parameters/HomeQueryMaster'
+      - $ref: '#/components/parameters/Unit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dataStatus:
+                    $ref: '#/components/schemas/DataStatus'
+                  steps:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                          enum:
+                          - REVENUE
+                          - COST
+                          - OP
+                        reportItemId:
+                          oneOf:
+                          - $ref: '#/components/schemas/Id'
+                          - type: 'null'
+                          description: COST 단계의 영업비용 중계정. 매출·영업이익은 null
+                        name:
+                          type: string
+                          example: 마케팅비용
+                        amount:
+                          $ref: '#/components/schemas/Money'
+                        kind:
+                          type: string
+                          enum:
+                          - TOTAL
+                          - DEDUCTION
+                        breakdown:
+                          type: array
+                          description: 그 단계의 하위 항목(매출 = 매출 분류, 영업비용 중계정 = 소계정)
+                          items:
+                            type: object
+                            properties:
+                              reportItemId:
+                                $ref: '#/components/schemas/Id'
+                              name:
+                                type: string
+                              amount:
+                                $ref: '#/components/schemas/Money'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /organizations:
+    get:
+      operationId: listOrganizations
+      tags:
+      - 제출 요청
+      - 조직별 현황
+      summary: REQ-01 · ARCH-01 조직 목록·검색(수신 담당자 포함)
+      x-fr:
+      - FR-YEAR-001
+      - FR-MONTH-001
+      - FR-ARCH-001
+      x-tables:
+      - organization
+      - app_user
+      parameters:
+      - name: active
+        in: query
+        schema:
+          type: boolean
+          default: true
+      - name: q
+        in: query
+        description: 조직명·코드 검색
+        schema:
+          type: string
+          maxLength: 100
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Organization'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /submission-requests:
+    post:
+      operationId: createSubmissionRequest
+      tags:
+      - 제출 요청
+      summary: REQ-02 연간 계획·월간 시트 요청 일괄 발송
+      description: 기간당 요청은 하나(연간은 연도별, 월간은 연월별). 발송하면 대상 조직의 요청함에 카드가 생김.
+      x-fr:
+      - FR-YEAR-001
+      - FR-MONTH-001
+      x-tables:
+      - submission_request
+      - request_target
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - type
+              - year
+              - dueAt
+              - message
+              - organizationIds
+              properties:
+                type:
+                  $ref: '#/components/schemas/RequestType'
+                year:
+                  type: integer
+                  minimum: 2000
+                  maximum: 9999
+                month:
+                  type:
+                  - integer
+                  - 'null'
+                  minimum: 1
+                  maximum: 12
+                  description: 월간 요청만 필수
+                dueAt:
+                  $ref: '#/components/schemas/Timestamp'
+                message:
+                  type: string
+                  maxLength: 5000
+                organizationIds:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: '#/components/schemas/Id'
+            example:
+              type: MONTHLY_ACTUAL
+              year: 2026
+              month: 10
+              dueAt: '2026-11-12T09:00:00Z'
+              message: 10월 실적·추정을 제출해 주세요.
+              organizationIds:
+              - '1'
+              - '2'
+              - '4'
+      responses:
+        '201':
+          description: 요청 생성
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmissionRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: '`REQUEST_ALREADY_EXISTS` 같은 기간 요청이 이미 있음, `REQUEST_TARGETS_EMPTY` 대상 조직 없음, `ANNUAL_PLAN_NOT_CONFIRMED` 연간 계획 확정 전 월간 요청 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    get:
+      operationId: listSubmissionRequests
+      tags:
+      - 제출 요청
+      summary: REQ-03 요청 목록
+      x-fr:
+      - FR-YEAR-002
+      - FR-MONTH-002
+      x-tables:
+      - submission_request
+      - request_target
+      - submission
+      parameters:
+      - name: type
+        in: query
+        schema:
+          $ref: '#/components/schemas/RequestType'
+      - $ref: '#/components/parameters/YearOptional'
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - OPEN
+          - CLOSED
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/SubmissionRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /submission-requests/{requestId}:
+    get:
+      operationId: getSubmissionRequest
+      tags:
+      - 제출 요청
+      summary: REQ-04 조직별 진행 현황 표
+      x-fr:
+      - FR-YEAR-002
+      - FR-MONTH-002
+      x-tables:
+      - submission_request
+      - request_target
+      - submission
+      parameters:
+      - $ref: '#/components/parameters/RequestIdPath'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request:
+                    $ref: '#/components/schemas/SubmissionRequest'
+                  targets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RequestTarget'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /submissions/{submissionId}/decisions:
+    post:
+      operationId: decideSubmission
+      tags:
+      - 제출 요청
+      summary: REQ-06 회신 수락 또는 재제출 요청
+      description: '수락은 모든 필수 소명이 수락된 PENDING 제출본만 가능. 승인되면 승인 순번(`approvedLabel`)이 붙고,
+
+        그 달(연간이면 그해) 대상 조직이 모두 승인되면 master를 같은 트랜잭션에서 만든다.
+
+        재제출 요청은 코멘트가 필수이고, 반려 항목을 함께 고를 수 있다.
+
+        '
+      x-fr:
+      - FR-YEAR-003
+      - FR-MONTH-003
+      - FR-HIST-004
+      x-tables:
+      - submission
+      - review_item
+      - master_version
+      - master_source
+      - annual_master
+      - annual_master_source
+      - notification
+      parameters:
+      - $ref: '#/components/parameters/SubmissionId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+              - $ref: '#/components/schemas/StateTokenInput'
+              - type: object
+                required:
+                - decision
+                properties:
+                  decision:
+                    type: string
+                    enum:
+                    - APPROVE
+                    - REJECT
+                  comment:
+                    type:
+                    - string
+                    - 'null'
+                    maxLength: 4000
+                    description: REJECT면 필수
+                  rejectedReviewItemIds:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Id'
+                    description: 반려 항목(REJECT만)
+            examples:
+              approve:
+                value:
+                  decision: APPROVE
+                  expectedStateToken: st_3f9a1c
+              reject:
+                value:
+                  decision: REJECT
+                  comment: 누락된 12월 설비 임차료를 반영해 주세요.
+                  rejectedReviewItemIds:
+                  - '881'
+                  expectedStateToken: st_3f9a1c
+      responses:
+        '200':
+          description: 처리 완료
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  submission:
+                    $ref: '#/components/schemas/SubmissionSummary'
+                  masterPublished:
+                    oneOf:
+                    - $ref: '#/components/schemas/Master'
+                    - type: 'null'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`INVALID_SUBMISSION_STATE` PENDING이 아님, `EXPLANATIONS_NOT_ACCEPTED` 수락되지 않은 필수 소명 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: '`COMMENT_REQUIRED` 재제출 요청 코멘트 없음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /submissions/{submissionId}/comparison:
+    get:
+      operationId: getSubmissionComparison
+      tags:
+      - Gap 검토
+      summary: GAP-01 기준 대상·비교 대상 버전 Gap 계산
+      x-fr:
+      - FR-MONTH-004
+      x-tables:
+      - submission
+      - financial_value
+      parameters:
+      - $ref: '#/components/parameters/SubmissionId'
+      - name: baseSubmissionId
+        in: query
+        description: 기준 대상(기본 현재 기준 버전)
+        schema:
+          $ref: '#/components/schemas/Id'
+      - $ref: '#/components/parameters/Unit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  base:
+                    $ref: '#/components/schemas/SubmissionSummary'
+                  target:
+                    $ref: '#/components/schemas/SubmissionSummary'
+                  rows:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReviewTreeNode'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: '`INVALID_COMPARISON_SELECTION` 다른 조직·기간의 버전, `COMPARISON_SOURCE_UNAVAILABLE` 비교할 데이터 없음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /submissions/{submissionId}/comparison/file:
+    get:
+      operationId: downloadSubmissionComparison
+      tags:
+      - Gap 검토
+      summary: GAP-02 Gap 계산 결과 엑셀 다운로드
+      x-fr:
+      - FR-MONTH-004
+      parameters:
+      - $ref: '#/components/parameters/SubmissionId'
+      - name: baseSubmissionId
+        in: query
+        schema:
+          $ref: '#/components/schemas/Id'
+      - $ref: '#/components/parameters/Unit'
+      responses:
+        '200':
+          $ref: '#/components/responses/FileStream'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /gap-thresholds/current:
+    get:
+      operationId: getCurrentGapThresholds
+      tags:
+      - Gap 검토
+      summary: GAP-03 현재 Gap 기준(비교 3종)
+      x-fr:
+      - FR-MONTH-005
+      x-tables:
+      - gap_threshold
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stateToken:
+                    $ref: '#/components/schemas/StateToken'
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GapThreshold'
+              example:
+                stateToken: st_a1
+                items:
+                - id: '7'
+                  comparison: ACTUAL_VS_PLAN
+                  percentEnabled: true
+                  percent: '5'
+                  amountEnabled: true
+                  amount: '50000000'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /gap-thresholds/preview:
+    post:
+      operationId: previewGapThreshold
+      tags:
+      - Gap 검토
+      summary: GAP-04 기준 적용 전 영향 건수
+      description: 조회성 POST라 상태를 바꾸지 않음(Idempotency-Key 불필요).
+      x-fr:
+      - FR-MONTH-005
+      x-tables:
+      - gap_threshold
+      - review_item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GapThresholdInput'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  affectedCount:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /gap-thresholds:
+    post:
+      operationId: applyGapThreshold
+      tags:
+      - Gap 검토
+      summary: GAP-05 기준 적용
+      description: 새 기준 행을 만들고 이후 제출부터 적용. 검토 대기 이후 제출본에는 소급하지 않음.
+      x-fr:
+      - FR-MONTH-005
+      x-tables:
+      - gap_threshold
+      - gap_threshold_guard
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+              - $ref: '#/components/schemas/GapThresholdInput'
+              - $ref: '#/components/schemas/StateTokenInput'
+            example:
+              comparison: ACTUAL_VS_PLAN
+              percentEnabled: true
+              percent: '5'
+              amountEnabled: true
+              amount: '50000000'
+              expectedStateToken: st_a1
+      responses:
+        '201':
+          description: 적용됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GapThreshold'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/CommandConflict'
+  /review-items:
+    get:
+      operationId: listReviewItems
+      tags:
+      - Gap 검토
+      - 소명·제출
+      summary: GAP-06 · PROOF-02 Gap 계층형 표 / 조직 소명 대상 목록
+      description: '- `view=PLANNER`(경영기획팀, GAP-06): 대/중/소/상세 계층 + 상태 탭 건수 + 진행 단계
+
+        - `view=ORG`(조직 담당자, PROOF-02): 매출/비용 → 대상 월(실적/추정) → 소명 대상 셀. Gap 기준은 내려주지 않음
+
+        '
+      x-fr:
+      - FR-MONTH-006
+      - FR-PROOF-002
+      - FR-RESUB-005
+      x-tables:
+      - review_item
+      - report_item
+      - gap_comparison
+      - review_explanation
+      - financial_value
+      parameters:
+      - name: view
+        in: query
+        required: true
+        schema:
+          type: string
+          enum:
+          - PLANNER
+          - ORG
+      - name: submissionId
+        in: query
+        description: ORG 보기에서 필수
+        schema:
+          $ref: '#/components/schemas/Id'
+      - name: requestId
+        in: query
+        description: PLANNER 보기에서 필수
+        schema:
+          $ref: '#/components/schemas/Id'
+      - name: organizationId
+        in: query
+        schema:
+          $ref: '#/components/schemas/Id'
+      - name: comparison
+        in: query
+        schema:
+          $ref: '#/components/schemas/Comparison'
+      - name: tab
+        in: query
+        schema:
+          $ref: '#/components/schemas/WorkflowTab'
+      - name: sort
+        in: query
+        schema:
+          type: string
+          enum:
+          - DIFF
+          - RATE
+          default: DIFF
+      - name: order
+        in: query
+        schema:
+          type: string
+          enum:
+          - ASC
+          - DESC
+          default: DESC
+      - name: q
+        in: query
+        description: 항목 검색
+        schema:
+          type: string
+          maxLength: 100
+      - $ref: '#/components/parameters/Unit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - title: PlannerView
+                  type: object
+                  properties:
+                    tabCounts:
+                      type: object
+                      additionalProperties:
+                        type: integer
+                      example:
+                        NEEDS_REVIEW: 41
+                        SELECTED: 4
+                        IN_PROGRESS: 12
+                        RE_REVIEW: 3
+                        ACCEPTED: 5
+                        EXCLUDED: 2
+                    tree:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/ReviewTreeNode'
+                - title: OrgView
+                  type: object
+                  properties:
+                    baseline:
+                      $ref: '#/components/schemas/Baseline'
+                    progress:
+                      type: object
+                      properties:
+                        answered:
+                          type: integer
+                        required:
+                          type: integer
+                    groups:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          group:
+                            type: string
+                            enum:
+                            - REVENUE
+                            - COST
+                          cellCount:
+                            type: integer
+                          months:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                month:
+                                  type: integer
+                                scenario:
+                                  $ref: '#/components/schemas/Scenario'
+                                items:
+                                  type: array
+                                  items:
+                                    $ref: '#/components/schemas/OrgReviewItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /review-items/actions:
+    post:
+      operationId: actOnReviewItems
+      tags:
+      - Gap 검토
+      summary: GAP-07 선택 항목 처리(제외 / 선택 항목 검토하기 / 소명 요청)
+      description: '- `EXCLUDE`: 검토 필요 → 제외됨(사유 기록)
+
+        - `SELECT`: 검토 필요 → 검토 완료(사업부 하위 메뉴 생성)
+
+        - `REQUEST_EXPLANATION`: 일괄 소명 요청(회신 기한·메시지 필수). 셀 단위 버전 비교에서 고른 셀도 이 명령으로 요청
+
+        같은 제출 요청의 PENDING 제출본 항목만 함께 처리할 수 있음.
+
+        '
+      x-fr:
+      - FR-MONTH-007
+      - FR-MONTH-009
+      - FR-MONTH-010
+      - FR-MONTH-012
+      x-tables:
+      - review_item
+      - review_workflow_event
+      - review_explanation
+      - notification
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - action
+              - items
+              properties:
+                action:
+                  type: string
+                  enum:
+                  - EXCLUDE
+                  - SELECT
+                  - REQUEST_EXPLANATION
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items:
+                    type: object
+                    required:
+                    - reviewItemId
+                    - expectedStateToken
+                    properties:
+                      reviewItemId:
+                        $ref: '#/components/schemas/Id'
+                      expectedStateToken:
+                        $ref: '#/components/schemas/StateToken'
+                note:
+                  type:
+                  - string
+                  - 'null'
+                  maxLength: 4000
+                  description: 제외 사유
+                dueAt:
+                  type:
+                  - string
+                  - 'null'
+                  format: date-time
+                  description: REQUEST_EXPLANATION 필수
+                message:
+                  type:
+                  - string
+                  - 'null'
+                  maxLength: 5000
+                  description: REQUEST_EXPLANATION 필수
+            example:
+              action: REQUEST_EXPLANATION
+              items:
+              - reviewItemId: '880'
+                expectedStateToken: st_9
+              dueAt: '2026-11-12T09:00:00Z'
+              message: ① 차이 원인 ② 향후 대응 ③ 영향 기간을 작성해 주세요.
+      responses:
+        '200':
+          description: 처리 결과
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        reviewItemId:
+                          $ref: '#/components/schemas/Id'
+                        tab:
+                          $ref: '#/components/schemas/WorkflowTab'
+                        stateToken:
+                          $ref: '#/components/schemas/StateToken'
+                  tabCounts:
+                    type: object
+                    additionalProperties:
+                      type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`REVIEW_LOCKED` 검토 대기 제출본이 아님, `REVIEW_STAGE_CONFLICT` 검토 필요 상태가 아닌 항목 선정, `REVIEW_EXCLUDED` 이미 제외됨 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /review-items/{reviewItemId}:
+    get:
+      operationId: getReviewItem
+      tags:
+      - Gap 검토
+      - 소명·제출
+      summary: GAP-08 · PROOF-03 항목 상세(요약·변경 내역·소명 이력)
+      description: 경영기획팀은 Gap 기준·소명 이력 전체를, 조직 담당자는 변경 내역·지난 승인 소명·요청 메시지를 봄.
+      x-fr:
+      - FR-MONTH-009
+      - FR-MONTH-011
+      - FR-PROOF-003
+      - FR-PROOF-004
+      - FR-RESUB-005
+      x-tables:
+      - review_item
+      - review_explanation
+      - review_attachment
+      - gap_comparison
+      parameters:
+      - $ref: '#/components/parameters/ReviewItemId'
+      - $ref: '#/components/parameters/Unit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    $ref: '#/components/schemas/Id'
+                  path:
+                    type: string
+                    example: 영업비용 › 마케팅비용 › 고객모집비용 › 12월 추정
+                  scenario:
+                    $ref: '#/components/schemas/Scenario'
+                  month:
+                    type: integer
+                  summary:
+                    type: object
+                    description: 경영기획팀만
+                    properties:
+                      plan:
+                        $ref: '#/components/schemas/Money'
+                      actual:
+                        $ref: '#/components/schemas/Money'
+                      diff:
+                        $ref: '#/components/schemas/Money'
+                      rate:
+                        $ref: '#/components/schemas/Rate'
+                      threshold:
+                        $ref: '#/components/schemas/GapThreshold'
+                  rows:
+                    type: array
+                    description: 변경 내역(원본 셀별)
+                    items:
+                      type: object
+                      properties:
+                        sourceCell:
+                          type: string
+                        baseline:
+                          $ref: '#/components/schemas/Money'
+                        previous:
+                          $ref: '#/components/schemas/Money'
+                        current:
+                          $ref: '#/components/schemas/Money'
+                        diff:
+                          $ref: '#/components/schemas/Money'
+                        rate:
+                          $ref: '#/components/schemas/Rate'
+                  previousExplanation:
+                    oneOf:
+                    - $ref: '#/components/schemas/Explanation'
+                    - type: 'null'
+                  explanations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Explanation'
+                  stateToken:
+                    $ref: '#/components/schemas/StateToken'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /review-items/{reviewItemId}/evidence:
+    get:
+      operationId: getReviewItemEvidence
+      tags:
+      - Gap 검토
+      summary: GAP-09 답안지 셀의 원천 셀 목록(셀 오름차순)
+      x-fr:
+      - FR-MONTH-009
+      x-tables:
+      - financial_line
+      - financial_value
+      - account_item
+      parameters:
+      - $ref: '#/components/parameters/ReviewItemId'
+      - $ref: '#/components/parameters/Unit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        sourceSheet:
+                          type: string
+                          example: OpEx_세부_IFRS15後
+                        sourceCell:
+                          type: string
+                          example: BD128
+                        account:
+                          type: object
+                          properties:
+                            code:
+                              type: string
+                            name:
+                              type: string
+                        description:
+                          type: string
+                          description: 거래내역 및 산출근거
+                        amount:
+                          $ref: '#/components/schemas/Money'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /review-items/{reviewItemId}/versions:
+    get:
+      operationId: getReviewItemVersions
+      tags:
+      - Gap 검토
+      summary: GAP-10 같은 셀 버전별 한 줄 비교
+      x-fr:
+      - FR-MONTH-010
+      x-tables:
+      - submission
+      - financial_line
+      - financial_value
+      - review_explanation
+      parameters:
+      - $ref: '#/components/parameters/ReviewItemId'
+      - $ref: '#/components/parameters/Unit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  columns:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        submissionId:
+                          $ref: '#/components/schemas/Id'
+                        label:
+                          type: string
+                          example: v1.01
+                        state:
+                          type: string
+                          enum:
+                          - CONFIRMED
+                          - CURRENT
+                          - NEW
+                        approvedAt:
+                          type:
+                          - string
+                          - 'null'
+                          format: date-time
+                        nextLabelOnApproval:
+                          type:
+                          - string
+                          - 'null'
+                          example: v1.03
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        cell:
+                          type: string
+                          example: BD128
+                        name:
+                          type: string
+                        values:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/Money'
+                        change:
+                          $ref: '#/components/schemas/Money'
+                        basis:
+                          type: string
+                          description: 산출 근거
+                        uploadExplanation:
+                          type:
+                          - string
+                          - 'null'
+                          description: 업로드 시 소명 사유
+                        changed:
+                          type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /review-items/{reviewItemId}/decisions:
+    post:
+      operationId: decideExplanation
+      tags:
+      - Gap 검토
+      summary: GAP-11 소명 수락 / 재요청
+      x-fr:
+      - FR-MONTH-011
+      - FR-YEAR-003
+      x-tables:
+      - review_explanation
+      - notification
+      parameters:
+      - $ref: '#/components/parameters/ReviewItemId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+              - $ref: '#/components/schemas/StateTokenInput'
+              - type: object
+                required:
+                - verdict
+                properties:
+                  verdict:
+                    type: string
+                    enum:
+                    - ACCEPT
+                    - REQUEST_AGAIN
+                  note:
+                    type:
+                    - string
+                    - 'null'
+                    maxLength: 4000
+                    description: REQUEST_AGAIN이면 필수
+                  dueAt:
+                    type:
+                    - string
+                    - 'null'
+                    format: date-time
+            example:
+              verdict: REQUEST_AGAIN
+              note: 11월 회복 근거 자료를 첨부해 주세요.
+              dueAt: '2026-11-14T09:00:00Z'
+              expectedStateToken: st_9
+      responses:
+        '200':
+          description: 처리 완료
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  explanation:
+                    $ref: '#/components/schemas/Explanation'
+                  tab:
+                    $ref: '#/components/schemas/WorkflowTab'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`EXPLANATION_LOCKED` 이미 판단한 회차, `EXPLANATION_ROUND_CHANGED` 새 회차가 생김 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: '`NOTE_REQUIRED` 재요청 메모 없음, `ANSWER_MISSING` 답변이 없는 회차'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /organizations/{organizationId}/versions:
+    get:
+      operationId: getOrganizationVersions
+      tags:
+      - 조직별 현황
+      summary: ARCH-02 월별 최종 버전과 월별 버전 이력
+      x-fr:
+      - FR-ARCH-002
+      x-tables:
+      - submission
+      parameters:
+      - $ref: '#/components/parameters/OrganizationId'
+      - $ref: '#/components/parameters/Year'
+      - $ref: '#/components/parameters/Month'
+        description: 지정하면 그 달 버전 이력을 함께 내려줌
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organization:
+                    $ref: '#/components/schemas/OrganizationRef'
+                  months:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        month:
+                          type: integer
+                        finalLabel:
+                          type:
+                          - string
+                          - 'null'
+                          description: 그 달 가장 최근 승인 버전. 승인본이 없으면 null
+                          example: ver10.01
+                  history:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        submissionId:
+                          $ref: '#/components/schemas/Id'
+                        label:
+                          type: string
+                          example: '2026-10-02'
+                        status:
+                          type: string
+                          enum:
+                          - PENDING
+                          - REJECTED
+                          - APPROVED
+                        lastModifiedAt:
+                          $ref: '#/components/schemas/Timestamp'
+                        file:
+                          $ref: '#/components/schemas/FileRef'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /submissions/{submissionId}/change-history:
+    get:
+      operationId: getSubmissionChangeHistory
+      tags:
+      - 조직별 현황
+      summary: ARCH-03 버전의 변경 이력(변경 일자별 항목·소명 사유)
+      x-fr:
+      - FR-ARCH-003
+      x-tables:
+      - review_item
+      - review_explanation
+      parameters:
+      - $ref: '#/components/parameters/SubmissionId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        changedAt:
+                          $ref: '#/components/schemas/Timestamp'
+                        state:
+                          type: string
+                          enum:
+                          - EXPLAINED
+                          - RE_EXPLAINED
+                          description: 소명 / 재소명
+                        items:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              'no':
+                                type: integer
+                                description: 묶음 안의 순번(1부터)
+                              code:
+                                type: string
+                              name:
+                                type: string
+                              month:
+                                type: integer
+                              scenario:
+                                type: string
+                                enum:
+                                - PLAN
+                                - ACTUAL
+                                - ESTIMATE
+                              explanation:
+                                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /masters:
+    get:
+      operationId: listMasters
+      tags:
+      - 조직별 현황
+      summary: ARCH-04 월별 master 목록과 상태
+      x-fr:
+      - FR-ARCH-004
+      x-tables:
+      - master_version
+      parameters:
+      - $ref: '#/components/parameters/Year'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Master'
+              example:
+                items:
+                - id: null
+                  year: 2026
+                  month: 10
+                  seq: null
+                  label: master_ver10.01
+                  state: WAITING
+                  createdAt: null
+                - id: '9'
+                  year: 2026
+                  month: 9
+                  seq: 1
+                  label: master_ver9.01
+                  state: CONFIRMED
+                  createdAt: '2026-10-12T03:00:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /masters/{masterId}/file:
+    get:
+      operationId: downloadMaster
+      tags:
+      - 조직별 현황
+      summary: ARCH-05 master 엑셀 다운로드
+      x-fr:
+      - FR-ARCH-004
+      x-tables:
+      - master_source
+      parameters:
+      - $ref: '#/components/parameters/MasterId'
+      responses:
+        '200':
+          $ref: '#/components/responses/FileStream'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /inbox:
+    get:
+      operationId: getInbox
+      tags:
+      - 요청함
+      summary: INBOX-01 내 조직의 열린 요청 카드
+      x-fr:
+      - FR-NOTI-U-001
+      - FR-NOTI-U-002
+      x-tables:
+      - submission_request
+      - request_target
+      - submission
+      - review_explanation
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organization:
+                    $ref: '#/components/schemas/OrganizationRef'
+                  openCount:
+                    type: integer
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                          enum:
+                          - SUBMISSION
+                          - EXPLANATION
+                          description: 제출 요청 / 소명 요청
+                        title:
+                          type: string
+                          example: 11월 실적·추정 제출
+                        requestId:
+                          $ref: '#/components/schemas/Id'
+                        submissionId:
+                          oneOf:
+                          - $ref: '#/components/schemas/Id'
+                          - type: 'null'
+                        dueAt:
+                          $ref: '#/components/schemas/Timestamp'
+                        action:
+                          type: string
+                          enum:
+                          - START_SUBMISSION
+                          - START_EXPLANATION
+                        link:
+                          $ref: '#/components/schemas/Link'
+              example:
+                organization:
+                  id: '4'
+                  code: D100
+                  name: 네트워크인프라부문
+                openCount: 2
+                items:
+                - kind: SUBMISSION
+                  title: 11월 실적·추정 제출
+                  requestId: '31'
+                  submissionId: null
+                  dueAt: '2026-12-03T09:00:00Z'
+                  action: START_SUBMISSION
+                  link:
+                    path: /requests/31/upload
+                - kind: SUBMISSION
+                  title: 2027년 연간 계획 제출
+                  requestId: '30'
+                  submissionId: null
+                  dueAt: '2026-12-19T09:00:00Z'
+                  action: START_SUBMISSION
+                  link:
+                    path: /requests/30/upload
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /submission-requests/{requestId}/submissions:
+    post:
+      operationId: createSubmissionDraft
+      tags:
+      - 업로드·검증
+      summary: UP-03 제출 초안 생성 + 파일 규칙 확인 + 파싱 작업 등록
+      description: '엑셀 파일을 multipart로 받아 파일 이름·확장자(.xlsx·.xlsb, 요청당 1개)·조직(코드)을 먼저 확인하고, 통과하면 S3 `drafts/excel/`에 저장한 뒤 DRAFT를 만들고 파싱 작업을 큐(`parse.jobs`)에 넣는다.
+
+        응답의 `kind`로 화면 제목(연간 계획 제출 / 월간 시트 제출)을 정한다(FR-UPLOAD-001). ''파일 다시 선택''도 이 API로 새 DRAFT를 만든다.
+
+        제출하지 않은 초안의 파일은 `drafts/` 수명 주기 규칙(7일)으로 자동 삭제된다.'
+      x-fr:
+      - FR-UPLOAD-001
+      - FR-UPLOAD-003
+      - FR-UPLOAD-004
+      - FR-UPLOAD-005
+      - FR-RESUB-001
+      x-tables:
+      - submission
+      - stored_object
+      - parsing_job
+      parameters:
+      - $ref: '#/components/parameters/RequestIdPath'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: .xlsx 또는 .xlsb 파일(실제 배포 양식은 .xlsb)
+            encoding:
+              file:
+                contentType: application/octet-stream
+      responses:
+        '202':
+          description: 초안 생성, 파싱 대기
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Submission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`REQUEST_CLOSED` 마감된 요청, `REQUEST_TARGET_EXCLUDED` 대상이 아닌 조직, `PENDING_ALREADY_EXISTS` 이미 검토 대기 중인 제출본 있음 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: '`INVALID_FILENAME` 파일 이름·확장자 규칙 위반(''파일 이름과 확장자명을 다시 확인해주세요.''), `ORGANIZATION_MISMATCH` 다른 조직 파일(''조직명을 다시 확인해주세요.'', details.fileOrganizationCode)'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: about:blank
+                title: Unprocessable Content
+                status: 422
+                detail: 조직명을 다시 확인해주세요.
+                instance: /api/v1/submission-requests/31/submissions
+                code: ORGANIZATION_MISMATCH
+                requestId: 8f3c2a1e
+                errors: []
+        '503':
+          description: '`PARSER_BUSY` 파싱 작업을 받을 수 없음(잠시 후 재시도)'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedFile'
+  /submissions:
+    get:
+      operationId: listSubmissions
+      tags:
+      - 제출 이력
+      - 제출 요청
+      summary: HIST-01 · REQ-05 제출본 목록
+      description: '- 조직 담당자(HIST-01): 내 조직 제출본. 월간/연간 탭 + 대상 연월·처리 상태 필터
+
+        - 경영기획팀(REQ-05): `requestId`+`organizationId`로 조직 행의 회신 이력 카드
+
+        '
+      x-fr:
+      - FR-HIST-001
+      - FR-HIST-002
+      - FR-YEAR-003
+      - FR-MONTH-003
+      x-tables:
+      - submission
+      parameters:
+      - name: type
+        in: query
+        schema:
+          $ref: '#/components/schemas/RequestType'
+      - $ref: '#/components/parameters/YearOptional'
+      - $ref: '#/components/parameters/Month'
+      - name: displayStatus
+        in: query
+        schema:
+          type: string
+          enum:
+          - PENDING
+          - APPROVED
+          - RESUBMIT_REQUESTED
+          - SUPERSEDED
+      - name: requestId
+        in: query
+        schema:
+          $ref: '#/components/schemas/Id'
+      - name: organizationId
+        in: query
+        description: 경영기획팀만
+        schema:
+          $ref: '#/components/schemas/Id'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  properties:
+                    total:
+                      type: integer
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Submission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /submissions/{submissionId}:
+    get:
+      operationId: getSubmission
+      tags:
+      - 업로드·검증
+      - 제출 이력
+      summary: UP-04 · HIST-02 제출본 상태·상세
+      description: '파싱 중에는 이 API를 폴링(2초 권장)해 `parsingJob.status`를 확인한다.
+
+        상세 화면(검토 대기 / 재제출 요청 / 반려된 제출본)에는 제출 소명, 이어받은 소명, 반려 사유·반려 항목, 처리 이력이 함께 온다.
+
+        '
+      x-fr:
+      - FR-UPLOAD-005
+      - FR-HIST-003
+      - FR-HIST-004
+      - FR-RESUB-001
+      x-tables:
+      - submission
+      - parsing_job
+      - review_item
+      - review_explanation
+      parameters:
+      - $ref: '#/components/parameters/SubmissionId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/Submission'
+                - type: object
+                  properties:
+                    explanations:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          reviewItemId:
+                            $ref: '#/components/schemas/Id'
+                          item:
+                            type: string
+                          month:
+                            type: integer
+                          scenario:
+                            $ref: '#/components/schemas/Scenario'
+                          answer:
+                            type: string
+                    inheritedExplanations:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Explanation'
+                    rejectedItems:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          reviewItemId:
+                            $ref: '#/components/schemas/Id'
+                          item:
+                            type: string
+                            example: 설비 임차료 · 12월 추정
+                          sourceCell:
+                            type: string
+                            example: 손익제출!N40
+                          reason:
+                            type: string
+                            example: 기준값 0 · 직전 값 누락
+                          previousExplanation:
+                            oneOf:
+                            - $ref: '#/components/schemas/Explanation'
+                            - type: 'null'
+                    history:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          event:
+                            type: string
+                            enum:
+                            - SUBMITTED
+                            - RESUBMIT_REQUESTED
+                            - RESUBMITTED
+                            - APPROVED
+                          actor:
+                            $ref: '#/components/schemas/UserRef'
+                          at:
+                            $ref: '#/components/schemas/Timestamp'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /submissions/{submissionId}/file:
+    get:
+      operationId: downloadSubmissionFile
+      tags:
+      - 제출 요청
+      - 조직별 현황
+      - 제출 이력
+      summary: REQ-07 제출 엑셀 다운로드
+      x-fr:
+      - FR-YEAR-003
+      - FR-MONTH-003
+      - FR-ARCH-002
+      x-tables:
+      - stored_object
+      parameters:
+      - $ref: '#/components/parameters/SubmissionId'
+      responses:
+        '200':
+          $ref: '#/components/responses/FileStream'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      description: 권한을 확인한 뒤 backend가 S3에서 원본을 읽어 그대로 내려준다.
+  /submissions/{submissionId}/diagnostics:
+    get:
+      operationId: getSubmissionDiagnostics
+      tags:
+      - 업로드·검증
+      summary: UP-05 검증 결과 · 수정 필요 표
+      description: 필수 시트·헤더, 조직·기간·코드 일치, 필수 금액 누락·형식, 중복, 상세·답안지 합계 불일치를 원본 위치와 수정 안내로 보여 준다.
+      x-fr:
+      - FR-UPLOAD-006
+      x-tables:
+      - parsing_job
+      - submission_validation
+      parameters:
+      - $ref: '#/components/parameters/SubmissionId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  file:
+                    $ref: '#/components/schemas/FileRef'
+                  errorCount:
+                    type: integer
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Diagnostic'
+              example:
+                file:
+                  name: D100_2026-11.xlsx
+                errorCount: 1
+                items:
+                - sourceCell: 손익제출!N40
+                  item: 설비 임차료
+                  rule: 금액 누락
+                  guide: 필수 셀에 금액을 입력해 주세요.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`PARSING_NOT_READY` 파싱이 끝나지 않음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /submissions/{submissionId}/parsing-retries:
+    post:
+      operationId: retryParsing
+      tags:
+      - 업로드·검증
+      summary: UP-06 같은 파일로 파싱 재시도
+      x-fr:
+      - FR-UPLOAD-005
+      x-tables:
+      - parsing_job
+      parameters:
+      - $ref: '#/components/parameters/SubmissionId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StateTokenInput'
+      responses:
+        '202':
+          description: 재시도 등록
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParsingJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`PARSING_RETRY_NOT_ALLOWED` 실패 상태가 아님 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /submissions/{submissionId}/validation:
+    post:
+      operationId: validateSubmission
+      tags:
+      - 소명·제출
+      summary: PROOF-01 비교 기준 대비 변경 감지·소명 대상 생성
+      description: '기준 버전: 월간 첫 제출은 전월 승인 제출본, 재제출은 반려된 제출본, 연간 계획 첫 제출은 없음(소명 없이 제출 확인으로 이동).
+
+        값이 그대로인 셀의 지난 승인 소명은 이어받는다.
+
+        '
+      x-fr:
+      - FR-PROOF-001
+      - FR-PROOF-007
+      - FR-RESUB-005
+      x-tables:
+      - review_item
+      - gap_comparison
+      - review_explanation
+      - submission_validation
+      parameters:
+      - $ref: '#/components/parameters/SubmissionId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StateTokenInput'
+      responses:
+        '200':
+          description: 검증 결과
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  baseline:
+                    $ref: '#/components/schemas/Baseline'
+                  progress:
+                    type: object
+                    properties:
+                      answered:
+                        type: integer
+                      required:
+                        type: integer
+                  canSubmit:
+                    type: boolean
+                  stateToken:
+                    $ref: '#/components/schemas/StateToken'
+              example:
+                baseline:
+                  kind: PREV_MONTH_APPROVED
+                  submissionId: '118'
+                  label: '2026-10-02'
+                progress:
+                  answered: 0
+                  required: 4
+                canSubmit: false
+                stateToken: st_77
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`PARSING_NOT_READY` 파싱 미완료, `VALIDATION_NOT_ALLOWED` DRAFT가 아님, `COMPARISON_SOURCE_UNAVAILABLE` 기준 버전 데이터 없음 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /review-items/{reviewItemId}/answer:
+    put:
+      operationId: putExplanationAnswer
+      tags:
+      - 소명·제출
+      summary: PROOF-04 이번 소명 작성·수정(제출 전까지)
+      x-fr:
+      - FR-PROOF-005
+      x-tables:
+      - review_explanation
+      parameters:
+      - $ref: '#/components/parameters/ReviewItemId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+              - $ref: '#/components/schemas/StateTokenInput'
+              - type: object
+                required:
+                - answer
+                properties:
+                  answer:
+                    type: string
+                    minLength: 1
+                    maxLength: 4000
+                    description: 공백만으로는 안 됨
+            example:
+              answer: 11월 신규 계약 2건에 따른 서비스 매출을 반영했습니다.
+              expectedStateToken: st_77
+      responses:
+        '200':
+          description: 저장됨
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  answerState:
+                    type: string
+                    enum:
+                    - WRITTEN
+                  progress:
+                    type: object
+                    properties:
+                      answered:
+                        type: integer
+                      required:
+                        type: integer
+                  stateToken:
+                    $ref: '#/components/schemas/StateToken'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`EXPLANATION_LOCKED` 제출 후에는 수정 불가, `REVIEW_CONTEXT_CHANGED` 재검증으로 대상이 바뀜 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /review-items/{reviewItemId}/attachments:
+    get:
+      operationId: listExplanationAttachments
+      tags:
+      - 소명·제출
+      summary: PROOF-06 소명 첨부 목록
+      x-fr:
+      - FR-PROOF-005
+      - FR-MONTH-011
+      x-tables:
+      - review_attachment
+      parameters:
+      - $ref: '#/components/parameters/ReviewItemId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Attachment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: addExplanationAttachment
+      tags:
+      - 소명·제출
+      summary: PROOF-05 소명 파일 첨부
+      x-fr:
+      - FR-PROOF-005
+      x-tables:
+      - review_attachment
+      - stored_object
+      parameters:
+      - $ref: '#/components/parameters/ReviewItemId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              - expectedStateToken
+              properties:
+                file:
+                  type: string
+                  format: binary
+                expectedStateToken:
+                  $ref: '#/components/schemas/StateToken'
+            encoding:
+              file:
+                contentType: application/octet-stream
+      responses:
+        '201':
+          description: 첨부됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        '400':
+          description: '`INVALID_ATTACHMENT` 빈 파일·파일 개수 오류 + 공통 400'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`EXPLANATION_LOCKED` 제출 후 첨부 불가 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedFile'
+      description: 파일을 multipart로 받아 검사(1~16MiB) 후 S3 `drafts/attachments/`에 저장하고 현재 소명 회차에 연결한다. 제출하면 `uploads/`로 옮겨 보존한다.
+  /review-items/{reviewItemId}/attachments/{attachmentId}/file:
+    get:
+      operationId: downloadExplanationAttachment
+      tags:
+      - 소명·제출
+      summary: PROOF-06 소명 첨부 다운로드
+      x-fr:
+      - FR-PROOF-005
+      - FR-MONTH-011
+      x-tables:
+      - review_attachment
+      - stored_object
+      parameters:
+      - $ref: '#/components/parameters/ReviewItemId'
+      - name: attachmentId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      responses:
+        '200':
+          $ref: '#/components/responses/FileStream'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: '`ATTACHMENT_NOT_FOUND`'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      description: 권한을 확인한 뒤 backend가 S3에서 원본을 읽어 그대로 내려준다.
+  /submissions/{submissionId}/submit-preview:
+    get:
+      operationId: getSubmitPreview
+      tags:
+      - 소명·제출
+      summary: PROOF-07 제출 내용 확인 화면
+      x-fr:
+      - FR-PROOF-008
+      - FR-PROOF-009
+      - FR-RESUB-007
+      x-tables:
+      - submission
+      - review_item
+      - review_explanation
+      parameters:
+      - $ref: '#/components/parameters/SubmissionId'
+      - $ref: '#/components/parameters/Unit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  file:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        example: D100_2027-PLAN.xlsx
+                      savedAs:
+                        type: string
+                        example: D100_2027-PLAN-01.xlsx
+                  expectedLabel:
+                    type: string
+                    example: '2026-11-01'
+                  baseline:
+                    $ref: '#/components/schemas/Baseline'
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          example: 네트워크 서비스 매출
+                        month:
+                          type: integer
+                        scenario:
+                          $ref: '#/components/schemas/Scenario'
+                        amount:
+                          $ref: '#/components/schemas/Money'
+                        answered:
+                          type: boolean
+                  canSubmit:
+                    type: boolean
+                  stateToken:
+                    $ref: '#/components/schemas/StateToken'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /submissions/{submissionId}/submit:
+    post:
+      operationId: submitSubmission
+      tags:
+      - 소명·제출
+      summary: PROOF-08 제출하기 → 새 제출본 '검토 대기'
+      description: 모든 소명 대상에 소명이 있어야 제출된다. 같은 요청·조직의 검토 대기 제출본은 하나만 허용. 제출이 확정되면 원본 엑셀과 소명 첨부를 S3 `drafts/`에서 `uploads/`로 복사해 영구 보존한다(커밋 후 복사, 복사 실패 시 제출 실패).
+      x-fr:
+      - FR-PROOF-006
+      - FR-PROOF-010
+      - FR-RESUB-007
+      - FR-YEAR-003
+      x-tables:
+      - submission
+      - gap_threshold_guard
+      - notification
+      parameters:
+      - $ref: '#/components/parameters/SubmissionId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+              - $ref: '#/components/schemas/StateTokenInput'
+              - type: object
+                properties:
+                  replyMessage:
+                    type:
+                    - string
+                    - 'null'
+                    maxLength: 4000
+                    description: 경영기획팀에 보낼 회신 메시지
+            example:
+              replyMessage: 11월 신규 계약 반영분입니다.
+              expectedStateToken: st_77
+      responses:
+        '200':
+          description: 제출 완료
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmissionSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`REQUEST_CLOSED` 마감된 요청, `PENDING_ALREADY_EXISTS` 검토 대기 제출본 있음, `VALIDATION_REQUIRED` 검증 전, `REVIEW_CONTEXT_CHANGED` 기준이 바뀌어 재검증 필요 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: '`ANSWER_REQUIRED` 미작성 소명(details.reviewItemIds), `VALIDATION_FAILED` 검증 오류가 남아 있음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: about:blank
+                title: Unprocessable Content
+                status: 422
+                detail: 소명을 작성하지 않은 항목이 있습니다.
+                instance: /api/v1/submissions/12/submit
+                code: ANSWER_REQUIRED
+                requestId: 8f3c2a1e
+                errors:
+                - field: reviewItemIds[0]
+                  code: '881'
+  /report/pdf-jobs:
+    post:
+      operationId: createPdfJob
+      tags:
+      - AI 보고서
+      summary: RPT-01 PDF 분석 요청(비전 LLM)
+      description: PDF를 multipart로 받아 S3 `uploads/pdf/`에 저장하고 RabbitMQ `pdf.jobs`로 report-ai에 넘긴다. 원본 숫자는 가져오지 않는다. 틀로 저장되지 않은 분석의 PDF·결과는 30일 뒤 정리한다.
+      x-fr:
+      - FR-RPT-001
+      x-tables:
+      - pdf_job
+      - stored_object
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: .pdf 파일
+                maskNumbers:
+                  type: boolean
+                  default: true
+                  description: AI에 보내기 전 숫자 가리기
+            encoding:
+              file:
+                contentType: application/octet-stream
+      responses:
+        '202':
+          description: 분석 대기
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PdfJob'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/CommandConflict'
+        '503':
+          description: '`PROCESSING_UNAVAILABLE` 분석 큐를 받을 수 없음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedFile'
+  /report/pdf-jobs/{jobId}:
+    get:
+      operationId: getPdfJob
+      tags:
+      - AI 보고서
+      summary: RPT-02 분석 상태·추출 블록(구성 확인용)
+      description: 폴링(2초 권장). 실패하면 직접 만들기(FR-RPT-011)로 안내.
+      x-fr:
+      - FR-RPT-001
+      - FR-RPT-010
+      - FR-RPT-011
+      x-tables:
+      - pdf_job
+      parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PdfJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /report/templates:
+    get:
+      operationId: listTemplates
+      tags:
+      - AI 보고서
+      summary: RPT-03 내 틀 목록
+      x-fr:
+      - FR-RPT-003
+      x-tables:
+      - report_template
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Template'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createTemplate
+      tags:
+      - AI 보고서
+      summary: RPT-04 틀 저장(새 틀, 버전 1)
+      description: AI 추출을 사람이 확정한 틀(HITL) 또는 직접 만든 틀을 저장.
+      x-fr:
+      - FR-RPT-002
+      - FR-RPT-010
+      - FR-RPT-011
+      x-tables:
+      - report_template
+      - report_template_version
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - name
+              - definition
+              properties:
+                name:
+                  type: string
+                  maxLength: 200
+                definition:
+                  $ref: '#/components/schemas/TemplateDefinition'
+                sourcePdfJobId:
+                  oneOf:
+                  - $ref: '#/components/schemas/Id'
+                  - type: 'null'
+      responses:
+        '201':
+          description: 저장됨
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/CommandConflict'
+        '422':
+          description: '`INVALID_TEMPLATE` 블록 정의 오류(허용하지 않는 SQL, 없는 지표 등)'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /report/templates/{templateId}:
+    get:
+      operationId: getTemplate
+      tags:
+      - AI 보고서
+      summary: RPT-06 틀 불러오기(구성 확인 건너뜀)
+      x-fr:
+      - FR-RPT-003
+      x-tables:
+      - report_template_version
+      parameters:
+      - $ref: '#/components/parameters/TemplateId'
+      - name: version
+        in: query
+        description: 기본 최신
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /report/templates/{templateId}/versions:
+    post:
+      operationId: createTemplateVersion
+      tags:
+      - AI 보고서
+      summary: RPT-05 틀 새 버전 저장(이전 버전 유지)
+      x-fr:
+      - FR-RPT-002
+      - FR-RPT-008
+      x-tables:
+      - report_template_version
+      parameters:
+      - $ref: '#/components/parameters/TemplateId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - definition
+              - expectedVersion
+              properties:
+                definition:
+                  $ref: '#/components/schemas/TemplateDefinition'
+                expectedVersion:
+                  type: integer
+                  minimum: 1
+                  description: 지금 보고 있는 최신 버전. 다르면 409
+      responses:
+        '201':
+          description: 새 버전
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`REPORT_REVISION_CHANGED` 다른 사용자가 먼저 새 버전을 저장함 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: '`INVALID_TEMPLATE`'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /report/periods:
+    get:
+      operationId: listReportPeriods
+      tags:
+      - AI 보고서
+      summary: RPT-07 기준 월 선택지와 월별 상태
+      x-fr:
+      - FR-RPT-004
+      x-tables:
+      - master_version
+      - submission
+      parameters:
+      - $ref: '#/components/parameters/Year'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  default:
+                    type: object
+                    description: 가장 최근 확정 월
+                    properties:
+                      year:
+                        type: integer
+                      month:
+                        type: integer
+                  months:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        month:
+                          type: integer
+                        state:
+                          $ref: '#/components/schemas/DataStatus'
+                        masterId:
+                          oneOf:
+                          - $ref: '#/components/schemas/Id'
+                          - type: 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /report/metrics:
+    get:
+      operationId: listMetrics
+      tags:
+      - AI 보고서
+      summary: RPT-08 지표 사전 목록
+      x-fr:
+      - FR-RPT-005
+      x-tables:
+      - metric
+      parameters:
+      - name: q
+        in: query
+        schema:
+          type: string
+          maxLength: 100
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/PageInfo'
+                - type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Metric'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createMetric
+      tags:
+      - AI 보고서
+      summary: RPT-09 자주 쓰는 SQL을 지표 사전으로 등록
+      x-fr:
+      - FR-RPT-006
+      x-tables:
+      - metric
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - code
+              - name
+              - sqlText
+              properties:
+                code:
+                  type: string
+                  pattern: ^[A-Z][A-Z0-9_]{1,79}$
+                name:
+                  type: string
+                  maxLength: 200
+                description:
+                  type:
+                  - string
+                  - 'null'
+                sqlText:
+                  type: string
+                  maxLength: 4000
+                  description: 보고서용 뷰만 읽는 SELECT 한 문장
+      responses:
+        '201':
+          description: 등록됨
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Metric'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: '`METRIC_CODE_EXISTS` 같은 코드 존재 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: '`SQL_NOT_ALLOWED` SELECT 외 구문·허용하지 않은 뷰·함수'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /report/data:
+    post:
+      operationId: queryReportData
+      tags:
+      - AI 보고서
+      summary: RPT-10 블록 데이터 조회(지표 또는 확정 SQL, AI 미사용)
+      description: 조회성 POST(Idempotency-Key 불필요). db-mcp 읽기 전용 계정으로 보고서용 뷰만 조회하며 행 수·실행 시간 상한이 있다.
+      x-fr:
+      - FR-RPT-004
+      - FR-RPT-005
+      x-tables:
+      - 보고서용 뷰
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - period
+              properties:
+                metricId:
+                  oneOf:
+                  - $ref: '#/components/schemas/Id'
+                  - type: 'null'
+                sql:
+                  type:
+                  - string
+                  - 'null'
+                  description: metricId가 없을 때 블록에 저장된 SQL
+                period:
+                  type: object
+                  required:
+                  - year
+                  - month
+                  properties:
+                    year:
+                      type: integer
+                    month:
+                      type: integer
+                    rangeMonths:
+                      type: integer
+                scope:
+                  type: string
+                  enum:
+                  - COMPANY
+                  - ORGANIZATION
+                  default: COMPANY
+                organizationId:
+                  oneOf:
+                  - $ref: '#/components/schemas/Id'
+                  - type: 'null'
+                comparison:
+                  type: string
+                  enum:
+                  - NONE
+                  - PLAN
+                  - PREV_ESTIMATE
+                  - PREV_YEAR
+                  default: NONE
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableData'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: '`SQL_NOT_ALLOWED`, `QUERY_LIMIT_EXCEEDED` 행 수·실행 시간 상한 초과'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /report/nl-query:
+    post:
+      operationId: naturalLanguageQuery
+      tags:
+      - AI 보고서
+      summary: RPT-11 자연어 질의 → SQL 생성·미리보기(text2SQL)
+      description: AI가 만든 SQL과 결과를 미리 보여 주고, 사용자가 적용해야 블록에 반영한다. 데이터 값은 AI에 보내지 않는다.
+      x-fr:
+      - FR-RPT-006
+      x-tables:
+      - 보고서용 뷰
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - question
+              - baseYear
+              - baseMonth
+              properties:
+                question:
+                  type: string
+                  maxLength: 1000
+                baseYear:
+                  type: integer
+                baseMonth:
+                  type: integer
+                  minimum: 1
+                  maximum: 12
+            example:
+              question: 10월 사업부별 영업이익 계획 대비
+              baseYear: 2026
+              baseMonth: 10
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                    - OK
+                    - CLARIFY
+                    - UNKNOWN
+                    description: 성공 / 되묻기 필요 / 조회 불가
+                  sql:
+                    type:
+                    - string
+                    - 'null'
+                  explanation:
+                    type:
+                    - string
+                    - 'null'
+                  clarifyQuestion:
+                    type:
+                    - string
+                    - 'null'
+                  preview:
+                    $ref: '#/components/schemas/TableData'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          description: '`AI_DAILY_LIMIT` 하루 AI 호출 상한 초과'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: '`PROCESSING_UNAVAILABLE` AI 서비스 일시 불가'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /report/explanation-categories:
+    get:
+      operationId: listExplanationCategories
+      tags:
+      - AI 보고서
+      summary: RPT-12 소명 사유 유형 분류표
+      x-fr:
+      - FR-RPT-007
+      x-tables:
+      - explanation_category
+      parameters:
+      - name: tableVersion
+        in: query
+        description: 기본 최신
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tableVersion:
+                    type: integer
+                    example: 3
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          $ref: '#/components/schemas/Id'
+                        code:
+                          type: integer
+                        name:
+                          type: string
+              example:
+                tableVersion: 3
+                items:
+                - id: '1'
+                  code: 1
+                  name: 월정액 추정 Gap
+                - id: '2'
+                  code: 2
+                  name: 일시적/비경상 요인
+                - id: '3'
+                  code: 3
+                  name: 이연 효과
+                - id: '4'
+                  code: 4
+                  name: 일시적 효과
+                - id: '5'
+                  code: 5
+                  name: 기타 과추정 등
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /report/explanations:
+    get:
+      operationId: listReportExplanations
+      tags:
+      - AI 보고서
+      summary: RPT-13 Gap 설명 블록용 승인 소명 카드 + 제안 분류
+      description: 금액은 소명이 달린 검토 항목의 Gap 금액을 코드가 계산. 같은 조직·항목 소명은 지난달 분류로 미리 채움.
+      x-fr:
+      - FR-RPT-007
+      x-tables:
+      - review_explanation
+      - explanation_classification
+      - gap_comparison
+      parameters:
+      - $ref: '#/components/parameters/Year'
+      - $ref: '#/components/parameters/Month'
+        required: true
+      - name: comparison
+        in: query
+        required: true
+        schema:
+          $ref: '#/components/schemas/Comparison'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  gapTotal:
+                    $ref: '#/components/schemas/Money'
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        explanationId:
+                          $ref: '#/components/schemas/Id'
+                        organization:
+                          $ref: '#/components/schemas/OrganizationRef'
+                        item:
+                          type: string
+                        gapAmount:
+                          $ref: '#/components/schemas/Money'
+                        answer:
+                          type: string
+                        categoryId:
+                          oneOf:
+                          - $ref: '#/components/schemas/Id'
+                          - type: 'null'
+                          description: 이미 분류했으면 값
+                        suggestedCategoryId:
+                          oneOf:
+                          - $ref: '#/components/schemas/Id'
+                          - type: 'null'
+                        suggestionSource:
+                          type:
+                          - string
+                          - 'null'
+                          enum:
+                          - RULE
+                          - LAST_MONTH
+                          - null
+                  reviewing:
+                    type: array
+                    description: 아직 승인 전이라 분류할 수 없는 소명
+                    items:
+                      type: object
+                      properties:
+                        organization:
+                          $ref: '#/components/schemas/OrganizationRef'
+                        item:
+                          type: string
+                        gapAmount:
+                          $ref: '#/components/schemas/Money'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /report/explanations/{explanationId}/classification:
+    put:
+      operationId: classifyExplanation
+      tags:
+      - AI 보고서
+      summary: RPT-14 소명 카드를 분류함에 배치(빼려면 categoryId null)
+      x-fr:
+      - FR-RPT-007
+      x-tables:
+      - explanation_classification
+      parameters:
+      - name: explanationId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - categoryId
+              properties:
+                categoryId:
+                  oneOf:
+                  - $ref: '#/components/schemas/Id'
+                  - type: 'null'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  categoryTotals:
+                    type: object
+                    additionalProperties:
+                      $ref: '#/components/schemas/Money'
+                  classifiedTotal:
+                    $ref: '#/components/schemas/Money'
+                  gapTotal:
+                    $ref: '#/components/schemas/Money'
+                  matchesGapTotal:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`EXPLANATION_NOT_ACCEPTED` 승인되지 않은 소명 + 명령 공통 409'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /report/ai/edit:
+    post:
+      operationId: proposeAiEdit
+      tags:
+      - AI 보고서
+      summary: RPT-15 대화로 자료 편집 → 변경안
+      description: AI는 블록 추가·삭제·이동·글꼴 변경 같은 정해진 조작만 제안하고 숫자는 바꾸지 않는다. 적용·되돌리기는 프론트에서 하고, 저장은 RPT-05.
+      x-fr:
+      - FR-RPT-012
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - definition
+              - instruction
+              properties:
+                definition:
+                  $ref: '#/components/schemas/TemplateDefinition'
+                instruction:
+                  type: string
+                  maxLength: 1000
+            example:
+              definition:
+                blocks: []
+              instruction: 실적 표 아래 비용 상세 넣고 제목 22pt로 바꿔줘
+      responses:
+        '200':
+          description: 변경안
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  proposals:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        op:
+                          type: string
+                          enum:
+                          - ADD_BLOCK
+                          - REMOVE_BLOCK
+                          - MOVE_BLOCK
+                          - SET_FONT
+                          - SET_SIZE
+                        target:
+                          type: string
+                        description:
+                          type: string
+                          example: 실적 표 아래 '비용 상세' 블록 추가
+                        patch:
+                          type: object
+                          additionalProperties: true
+                  definitionPreview:
+                    $ref: '#/components/schemas/TemplateDefinition'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          description: '`AI_DAILY_LIMIT` 하루 AI 호출 상한 초과'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: '`PROCESSING_UNAVAILABLE`'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /report/export:
+    post:
+      operationId: exportReport
+      tags:
+      - AI 보고서
+      summary: RPT-16 자료 내보내기(1개씩, 저장하지 않음)
+      description: 서버에 설치된 글꼴만 사용(PDF 호환). 잠정 월이면 '잠정' 표시를 붙인다.
+      x-fr:
+      - FR-RPT-008
+      - FR-RPT-009
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - templateId
+              - version
+              - period
+              - format
+              properties:
+                templateId:
+                  $ref: '#/components/schemas/Id'
+                version:
+                  type: integer
+                period:
+                  type: object
+                  required:
+                  - year
+                  - month
+                  properties:
+                    year:
+                      type: integer
+                    month:
+                      type: integer
+                blockId:
+                  type:
+                  - string
+                  - 'null'
+                  description: 블록 하나만 내보낼 때
+                format:
+                  type: string
+                  enum:
+                  - PDF
+                  - PPTX
+                  - XLSX
+                  - PNG
+      responses:
+        '200':
+          $ref: '#/components/responses/FileStream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: '`PROCESSING_UNAVAILABLE` 렌더링 서비스 일시 불가'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /submission-template/file:
+    get:
+      operationId: downloadRequestTemplate
+      tags:
+      - 업로드·검증
+      summary: UP-01 제출 양식 다운로드(연간·월간 공통)
+      x-fr:
+      - FR-UPLOAD-002
+      x-tables: []
+      responses:
+        '200':
+          $ref: '#/components/responses/FileStream'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`TEMPLATE_NOT_FOUND` 서버에 양식 파일이 없음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      description: 연간 계획과 월간 시트가 같은 양식이라 파일 하나를 내려준다. 로그인한 사용자 누구나 받을 수 있다. 파일이 준비되지 않았으면 404.

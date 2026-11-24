@@ -1,12 +1,53 @@
 spring:
   application:
     name: backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/skala}
+    username: ${DB_USERNAME:skala}
+    password: ${DB_PASSWORD:}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    out-of-order: true
+  servlet:
+    multipart:
+      max-file-size: 30MB
+      max-request-size: 31MB
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
 
 server:
   port: 8080
+  error:
+    include-message: never
+    include-stacktrace: never
 
 management:
   endpoints:
     web:
       exposure:
         include: health
+  endpoint:
+    health:
+      # 쿠버네티스 프로브용 /actuator/health/readiness·liveness
+      probes:
+        enabled: true
+
+app:
+  # 제출 양식(연간·월간 공통). 엑셀은 저장소에 커밋하지 않으므로 배포 환경에 파일을 둔다.
+  submission-template:
+    location: ${SUBMISSION_TEMPLATE_LOCATION:file:./templates/submission-template.xlsx}
+    filename: 제출양식.xlsx
+  # 기한 경과 알림 확인 주기(KST cron). "-"이면 끈다.
+  notification:
+    overdue-scan:
+      cron: ${NOTIFICATION_OVERDUE_SCAN_CRON:0 */5 * * * *}

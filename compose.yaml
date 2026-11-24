@@ -1,0 +1,85 @@
+name: skala-local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?로컬 .env에 POSTGRES_DB가 필요합니다}
+      POSTGRES_USER: ${POSTGRES_USER:?로컬 .env에 POSTGRES_USER가 필요합니다}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?로컬 .env에 POSTGRES_PASSWORD가 필요합니다}
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      SPRING_PROFILES_ACTIVE: local,demo
+      SERVER_ADDRESS: 0.0.0.0
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:?로컬 .env에 POSTGRES_DB가 필요합니다}
+      DB_USERNAME: ${POSTGRES_USER:?로컬 .env에 POSTGRES_USER가 필요합니다}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?로컬 .env에 POSTGRES_PASSWORD가 필요합니다}
+      LOCAL_PLANNER_EMAIL: ${LOCAL_PLANNER_EMAIL:?로컬 .env에 LOCAL_PLANNER_EMAIL이 필요합니다}
+      LOCAL_PLANNER_TOKEN: ${LOCAL_PLANNER_TOKEN:?로컬 .env에 LOCAL_PLANNER_TOKEN이 필요합니다}
+      LOCAL_ORGANIZATION_EMAIL: ${LOCAL_ORGANIZATION_EMAIL:?로컬 .env에 LOCAL_ORGANIZATION_EMAIL이 필요합니다}
+      LOCAL_ORGANIZATION_TOKEN: ${LOCAL_ORGANIZATION_TOKEN:?로컬 .env에 LOCAL_ORGANIZATION_TOKEN이 필요합니다}
+      APP_DEMO_FRONTEND_ORIGIN: ${APP_DEMO_FRONTEND_ORIGIN:?로컬 .env에 APP_DEMO_FRONTEND_ORIGIN이 필요합니다}
+      PARSER_PYTHON: python3
+      PARSER_SOURCE_DIRECTORY: /app/parser/src
+      PYTHONDONTWRITEBYTECODE: "1"
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "python3", "-B", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/actuator/health', timeout=3).close()"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 30s
+    read_only: true
+    mem_limit: 1536m
+    cpus: 2.0
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "127.0.0.1:5173:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=32m
+    init: true
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

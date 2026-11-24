@@ -1,0 +1,20 @@
+# 클러스터 배포용(SPRING_PROFILES_ACTIVE=prod). DB 접속 값은 플랫폼 Secret rds-credentials의
+# SPRING_DATASOURCE_URL·USERNAME·PASSWORD 환경변수가 채운다. 메일은 SPRING_MAIL_* 가 있으면 SMTP로 보낸다.
+spring:
+  datasource:
+    hikari:
+      # 팀 계정 동시 연결 50개 제한(인스턴스 공용)
+      maximum-pool-size: 5
+      minimum-idle: 1
+
+server:
+  # Ingress(HTTPS) 뒤에서 원래 프로토콜·주소를 쓴다.
+  forward-headers-strategy: framework
+  shutdown: graceful
+
+app:
+  storage:
+    # PVC(/data)에 둔다. S3 연결 전까지 파드가 바뀌어도 원본이 남도록
+    local-root: /data/storage
+  submission-template:
+    location: ${SUBMISSION_TEMPLATE_LOCATION:file:/data/templates/submission-template.xlsx}

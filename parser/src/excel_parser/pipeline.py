@@ -177,7 +177,7 @@ def run_parser(
         OSError: 원본 탐색 또는 결과 기록에 실패한 경우.
     Side Effects:
         원본을 읽기만 한다. output_dir 지정 시에만 새로운 결과 파일을 생성한다.
-        기존 결과를 덮어쓰지 않으며 Data 내부에는 쓰지 않는다.
+        기존 결과를 덮어쓰지 않으며 입력 디렉토리(paths.input_dir) 안에는 쓰지 않는다.
     """
     paths = ProjectPaths.load(root)
     files = collect_inputs(inputs, recursive=recursive)
@@ -216,7 +216,7 @@ def run_parser(
     with ExitStack() as stack:
         if output_dir is not None:
             output_dir = Path(output_dir).resolve()
-            protected = (paths.root / "Data").resolve()
+            protected = paths.input_dir.resolve()
             if (
                 output_dir == paths.output_dir
                 or not output_dir.is_relative_to(paths.output_dir)

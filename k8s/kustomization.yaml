@@ -1,0 +1,19 @@
+# 배포: 캠퍼스 네트워크에서 main 기준으로 scripts/deploy.sh
+# 플랫폼이 미리 만들어 둔 것: Secret rds-credentials·harbor-cred·team-tls, ConfigMap s3-config, ServiceAccount s3-access
+# 팀이 kubectl로 직접 만드는 것(Git에 넣지 않음): Secret app-secrets
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: p1-2
+labels:
+  - pairs: { app.kubernetes.io/part-of: pl-management }
+resources:
+  - backend.yaml
+  - ai.yaml
+  - frontend.yaml
+  - ingress.yaml
+images:
+  # 자리표시. scripts/deploy.sh가 임시 복사본에서 main 커밋 해시(또는 지금 배포된 태그)로 바꿔 적용한다.
+  # 이 파일은 배포할 때 바뀌지 않는다(배포 기록은 main 커밋 해시 = 이미지 태그).
+  - { name: skala-registry.skala-ai.com/p1-2/backend, newTag: "main" }
+  - { name: skala-registry.skala-ai.com/p1-2/ai, newTag: "main" }
+  - { name: skala-registry.skala-ai.com/p1-2/frontend, newTag: "main" }

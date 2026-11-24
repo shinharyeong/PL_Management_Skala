@@ -138,6 +138,28 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._run_memory(output_dir=PROJECT_ROOT / "Data/forbidden")
 
+    def test_output_inside_configured_input_dir_is_rejected(self) -> None:
+        """설정된 입력 폴더(input_dir) 안의 결과 생성은 'Data' 이름과 상관없이 거부한다(#6).
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 입력 폴더 안 쓰기를 허용한 경우.
+        Side Effects:
+            설정 객체만 바꾸며 디스크에 쓰지 않는다.
+        """
+        from excel_parser.paths import ProjectPaths
+
+        real = ProjectPaths.load(PROJECT_ROOT)
+        moved = ProjectPaths(root=real.root, input_dir=real.output_dir / "inputs",
+                             output_dir=real.output_dir, logs_dir=real.logs_dir)
+        with patch("excel_parser.pipeline.ProjectPaths.load", return_value=moved), \
+                patch.object(Path, "mkdir", side_effect=AssertionError("쓰기 시도")):
+            with self.assertRaises(ValueError):
+                self._run_memory(output_dir=moved.input_dir / "run-1")
+
     def test_read_only_run_never_opens_output(self) -> None:
         """기본 실행은 실제 추출·매핑·검증을 하되 결과 파일을 열지 않는다.
 
@@ -197,7 +219,7 @@ class PipelineTests(unittest.TestCase):
         result = self._run_memory(
             inputs=[
                 PROJECT_ROOT / "__memory__/supported.xlsx",
-                PROJECT_ROOT / "__memory__/unsupported.xlsb",
+                PROJECT_ROOT / "__memory__/unsupported.xls",
             ]
         )
         self.assertEqual(result["input_file_count"], 2)
