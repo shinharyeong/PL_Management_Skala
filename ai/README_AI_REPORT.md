@@ -70,3 +70,23 @@ AI_PDF_DEV=1 AI_VLM_MODEL=gpt-4o AI_TIMEOUT_SECONDS=120 AI_DAILY_CALL_LIMIT=1000
 - `ai/demo/ai_report_studio.html`은 로컬 전용 폴더 `ai/preview_html/`(git-ignored)의 `pdf_structure.html` 사본입니다. 이후 수정은 원본 쪽에서 하고 사본을 갱신해야 합니다.
 - (3차) **숫자의 의미(슬롯 모델) 미구현**: 카드의 `▲ 3.1%` 같은 증감률·%p·건수, 원본 숫자 형식 유지, 비교 기준이 글자에 없는 증감 자리의 노란 표시는 아직 없음. 차트 축 의미·글자 없는 그림칸/막대 박스(도형을 VLM 에 전달)도 미구현. 이어서 할 일은 `docs/handoff_slot_model.md` 참고.
 - (3차) VLM 은 호출마다 다르게 묶을 수 있음(예: 카드 두 장을 한 블록으로). 박스 위치는 정확하지만 묶음이 틀리면 경고만 붙음.
+
+## 4차: 줄 쪼개기 + 박스 확인 루프 (2단계)
+- **자를 위치 후보**(`extract.mark_cuts`): 한 줄 안의 글자 사이 간격이 글자 크기의 1.5배(`CUT_GAP_EM`)보다 넓으면 후보. 위아래 3줄 이상 같은 자리에 이어지면 `v=1`(경계 단서일 뿐, 자동으로 자르지 않음). 표의 열 간격도 후보. AI 에는 후보 번호와 양옆 글자 앞부분(숫자는 `{수치}`)만 보내고 x 좌표는 보내지 않는다.
+- **줄 쪼개기**: 응답의 `splits:[{"line":"L7","cuts":[1]}]` → 조각 `L7a, L7b`. 없는 줄·없는 번호는 버리고 `split_invalid`, 조각이 어느 블록에도 없으면 `vlm_missed`. 조각 박스는 조각 글자 좌표로 코드가 계산.
+- **확인 루프**(`vlm.review_loop`): 박스 그림(번호 표시, 숫자 가림)을 AI 가 점검 → 문제 블록과 주변 블록의 줄·후보만 다시 질문 → 박스를 코드가 다시 만들고 검증. 재질문 상한 `AI_REVIEW_MAX_ROUNDS`(기본 2, 0=끔). 결과가 나빠지면(플래그 수 증가) 이전 결과 유지, 남은 문제는 `review_unresolved`(노랑). 키 없음·하루 한도·호출 실패면 루프 없이 끝난다.
+- 한계: 기존에도 응답 캐시는 없다(호출 기록·하루 한도만 있음). 점검은 쪽당 1~5회 호출이 더 든다. 실제 gpt-4o 끔/켬 비교는 OpenAI 조직 지출 한도 초과(429)로 못 돌렸다.
+
+## 5차: 블록 정리(`block_tidy`) — 코드만, AI 호출 없음
+- `build_blocks`(AI 경로)와 코드 규칙 경로 모두에서 한 번, 검증·확인 루프 앞에서 `tidy_blocks` 를 부른다. 도형(`extract.read_shapes`: 채움 사각형·선)과 줄 좌표만 쓴다. 규칙 7개를 순서대로: 차트 묶기 → 카드 쪼개기 → 표 머리 포함 → 나란한 제목 쪼개기 → 계층 목록 묶기 → 쪽 하단 각주 분리 → 잔 라벨 흡수.
+- 안전장치: 규칙을 적용한 뒤 "모든 글자 줄이 정확히 한 블록에 속한다"를 검사해 어긋나면 그 규칙은 되돌린다. 임계값 근처(±15%)는 바꾸지 않고 `tidy_uncertain` 만 남긴다. 적용한 블록에는 `tidy: ["tidy:규칙"]` 이 붙는다(화면 "코드 정리").
+- 한계: 임계값은 PDF 몇 개(사업부 브리핑·어려운1·2·신규1~5)로 정했다. 막대가 도형으로 그려진 차트만 묶는다(선 그래프·도넛은 못 묶음). 제목형 쪼개기는 본문보다 1.15배 큰 글자만 대상이라 본문 크기의 나란한 제목은 못 쪼갠다. 표 머리 병합은 위 칸이 아래 칸들에 걸친 모양으로만 읽는다.
+
+## 6차: 조회 DB 를 SQLite → PostgreSQL 로
+- 챗봇·값 채우기가 읽는 조회 DB(fact·gap·explanation·dim_version·dim_org, 뷰 v_op)를 PostgreSQL 로 옮겼다. 접속은 `AI_DATABASE_URL`, 스키마는 `AI_DB_SCHEMA`(기본 `ai`). 예전 `CHAT_DB_PATH`·`chat.db` 파일은 더 쓰지 않는다. `psycopg[binary]` 가 필요하다(`pip install -r requirements.txt`).
+- 구조: `chat/db.py` 가 SQLite 와 같은 모양(`con.execute(sql, ?·:이름)`, 이름·번호로 읽는 행, `with con:` 트랜잭션)의 얇은 어댑터를 주고, 읽기 연결은 `default_transaction_read_only=on` + `search_path` 고정이다. 합계(numeric)는 int/float 로 돌려준다.
+- `chat/sqlguard.py`: SQLite 의 authorizer 가 하던 일(허용 테이블·함수)을 문자열 허용 목록으로 대신하고, `pg_*`·`information_schema`·스키마 접두·`INTO`·`COPY`·`$$` 등을 막는다. 시간 상한은 `statement_timeout`. AI 프롬프트도 PostgreSQL 문법(GROUP BY 전부, 정수 나눗셈, 허용 함수)으로 바꿨다(`chat-sql-v3`, 이전 SQL 캐시는 자동으로 안 쓰임).
+- 데이터 묶음(`chat/datasets.py`)은 SQLite 파일 대신 스키마 `<활성>_set_<해시>` 로 저장하고, 선택하면 활성 스키마로 복사한다.
+- 기존 SQLite 데이터 이전: `AI_DATABASE_URL=… python tools/sqlite_to_postgres.py` (chat.db 와 sets/*.db 를 읽기만 하고 복사).
+- **운영 권고**: AI_DATABASE_URL 에는 조회 전용 계정을 써라. 예) `CREATE ROLE ai_ro LOGIN PASSWORD '…'; GRANT USAGE ON SCHEMA ai TO ai_ro; GRANT SELECT ON ALL TABLES IN SCHEMA ai TO ai_ro;` 적재(쓰기)는 별도 계정이어야 하는데, 지금은 한 URL 로 읽기·쓰기를 같이 한다(읽기 연결은 읽기 전용 세션이라 안전하지만 DB 권한으로 막는 것이 더 강하다). 한계: 쓰기·읽기 계정 분리(`AI_READONLY_DATABASE_URL`)는 아직 없다.
+- 테스트: `tests/conftest.py` 가 `AI_TEST_DATABASE_URL`(없으면 PATH·Homebrew 의 `initdb` 로 임시 서버)을 쓰고 테스트마다 고유 스키마를 만들었다 지운다. PostgreSQL 이 없으면 DB 가 필요한 테스트는 건너뛴다.
