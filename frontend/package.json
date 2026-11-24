@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "dev:prototype": "vite --host 127.0.0.1 --open /prototype.html",
-    "test:prototype": "node --test src/prototype/domain.test.js",
+    "test:prototype": "node --test src/prototype/*.test.js",
     "check:prototype": "node scripts/check-prototype-views.mjs",
     "build": "vite build",
     "preview": "vite preview"

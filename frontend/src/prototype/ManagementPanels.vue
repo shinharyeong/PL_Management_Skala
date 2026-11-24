@@ -6,17 +6,18 @@ const annualDemo = reactive({
   requested: false,
   deadline: '2026-11-25T18:00',
   rows: [
-    { id: 'F1000', name: '미디어사업부', person: '박미디 매니저', email: 'media@sktelecom.com', status: '제출 완료', reply: true, accepted: false },
-    { id: 'D100', name: '네트워크인프라부문', person: '최인프 매니저', email: 'infra@sktelecom.com', status: '제출 완료', reply: true, accepted: false },
-    { id: 'F1300', name: '엔터프라이즈사업부', person: '정엔터 매니저', email: 'ent@sktelecom.com', status: '기한 경과', reply: false, accepted: false },
-    { id: 'F1400', name: '마케팅부문', person: '한마케 매니저', email: 'mkt@sktelecom.com', status: '회신 대기', reply: false, accepted: false },
+    { id: 'F1000', sourceCode: 'F20', name: '미디어사업부', person: '박미디 매니저', email: 'media@sktelecom.com', status: '제출 완료', reply: true, accepted: false },
+    { id: 'D100', sourceCode: 'F10', name: '네트워크인프라부문', person: '최인프 매니저', email: 'infra@sktelecom.com', status: '제출 완료', reply: true, accepted: false },
+    { id: 'F1300', sourceCode: 'F30', name: '플랫폼사업부', person: '이플랫 매니저', email: 'platform@sktelecom.com', status: '기한 경과', reply: false, accepted: false },
+    { id: 'F1400', sourceCode: 'F40', name: 'B2B사업부', person: '정비투 매니저', email: 'b2b@sktelecom.com', status: '회신 대기', reply: false, accepted: false },
   ],
 })
 </script>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { usePrototypeStore } from './store.js'
+import { seoulDeadline } from './domain.js'
 import './management.css'
 
 const props = defineProps({ page: { type: String, required: true } })
@@ -24,7 +25,10 @@ const emit = defineEmits(['navigate'])
 const store = usePrototypeStore()
 const notificationType = ref('전체')
 const unreadOnly = ref(false)
-const expandedOrganization = ref('F1000')
+const expandedOrganization = ref(null)
+watch([() => props.page, () => store.activeOrg], ([page, sourceCode]) => {
+  if (page === 'annual') expandedOrganization.value = annualDemo.rows.find(row => row.sourceCode === sourceCode)?.id || null
+}, { immediate: true })
 const comments = ref({})
 const formError = ref('')
 const feedback = ref('')
@@ -98,7 +102,10 @@ function rerequestAnnual(row) {
   feedback.value = `${row.name} 재요청 상태를 시연했습니다. 실제 메시지는 발송되지 않습니다.`
 }
 function sendAnnual() {
+  formError.value = ''
   if (!recipients.value.length || !deadline.value || !requestMessage.value.trim()) { formError.value = '요청 대상, 회신 기한과 요청 메시지를 확인해 주세요.'; return }
+  const dueAt = seoulDeadline(deadline.value)
+  if (!Number.isFinite(dueAt) || dueAt <= Date.now()) { formError.value = '현재 시각 이후의 회신 기한을 한국 시간(KST)으로 선택해 주세요.'; return }
   annualDemo.requested = true
   annualDemo.deadline = deadline.value
   feedback.value = `${recipients.value.length}개 조직의 연간 계획 요청을 시연합니다. 실제 발송은 하지 않습니다.`
@@ -106,11 +113,15 @@ function sendAnnual() {
 }
 function attachmentNotice() { feedback.value = '디자인 예시 첨부파일입니다. 원본 파일을 연결하면 내려받을 수 있습니다.' }
 function choosePdf(event) {
-  const file = event.target.files?.[0] || event.dataTransfer?.files?.[0]
+  const files = Array.from(event.target?.files || event.dataTransfer?.files || [])
+  const file = files?.[0]
+  if (event.target?.type === 'file') event.target.value = ''
   reportError.value = ''
   if (!file) return
+  reportFile.value = null
+  if (files.length !== 1) { reportError.value = 'PDF 파일 1개를 선택해 주세요.'; return }
   if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) { reportError.value = 'PDF 파일을 선택해 주세요.'; return }
-  if (file.size > 30 * 1024 * 1024) { reportError.value = '30MB 이하의 PDF 파일을 선택해 주세요.'; return }
+  if (!file.size || file.size > 50 * 1024 * 1024) { reportError.value = '비어 있지 않은 50MB 이하의 PDF 파일을 선택해 주세요.'; return }
   reportFile.value = file
 }
 function analyzePdf() { reportError.value = 'PDF 분석 서비스가 연결되지 않았습니다. 파일은 외부로 전송되지 않았으며 숫자 가림도 아직 실행되지 않았습니다. 자료 틀 직접 만들기를 이용할 수 있습니다.' }

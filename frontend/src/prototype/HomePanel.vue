@@ -85,14 +85,21 @@ const signed = (number, decimals = 2) => `${number < 0 ? '−' : '+'}${format(Ma
 <template>
   <div class="home-panel" data-figma-node="286:896">
     <header class="hp-header">
-      <p class="hp-eyebrow">경영기획팀 / 전사 손익 현황</p>
       <h1>전사 손익 현황</h1>
-      <p class="muted">선택한 기간의 손익과 계획 대비 변경 내역을 확인합니다.</p>
     </header>
+
+    <div class="hp-period-bar">
+      <div class="hp-period-switch" aria-label="손익 조회 기간"><button type="button" :class="{ active: period === 'month' }" :aria-pressed="period === 'month'" @click="period = 'month'">{{ month }}월 · 이번 달</button><button type="button" :class="{ active: period === 'year' }" :aria-pressed="period === 'year'" @click="period = 'year'">{{ year }}년 · 올해</button></div>
+      <span class="hp-caption muted">{{ dateRange }} · 단위 억원 · 디자인 예시</span>
+    </div>
+
+    <div class="hp-kpis">
+      <section v-for="kpi in kpis" :key="kpi.title" class="card hp-kpi"><p class="hp-kpi-label">{{ kpi.title }}<span>억원</span></p><strong>{{ kpi.value }}</strong><p class="hp-increase hp-caption">계획 대비 {{ kpi.change }}</p><p class="hp-caption" :class="`hp-${kpi.kind}`">{{ kpi.effect }}</p></section>
+    </div>
 
     <div class="hp-top-grid">
       <section class="card hp-close-card" aria-labelledby="close-title">
-        <div class="hp-section-heading"><h2 id="close-title">{{ month }}월 마감 진행</h2><span class="muted">D-day —</span></div>
+        <div class="hp-section-heading"><h2 id="close-title">{{ month }}월 마감 진행</h2><span class="badge">기한 미설정</span></div>
         <ol class="hp-close-steps">
           <li v-for="(step, i) in ['요청', '조직 제출', 'Gap 검토', '소명 완료', 'master 생성']" :key="step" :class="{ active: i === 1 }"><span>{{ i + 1 }} {{ step }}</span><b>—</b></li>
         </ol>
@@ -107,26 +114,17 @@ const signed = (number, decimals = 2) => `${number < 0 ? '−' : '+'}${format(Ma
       </section>
     </div>
 
-    <div class="hp-period-bar">
-      <div class="hp-period-switch" aria-label="손익 조회 기간"><button type="button" :class="{ active: period === 'month' }" :aria-pressed="period === 'month'" @click="period = 'month'">{{ month }}월 · 이번 달</button><button type="button" :class="{ active: period === 'year' }" :aria-pressed="period === 'year'" @click="period = 'year'">{{ year }}년 · 올해</button></div>
-      <span class="hp-caption muted">{{ dateRange }} · 단위 억원 · 디자인 예시</span>
-    </div>
-
-    <div class="hp-kpis">
-      <section v-for="kpi in kpis" :key="kpi.title" class="card hp-kpi"><p class="muted">{{ kpi.title }}</p><strong>{{ kpi.value }}</strong><p class="hp-increase hp-caption">계획 대비 {{ kpi.change }}</p><p class="hp-caption" :class="`hp-${kpi.kind}`">{{ kpi.effect }}</p></section>
-    </div>
-
     <section class="hp-summary" aria-labelledby="summary-title">
       <div class="hp-section-heading"><h2 id="summary-title">{{ periodName }} 전사 요약 손익</h2><span class="hp-caption muted">단위 억원 · 이익률 % · 디자인 예시</span></div>
-      <div class="hp-table-scroll"><table class="hp-financial-table">
+      <div class="hp-table-scroll" tabindex="0" role="region" aria-labelledby="summary-title"><table class="hp-financial-table">
         <thead><tr><th rowspan="2" scope="col">손익 항목</th><th scope="col">{{ periodName }} 실적·추정</th><th colspan="2" scope="colgroup">계획 대비</th><th colspan="2" scope="colgroup">{{ yearView ? '이전 연간 제출본 대비' : '전월 추정 대비' }}</th></tr><tr><th scope="col">금액</th><th scope="col">차액</th><th scope="col">차이율</th><th scope="col">차액</th><th scope="col">차이율</th></tr></thead>
         <tbody><tr v-for="(name, i) in rowNames" :key="name" :class="{ 'hp-subrow': i >= 2 && i <= 6, 'hp-profit-row': i === 7, 'hp-emphasis-row': i <= 1 }"><th scope="row">{{ name }}</th><td>{{ activeData.values[i] }}</td><td class="hp-increase">{{ activeData.deltas[i] }}</td><td :class="{ 'hp-increase': i !== 8 }">{{ activeData.rates[i] }}</td><td>—</td><td>—</td></tr></tbody>
       </table></div>
     </section>
 
     <section class="card hp-waterfall" aria-labelledby="waterfall-title">
-      <div class="hp-section-heading"><h2 id="waterfall-title">손익 흐름</h2><span class="hp-caption muted">디자인 예시 · 단위 억원</span></div><p class="hp-caption muted">매출에서 순이익까지 단계별 손익 흐름</p>
-      <div class="hp-waterfall-scroll"><div class="hp-waterfall-chart" role="img" aria-label="원본 와이어프레임 예시: 매출 15,203억원에서 비용 차감 후 순이익 1,067억원까지의 손익 흐름">
+      <div class="hp-section-heading"><h2 id="waterfall-title">손익 흐름</h2><span class="hp-caption muted">디자인 예시 · 단위 억원</span></div>
+      <div class="hp-waterfall-scroll" tabindex="0" role="region" aria-labelledby="waterfall-title"><div class="hp-waterfall-chart" role="img" aria-label="원본 와이어프레임 예시: 매출 15,203억원에서 비용 차감 후 순이익 1,067억원까지의 손익 흐름">
         <div v-for="(bar, i) in waterfallBars" :key="bar.name" class="hp-waterfall-stage" :class="`hp-waterfall-${bar.type}`"><span class="hp-waterfall-value" :style="{ top: `${bar.top - 26}px` }">{{ bar.value < 0 ? '−' : '' }}{{ format(Math.abs(bar.value)) }}</span><div class="hp-waterfall-bar" :style="{ top: `${bar.top}px`, height: `${bar.height}px` }"></div><div v-if="i < waterfallBars.length - 1" class="hp-waterfall-connector" :style="{ top: `${bar.end}px` }"></div><span class="hp-waterfall-name">{{ bar.name }}</span></div>
       </div></div>
       <div class="hp-waterfall-legend"><span><i class="hp-legend-total"></i>매출·매출총이익</span><span><i class="hp-legend-profit"></i>영업이익·순이익</span><span><i class="hp-legend-cost"></i>비용 차감 (−)</span></div>
@@ -136,9 +134,8 @@ const signed = (number, decimals = 2) => `${number < 0 ? '−' : '+'}${format(Ma
     <div class="hp-bottom-grid">
       <section class="card hp-causes" aria-labelledby="causes-title"><div class="hp-section-heading"><h2 id="causes-title">손익 변동 원인 Top 5</h2><span class="hp-caption muted">{{ periodName }} · 억원</span></div><h3 class="hp-increase">영업이익 계획 대비 {{ activeData.deltas[7] }} 억원</h3>
         <div v-for="(cause, i) in activeData.causes" :key="causeNames[i]" class="hp-cause"><div class="hp-cause-heading"><span>{{ causeNames[i] }}</span><strong :class="cause > 0 ? 'hp-increase' : 'hp-decrease'">{{ signed(cause) }}</strong><span class="hp-caption" :class="cause > 0 ? 'hp-good' : 'hp-bad'">{{ cause > 0 ? '이익 증가' : '이익 감소' }}</span></div><div class="hp-cause-track"><div :class="cause > 0 ? 'increase' : 'decrease'" :style="{ width: `${Math.abs(cause) / activeData.causes[0] * 100}%` }"></div></div></div>
-        <p class="hp-caption muted">막대 길이는 손익 기여액의 절대값에 비례합니다.</p>
       </section>
-      <section class="card hp-businesses" aria-labelledby="business-title"><h2 id="business-title">사업부별 손익</h2><p class="hp-caption muted">{{ periodName }} {{ yearView ? '연간' : '' }} · 단위 억원 · 디자인 예시</p><div class="hp-table-scroll"><table class="hp-business-table"><thead><tr><th scope="col">사업부</th><th scope="col">매출</th><th scope="col">영업이익</th><th scope="col">전사 영업이익<br>기여도</th><th scope="col">이익률</th><th scope="col">계획<br>대비</th></tr></thead><tbody><tr v-for="business in businesses" :key="business.name"><th scope="row">{{ business.name }}</th><td>{{ format(business.revenue * businessMultiplier) }}</td><td>{{ format(business.profit * businessMultiplier) }}</td><td>{{ business.contribution }}</td><td>{{ business.margin }}</td><td :class="business.delta > 0 ? 'hp-increase' : 'hp-decrease'">{{ signed(business.delta * businessMultiplier, 0) }}</td></tr></tbody><tfoot><tr><th scope="row">예시 합계</th><td>{{ format(15203 * businessMultiplier) }}</td><td>{{ format(1482 * businessMultiplier) }}</td><td>본사·기타<br>+{{ 44 * businessMultiplier }} 포함</td><td>9.7%</td><td class="hp-decrease">−{{ 91 * businessMultiplier }}</td></tr></tfoot></table></div><p v-if="yearView" class="hp-caption muted">연간 사업부 예시는 동일 월 금액을 12개월 합산한 디자인 예시입니다.</p></section>
+      <section class="card hp-businesses" aria-labelledby="business-title"><h2 id="business-title">사업부별 손익</h2><p class="hp-caption muted">{{ periodName }} {{ yearView ? '연간' : '' }} · 단위 억원 · 디자인 예시</p><div class="hp-table-scroll" tabindex="0" role="region" aria-labelledby="business-title"><table class="hp-business-table"><thead><tr><th scope="col">사업부</th><th scope="col">매출</th><th scope="col">영업이익</th><th scope="col">전사 영업이익<br>기여도</th><th scope="col">이익률</th><th scope="col">계획<br>대비</th></tr></thead><tbody><tr v-for="business in businesses" :key="business.name"><th scope="row">{{ business.name }}</th><td>{{ format(business.revenue * businessMultiplier) }}</td><td>{{ format(business.profit * businessMultiplier) }}</td><td>{{ business.contribution }}</td><td>{{ business.margin }}</td><td :class="business.delta > 0 ? 'hp-increase' : 'hp-decrease'">{{ signed(business.delta * businessMultiplier, 0) }}</td></tr></tbody><tfoot><tr><th scope="row">예시 합계</th><td>{{ format(15203 * businessMultiplier) }}</td><td>{{ format(1482 * businessMultiplier) }}</td><td>본사·기타<br>+{{ 44 * businessMultiplier }} 포함</td><td>9.7%</td><td class="hp-decrease">−{{ 91 * businessMultiplier }}</td></tr></tfoot></table></div><p v-if="yearView" class="hp-caption muted">연간 사업부 예시는 동일 월 금액을 12개월 합산한 디자인 예시입니다.</p></section>
     </div>
   </div>
 </template>

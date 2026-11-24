@@ -1,6 +1,6 @@
 // All money in these fixtures is an exact, safe integer in KRW. Display units never affect filtering.
-export const statuses = ['검토 필요', '소명 진행중', '재검토 필요', '소명 승인 완료', '제외됨']
-export const statusTones = ['review', 'progress', 'recheck', 'approved', 'excluded']
+export const statuses = ['검토 필요', '검토 완료', '소명 진행중', '재검토 필요', '소명 승인 완료', '제외됨']
+export const statusTones = ['review', 'submitted', 'progress', 'recheck', 'approved', 'excluded']
 export const comparisonTypes = ['실적 vs 계획', '추정 vs 추정', '추정 vs 계획']
 export const gapFixtures = [
   { id: 'A3', cell: 'A3', name: '일반광고비', group: '마케팅비용', category: '광고선전비', plan: 100000000, actual: 110000000, previousEstimate: 108000000, estimate: 112000000, source: '매출!BD128', status: '검토 필요' },
@@ -30,6 +30,21 @@ export function matchesConditions(item, conditions) {
 }
 export function snapshotKey(org, period, baseVersion, compareVersion, type, itemId) {
   return JSON.stringify([org, period, baseVersion, compareVersion, type, itemId])
+}
+export const replyKey = item => item.key || item.id
+// datetime-local omits a zone; business deadlines are always entered in Seoul time.
+export function seoulDeadline(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return NaN
+  const timestamp = Date.parse(`${value}:00+09:00`)
+  if (!Number.isFinite(timestamp)) return NaN
+  return new Date(timestamp + 9 * 60 * 60 * 1000).toISOString().slice(0, 16) === value ? timestamp : NaN
+}
+export function createMonthlySession() {
+  return {
+    draft: { baseVersion: 'v1.02', compareVersion: '', type: comparisonTypes[0], rateEnabled: true, amountEnabled: true, rate: 5, minimum: 10000000 },
+    applied: null, selection: [], stage: statuses[0], search: '', sort: '차액 내림차순', unit: 'THOUSAND',
+    activeCell: '', detailSource: 'cart',
+  }
 }
 export function seoulPeriod() {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', year: 'numeric', month: 'numeric' }).formatToParts(new Date())
