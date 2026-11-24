@@ -12,7 +12,7 @@ import hashlib
 import json
 
 from ..config import get_settings
-from ..services import openai_client
+from ..services import llm, openai_client  # noqa: F401 — 테스트가 이 모듈의 openai_client 로 가짜를 끼운다
 from ..services.call_log import CallLog
 from . import row_guess
 
@@ -41,11 +41,8 @@ def _call(s, task, system, user):
     if log.calls_today() >= s.ai_daily_call_limit:
         return None, usage, f"오늘 AI 호출 한도({s.ai_daily_call_limit}회)에 도달해 추측하지 않았습니다."
     try:
-        client = openai_client.make_client(s)
-        resp = client.chat.completions.create(model=s.openai_model, temperature=0, max_tokens=200, response_format={"type": "json_object"},
-                                              messages=[{"role": "system", "content": system}, {"role": "user", "content": json.dumps(user, ensure_ascii=False)}])
-        out = json.loads(resp.choices[0].message.content)
-        tin, tout = int(getattr(resp.usage, "prompt_tokens", 0) or 0), int(getattr(resp.usage, "completion_tokens", 0) or 0)
+        reply = llm.ask_json(s, system, json.dumps(user, ensure_ascii=False), max_tokens=200, temperature=0)
+        out, tin, tout = reply.data, reply.input_tokens, reply.output_tokens
         usage.update({"calls": 1, "input_tokens": tin, "output_tokens": tout})
         log.append({**meta, "outcome": "ok", "input_tokens": tin, "output_tokens": tout})
         if isinstance(out, dict):

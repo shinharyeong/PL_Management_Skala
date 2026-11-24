@@ -12,7 +12,7 @@ ai/
 │  ├─ config.py          설정(ai/.env > 셸 환경변수 > 기본값)
 │  ├─ api/               라우터 (health.py, report.py)
 │  ├─ schemas/           요청·응답 스키마
-│  ├─ services/          핵심 메시지 서비스(검증·캐시·일일 상한·토큰 로그), OpenAI 클라이언트
+│  ├─ services/          핵심 메시지 서비스(검증·캐시·일일 상한·토큰 로그), LLM 호출(llm.py, LangChain)
 │  └─ pipeline/          배치 파이프라인(파싱→Gap→소명→master→07 자료→사실 목록) — README 참고
 ├─ tests/                pytest (OpenAI 는 모의, 실제 호출 없음)
 ├─ output/               파이프라인 결과 JSON(OUTPUT_DIR), ai_call_log.json
@@ -37,6 +37,7 @@ ai/
 우선순위는 **ai/.env → 셸 환경변수 → 기본값**입니다. 상대 경로는 저장소 루트 기준입니다.
 
 ## 엔드포인트 (초안)
+- **LLM 호출은 `app/services/llm.py` 한 곳**입니다. `chat_model()` 은 LangChain `BaseChatModel`(LangGraph 노드가 그대로 씀), `ask_json()` 은 JSON 응답 한 번 호출입니다. 전송은 OpenAI 공식 SDK(`openai_client.make_client`)라 재시도·제한 시간 설정과 테스트의 가짜 클라이언트가 그대로 동작합니다. `ChatOpenAI` 로 바꾸려면 `llm.py` 의 `_SdkChatModel` 만 바꿉니다.
 - `GET /health` → `{"status","model","openai_key_present"}` (OpenAI 호출 없음, 키는 true/false만)
 - `POST /v1/report/key-messages`
   - 요청: `{"status":"provisional|final","facts":[{"id":"F1","kind":"매출|비용|영업이익|연간|소명|주의","text":"..."}]}`

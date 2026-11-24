@@ -14,7 +14,7 @@ import re
 
 from ..config import Settings, get_settings, log_key_source
 from . import key_messages as km
-from . import openai_client
+from . import llm, openai_client  # noqa: F401 — 테스트가 이 모듈의 openai_client 로 가짜를 끼운다
 from .call_log import CallLog
 
 logger = logging.getLogger("ai.narratives")
@@ -109,15 +109,12 @@ def _read(path):
 
 def _call(s: Settings, task: str, facts: list[dict]):
     spec = TASKS[task]
-    client = openai_client.make_client(s)
-    resp = client.chat.completions.create(
-        model=s.openai_model, temperature=s.ai_temperature, max_tokens=spec["max_tokens"], response_format={"type": "json_object"},
-        messages=[{"role": "system", "content": spec["system"]},
-                  {"role": "user", "content": json.dumps({"facts": [{"id": f["id"], "kind": f["kind"], "text": f["text"]} for f in facts]}, ensure_ascii=False)}])
-    items = json.loads(resp.choices[0].message.content)["items"]
+    reply = llm.ask_json(s, spec["system"], json.dumps({"facts": [{"id": f["id"], "kind": f["kind"], "text": f["text"]} for f in facts]}, ensure_ascii=False),
+                         max_tokens=spec["max_tokens"])
+    items = reply.data["items"]
     if not isinstance(items, list):
         raise ValueError("items is not a list")
-    return items, {"input_tokens": int(getattr(resp.usage, "prompt_tokens", 0) or 0), "output_tokens": int(getattr(resp.usage, "completion_tokens", 0) or 0)}
+    return items, {"input_tokens": reply.input_tokens, "output_tokens": reply.output_tokens}
 
 
 def run_items(task: str, facts: list[dict], templates: dict[str, dict], *, allow_call: bool = False, force: bool = False,
