@@ -1,0 +1,43 @@
+{
+  "pages": {
+    "login": "로그인",
+    "home": "전사 손익 현황",
+    "notifications": "알림 모아보기",
+    "monthly": "월간 시트 관리",
+    "monthly-request": "월간 요청 작성",
+    "calculator": "월간 시트 관리 계산기",
+    "workspace": "선택 항목 검토",
+    "cell": "셀 단위 비교",
+    "annual": "연간 계획 관리",
+    "annual-request": "연간 계획 요청 작성",
+    "organizations": "조직별 현황",
+    "reports": "보고서 생성",
+    "org-requests": "요청함",
+    "org-upload": "엑셀 제출",
+    "org-explanation": "소명 작성",
+    "org-history": "제출 이력 관리"
+  },
+  "login": {
+    "emailLabel": "회사 이메일",
+    "emailHelp": "등록된 사내 이메일 계정으로 이용할 수 있습니다.",
+    "codeHelp": "이메일로 받은 인증코드를 입력해 주세요.",
+    "loginHelp": "이메일로 받은 6자리 인증코드로 로그인합니다.",
+    "footer": "사내 계정 전용",
+    "logoutTitle": "로그아웃할까요?",
+    "logoutHelp": "다시 이용하려면 회사 이메일로 로그인해 주세요.",
+    "cancel": "취소",
+    "logout": "로그아웃"
+  },
+  "monthly": {
+    "reviewSelected": "선택 항목 검토하기 →",
+    "requestExplanation": "일괄 소명 요청 보내기",
+    "reviewItems": "검토 항목",
+    "replyDeadline": "회신 기한",
+    "requestMessage": "요청 메시지",
+    "close": "닫기",
+    "exclude": "제외",
+    "clearSelection": "선택 해제",
+    "apply": "적용",
+    "exportComparison": "버전 비교 엑셀"
+  }
+}

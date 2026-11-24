@@ -1244,6 +1244,64 @@ components:
             type: object
             additionalProperties: true
 paths:
+  /annual-masters:
+    get:
+      operationId: listAnnualMasters
+      tags: [조직별 현황]
+      summary: 연간 계획 master 버전 목록 (경영기획팀 전용)
+      description: 선택 연도의 확정 연간 master를 최신 버전부터 반환한다. 확정 전에는 WAITING, 연간 요청이 없으면 NO_REQUEST다.
+      parameters:
+      - in: query
+        name: year
+        schema: {type: integer, minimum: 2000, maximum: 9999}
+        description: 생략하면 한국 시간 올해
+      responses:
+        '200':
+          description: 연간 master 목록
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [year, state, items]
+                properties:
+                  year: {type: integer}
+                  state: {type: string, enum: [CONFIRMED, WAITING, NO_REQUEST]}
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, year, seq, label, createdAt, createdByName, organizationCount]
+                      properties:
+                        id: {type: string}
+                        year: {type: integer}
+                        seq: {type: integer}
+                        label: {type: string, example: master_plan2026.01}
+                        createdAt: {type: string, format: date-time}
+                        createdByName: {type: string}
+                        organizationCount: {type: integer}
+        '400': {description: 연도 범위 오류}
+        '401': {description: 로그인 필요}
+        '403': {description: 경영기획팀 전용}
+  /annual-masters/{masterId}/file:
+    get:
+      operationId: downloadAnnualMaster
+      tags: [조직별 현황]
+      summary: 연간 계획 master 엑셀 다운로드 (경영기획팀 전용)
+      description: 해당 버전의 고정된 승인본에서 요청 연도 PLAN만 집계한다. 손익·출처 시트를 포함하며 15자리를 넘거나 소수가 있는 금액은 정확한 문자열로 기록한다.
+      parameters:
+      - in: path
+        name: masterId
+        required: true
+        schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: 연간 계획 master XLSX
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: {type: string, format: binary}
+        '401': {description: 로그인 필요}
+        '403': {description: 경영기획팀 전용}
+        '404': {description: 연간 master 없음}
   /auth/codes:
     post:
       operationId: requestAuthCode

@@ -1,84 +1,35 @@
-# 손익관리 프런트엔드
+# 경영팀을 부탁해 프론트엔드
 
-## 최신 피그마 프론트 프로토타입
+Vue 3 · Vite · Vue Router · Pinia 기반의 실제 API 연결 화면입니다. `/`와 `/prototype.html` 모두 동일한 연결본을 엽니다. 원래 데모 구성은 `src/prototype/HomePanel.vue`, `ManagementPanels.vue`, `OrgPanel.vue`, `store.js`에 남아 있습니다.
 
-2026-11-18 디자인 체험본은 `npm run dev:prototype`으로 실행한 뒤 `/prototype.html`에서 확인한다. 기존 서버 연결용 앱과 분리한 로컬 예시이며, 체험 계정·지원 범위·검증 결과는 [PROTOTYPE.md](PROTOTYPE.md)를 따른다. 아래 설명은 가져온 기존 API 연결용 앱의 기록이다.
+## 실행
 
-Vue 3.5 · Vite 8 · Vue Router · Pinia로 Figma의 조직 담당자 v3와 경영기획팀 6개 화면을 구현한다. Tailwind 및 별도 UI 라이브러리는 사용하지 않는다.
+```bash
+npm ci
+# 필요하면 .env.example을 .env.development.local로 복사해 API 주소를 지정합니다.
+npm run dev -- --host 127.0.0.1
+```
 
-## 체험 흐름
+운영 빌드는 기존 이메일·인증코드 로그인을 사용합니다. localhost 개발 화면의 계정 선택은 `local` 백엔드와 `LOCAL_AUTH_LOG`, 로컬 `API_PROXY_TARGET`이 모두 필요합니다. 실제 서버 세션을 발급하며 계정이나 권한을 브라우저에서 위조하지 않습니다. 예시 계정은 로컬 seed/더미 환경에만 있습니다.
 
-1. 첫 화면에서 조직 담당자 또는 경영기획팀을 선택한다.
-2. 조직 담당자는 요청함 → 제출 시작 → `.xlsx` 선택/드롭(서버 UP-03은 `.xlsb`도 받지만 화면 파일 선택은 아직 `.xlsx`만, #57) → 파싱 시작을 진행한다. `테스트 양식으로 실행`은 서버의 예시 양식을 같은 업로드 API에 접수한다.
-3. 파싱 중에는 상태를 자동 조회한다. 완료 후 진단과 원 단위 추출 금액, 원본 시트·셀·수식을 확인한다.
-4. 제출 이력 관리에서 업로드 초안과 원본을 다시 조회한다.
-5. 경영기획팀은 `/planning`의 전사 손익 화면에서 최신 발행된 연간 PLAN의 실제 금액을 확인한다. 기본은 서울 현재 연도·전사·연간·원 단위이며, 연도·조직·월·단위 선택을 KPI·요약·사업부표·차트에 함께 적용한다. 사이드바에서 월간 시트 관리, 요청·검토, 연간 계획, 조직별 현황, 보고서를 각각 연다.
-6. 연간 계획의 본문 작성 페이지에서 실제 요청을 생성하고 요청·검토의 조직별 초안/최종 제출 현황을 확인한다. 조직별 현황에서 `실제 업로드`로 전환하면 기본 2026 연간 초안·최종 제출본·원본을 조회한다. 요청 현황의 보기는 최신 최종 제출본으로 직접 연결한다.
-7. 담당자는 상세에서 업무 검증 → 적재·진단 확인 → 최종 제출을 실행한다. 기획자는 요청·검토의 `검토`로 제출본을 열어 적재 금액·보고 집계·진단·정확한 원본 셀을 확인하고 승인하거나 사유를 적어 반려한다.
-8. 담당자는 제출 상세에서 승인·반려 결과와 검토자·시각·반려 사유를 확인한다. 반려 시 `전체 파일 다시 제출`로 새 초안을 올린다. 검증 후 모든 금액 변경과 기준 초과 손익 Gap의 필수 소명을 작성하고 최종 제출한다.
-9. 전 사업조직의 연간 계획이 승인되면 연간 계획 마스터를 자동 발행한다. 요청·검토의 `마스터 확인`에서 버전별 연간·월간 합계, 조직·월별 보고 항목, 반영한 승인본의 적재 내역과 원본을 확인한다. 이후 새 조직 승인본이 반영되면 기존 버전을 보존하고 새 버전을 발행한다.
-10. 연간 계획 화면에서 대상 연도와 전사 Contingency를 직접 입력해 계획을 확정한다. 월간 시트 관리에서 월 요청과 ACTUAL/ESTIMATE 기준을 설정한 뒤, 담당자가 월마감 파일을 업로드·검증하고 소명을 작성한다. 기획자는 필수 소명을 수용한 다음 조직 제출본을 승인한다.
-11. 홈의 `월간 실적 ACTUAL`에서 발행한 월의 실제 금액과 확정 계획 차이를 확인한다. 미발행 월은 금액을 0으로 대체하지 않는다.
+## 이번 수정의 범위
 
-파싱 성공은 최종 제출 성공이 아니다. 최초 연간 PLAN은 담당자의 업무 검증과 명시적 최종 제출을 거쳐 PENDING이 된다. 기획자의 승인·반려는 연간 및 월간 제출본에 제공하며, 연간 계획 마스터 발행과 Contingency를 입력하는 연간 계획 확정은 별도다. 파싱 후보·검증 적재값·보고 합계는 별도 영역이다. 파싱 후보 숫자는 amountUnit=KRW일 때만 원으로 표시하고 미확정 단위는 그대로 알린다. 연간 계획 확정·월간 요청·Gap 소명·월간 마스터까지 연결한다. 보고서에는 `디자인 예시 · 실제 집계가 아닙니다`를 표시하며 선택·검색·행 펼침·메시지 편집만 로컬 상태로 동작한다. 보고서 디자인 예시의 생성·복사·다운로드는 미지원 안내를 제공하며 성공한 것처럼 처리하지 않는다.
+- 알림의 읽음과 검토 결과를 분리하고, 수락·재요청된 제출 알림을 읽음 처리합니다. 요약 카드와 모두 읽음 버튼은 제거했습니다. 알림에서 이동하면 해당 조직을 펼치고 자동 스크롤합니다.
+- 연간 제출본 검토 상태·재제출 요청 강조, 선택 조직 일괄 수락(확인 창·조직별 실패 결과), 재요청 코멘트 전달을 연결합니다.
+- 연간 master 상태·최신/이전 버전·확정 담당자/시각·포함 조직 수와 엑셀 다운로드를 제공합니다. `GET /api/v1/annual-masters?year=YYYY`, `GET /api/v1/annual-masters/{id}/file`은 경영기획팀 전용입니다. 새 DB 마이그레이션은 없습니다.
+- 월간 비교 조건·계층 표·조직 작업공간·버전 비교·소명과 제출본 승인을 실제 API에 연결했습니다. 최신 업로드와 승인 master는 구분합니다.
+- 모든 금액 계산은 decimal 문자열/BigInt로 처리하며 차이율·금액 조건의 경계는 `>=`입니다. 홈 올해 값은 누계가 아닌 실적+추정의 연간 전망입니다.
+- 좁은 화면에서는 툴바가 줄바꿈되고 넓은 표는 개별 가로 스크롤됩니다. 결과 안내는 화면 하단에 고정 표시합니다.
+- `.xlsx`/`.xlsb` 업로드와 요청별 파일명 안내를 제공합니다. 문구 편집은 [COPY-EDITING.md](COPY-EDITING.md)를 참고하세요.
 
-## 경영기획 화면
+백엔드/프론트 변경을 함께 반영해야 연간 master 조회가 동작합니다. 보고서 API는 최신 develop에 추가됐지만 현재 보고서 UI의 연결은 별도 작업이며, 비활성 카드 상태를 유지합니다. 이전 로컬 검증 기록의 보고서 API 부재 설명은 그 당시 기준입니다.
 
-| 경로 | 화면·데이터 범위 |
-| --- | --- |
-| `/planning` | 홈 · 전사 손익. 실제 연간 마스터의 수집·승인 상태, 매출·비용·영업이익, 조직·월별 금액과 원천 링크 |
-| `/planning/gap` | 월간 요청 생성·조직 제출 현황, ACTUAL/ESTIMATE Gap 기준, 실제 소명 검토 |
-| `/planning/requests` | 요청·검토. 실제 연간 요청 목록·조직별 수집 및 승인 현황 GET, 검토 대기 제출본 연결 |
-| `/planning/annual-masters/:id` | 연간 계획 마스터. 실제 발행 버전·연월 합계·조직/월별 보고 항목·고정 승인본 조회 |
-| `/planning/annual-plan` | 연간 계획. 전 조직 요청 생성, 승인 후보 조회·Contingency 명시 입력·계획 확정 |
-| `/planning/masters/:id` | 월간 ACTUAL 마스터. 고정 실적/확정 계획 비교, 발행 이력·항목·조직별 원천 |
-| `/planning/organizations` | 조직별 현황·아카이브. 디자인 예시와 실제 업로드 보기를 구분 |
-| `/planning/reports` | 보고서. 예시 자료 구성·표·차트·핵심 메시지 편집 |
+## 검증
 
-원본 캔버스 밖 차트와 회전된 마스터 카드는 웹 본문에서 읽을 수 있도록 정돈했다. 예시 값으로 실제 다른 월·연간 금액을 만들지 않는다. 모든 금액 수정 소명과 OP 비교 등 기존 도메인 규칙은 변경하지 않는다. Gap 기준 설정은 월간 시트 관리에 연결하며 조직 권한 편집은 아직 비활성이다.
+```bash
+npm run build
+node --test src/prototype/*.test.js src/lib/gap-result-filter.test.js src/lib/submission-api.test.js scripts/local-auth-code-plugin.test.js
+python3 -B scripts/test_dataset_scope.py
+```
 
-## 실행과 인증
-
-저장소의 [로컬 환경](../docs/development/local-environment.md)에서 Docker Compose 실행 안내를 따른다. 브라우저는 `http://localhost:5173`에서 같은 출처 `/api`를 호출한다. 개발 서버를 별도로 실행할 경우 Node.js 20.19 이상에서 `npm ci`, `npm run dev`를 사용하며 `/api`는 `http://localhost:8080`으로 프록시된다. 설치·빌드는 파일 생성 작업이므로 프로젝트 규칙의 허락 범위 안에서 실행한다.
-
-로컬 체험은 백엔드의 `local,demo` 프로필과 개발 역할 계정이 필요하다. `POST /api/dev/session`의 토큰은 Pinia 메모리에만 보관하며 브라우저 저장소·URL·로그에 기록하지 않는다. 새로고침 또는 역할 전환 시 다시 역할을 선택한다. 프런트 번들에 비밀값을 넣는 환경변수는 없다.
-
-## 구조
-
-| 경로 | 책임 |
-| --- | --- |
-| `src/App.vue` | Figma 공통 셸, 역할별 메뉴, 세션 종료 |
-| `src/views/HomeView.vue` | 로컬 역할 선택 |
-| `src/components/RequestList.vue` | 열린 요청함 |
-| `src/components/UploadView.vue` | 파일 선택/드롭, 예시 양식, 업로드 |
-| `src/components/SubmissionDetail.vue` | 폴링, 진단·추출 셀 페이지, 원본 다운로드, 검증·최종 제출, 기획 승인·반려와 결과 표시 |
-| `src/components/HistoryView.vue` | 필터와 cursor 기반 이력 |
-| `src/components/PlannerDashboard.vue` | 기획 기본 홈, 최신 연간 PLAN 마스터와 조직·월별 조회 |
-| `src/components/PlannerGap.vue` | 월간 요청·조직 현황·실제 Gap 기준 적용과 미리보기 |
-| `src/components/AnnualPlanConfirmation.vue` | 후보 계획본 조회·Contingency 명시 입력·최초 확정 |
-| `src/components/SubmissionReviews.vue` | 수정/Gap 소명 목록·답변·수용/보완·기준/현재 원본 조회 |
-| `src/components/MonthlyOverview.vue` | 홈 ACTUAL 탭의 월별 발행/대기/미요청 상태 |
-| `src/components/MonthlyMasterData.vue` | 고정 실적·계획 비교 KPI·조직 표·원천 링크 |
-| `src/components/MonthlyMaster.vue` | 월간 마스터 상세·버전·ACTUAL 보고 항목 |
-| `src/components/PlannerRequests.vue` | 실제 연간 요청 목록, 조직별 수집 현황 |
-| `src/components/AnnualMaster.vue` | 실제 연간 마스터 버전·연월 합계·보고 항목·승인 원천 연결 |
-| `src/components/PlannerRequestCreate.vue` | 본문 요청 작성, 전체 활성 조직 대상 요청 생성 |
-| `src/components/PlannerOrganizations.vue` | 예시 아카이브 및 실제 업로드 이력·원본 조회 |
-| `src/components/PlannerReports.vue` | 보고서 디자인 예시, 구성 선택·메시지 메모리 편집 |
-| `src/stores/session.js` | 메모리 인증·동일 출처 HTTP·요청 취소 |
-| `src/lib/decimal-display.js` | 원/억원 문자열 정밀 표시, BigInt 기반 양수·음수 차트 좌표 |
-| `src/lib/display.js` | 금액 정밀도 보존, 시각·상태 표시, 다운로드 |
-| `src/styles.css` | Figma 토큰과 반응형 공통 스타일 |
-| `public/assets/` | Figma 원본 SVG 15개, 각각의 원본 width·height 유지 |
-
-요구사항은 [docs](../docs/README.md)의 PRD를 기준으로 한다.
-
-## 검증 상태
-
-이전 검증은 조직 담당자의 업로드·파싱·이력과 기획자의 요청 생성이라는 API 흐름에 한정됐다. 이전의 “기획 전체 레이아웃 확인” 표현은 정정한다. 사용자 지적 후 경영기획 6개 화면과 메뉴를 복원했다.
-
-이번 실제 브라우저 확인에서는 보고서 구성 체크와 미지원 다운로드 안내, Gap 상세·닫기, 2029년 실제 요청 생성 후 2개 조직 수집 표, 아카이브 예시 및 실제 2027년 D100 초안 6개 조회가 통과했다. 실제 초안 상세의 파싱 완료·제출 전 상태와 시트 5·추출 셀 25·정규화 24·확인 필요 0도 확인했다. 기획 경로 6개와 원본 SVG 15개의 HTTP 응답·바이트 동일성, 백엔드 health UP을 확인했다.
-
-이전 예시 홈의 마감·To Do → KPI → 요약·Top 5 → 사업부별 → 손익 흐름 → 월별 추이 배치와 원본 SVG 표시를 상·중·하단에서 확인했다. 최종 Docker 프런트 빌드(49개 모듈)와 frontend healthy가 통과했다. 마지막 label 글자 스타일 보정은 소스 점검·프로덕션 빌드 범위로 확인했다.
-
-이전 기록은 전체 필터·모바일 조합이나 당시 미구현 기능의 검증 완료를 뜻하지 않는다. 최초 연간 검증·최종 제출의 최신 통합 결과는 로컬 실행 환경 문서에서 구분한다. 이후 추가한 연간 승인·반려·연간 마스터의 검증은 별도로 기록하며, 월간 흐름의 실제 원본·서버 검증은 별도로 기록하며 보고서 내보내기는 후속 범위다.
+`check:prototype`는 옛 데모 15화면용 스크립트로 실제 연결본의 통합/브라우저 검증을 대체하지 않습니다. 사용자 파일·DB 백업·인증코드·토큰·실행 결과는 저장소에 포함하지 않습니다. `scripts/load-business-unit-dataset.py` 등은 별도 로컬 더미 DB 검증용이며 서비스 실행에 필요하지 않습니다. 테스트 계정과 과거 검증 환경은 [BUSINESSUNITS-TEST.md](BUSINESSUNITS-TEST.md)를 참고하세요.
