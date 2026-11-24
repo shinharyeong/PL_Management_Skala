@@ -1,6 +1,8 @@
 """backend 계약(명세 12절)의 내용 처리. API 입구는 app/api/contract.py.
 
-- data()      RPT-10 블록 데이터 채우기: 보고서용 뷰 값으로 코드가 계산(AI 문장 없음). data_select.fill_report 를 그대로 쓴다
+- data()      RPT-10 블록 데이터 채우기: 보고서용 뷰 값으로 코드가 계산(AI 문장 없음). data_select.fill_report 를 그대로 쓴다.
+              블록에 sql 이 있으면(지표 사전·확정 SQL) 기준 월 인자로 sqlguard 를 거쳐 실행한다
+- sql_check() RPT-09 지표 등록 전 SQL 검사(sqlguard, 실행 안 함)
 - edit()      RPT-15 대화 편집 변경안: chat_edit.interpret(LLM 의도 → 코드 검증) 결과를 proposals 로 바꾼다. 숫자는 바꾸지 않는다
 - pdf_job()   RPT-01·02 PDF 틀 추출: extract_structure 결과를 틀 초안(StoredTemplate)으로 만들어 backend 에 보고한다
               1차는 HTTP 로 받은 PDF 바이트를 처리하고, 2차는 pdf.jobs 큐·S3 에서 읽는 것만 다르다(보고 본문은 같음)
@@ -27,6 +29,15 @@ def data(base: dict, blocks: list[dict]) -> dict:
     r = data_select.fill_report(base, blocks)
     status = _STATE.get(r.get("state") or "", "NONE") if r.get("version") else "NONE"
     return {"dataStatus": status, "blocks": r.get("blocks", [])}
+
+
+def sql_check(sql: str) -> dict:
+    """지표 사전 등록(RPT-09) 전 SQL 검사. 챗봇과 같은 sqlguard 규칙(SELECT 한 문장, 보고서용 뷰만, version 조건 등). 실행하지 않는다."""
+    from .chat import sqlguard
+    try:
+        return {"ok": True, "sql": sqlguard.validate(sql), "code": None, "message": None}
+    except sqlguard.SqlRejected as e:
+        return {"ok": False, "sql": None, "code": e.code, "message": e.message}
 
 
 def _base_of(definition: dict) -> dict | None:

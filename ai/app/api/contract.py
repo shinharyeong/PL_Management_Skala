@@ -3,6 +3,7 @@
 POST /v1/nl-query   text2SQL(RPT-11). 흐름은 LangGraph(app/chat/graph.py)
 POST /v1/data       블록 데이터 채우기(RPT-10). AI 문장 없음, 숫자는 보고서용 뷰에서 코드가 계산
 POST /v1/edit       대화 편집 변경안(RPT-15). 숫자는 바꾸지 않음
+POST /v1/sql-check  지표 사전 등록 전 SQL 검사(RPT-09). 실행하지 않음
 POST /v1/pdf-jobs   PDF 틀 추출 요청(RPT-01, 1차 전송). 202 를 먼저 돌려주고 끝나면 backend 에 결과를 보고한다
 REPORT_AI_TOKEN 이 있으면 X-Internal-Token 헤더가 같아야 한다. 운영(AI_REQUIRE_INTERNAL_TOKEN=true)은 토큰이 설정되지 않았으면 모두 거부한다.
 """
@@ -56,6 +57,10 @@ class DataRequest(BaseModel):
     blocks: list[Block] = Field(max_length=500)
 
 
+class SqlCheckRequest(BaseModel):
+    sql: str = Field(min_length=1, max_length=4000)
+
+
 class EditRequest(BaseModel):
     definition: dict
     instruction: str = Field(min_length=1, max_length=1000)
@@ -69,6 +74,11 @@ async def nl_query(req: NlQueryRequest):
 @router.post("/data")
 async def data(req: DataRequest):
     return await run_in_threadpool(contract.data, req.base.model_dump(), [b.model_dump() for b in req.blocks])
+
+
+@router.post("/sql-check")
+def sql_check(req: SqlCheckRequest):
+    return contract.sql_check(req.sql)
 
 
 @router.post("/edit")
