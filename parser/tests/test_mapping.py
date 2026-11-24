@@ -400,6 +400,44 @@ class MappingTests(unittest.TestCase):
                          ("month", 1, 1))
         self.assertFalse(quarter["role"]["aggregatable"])
 
+    def test_ratio_row_without_percent_format_is_not_scaled_as_amount(self) -> None:
+        """% 서식 없는 영업이익률 행은 천원 배율을 곱하지 않고 비율·미확정으로 남긴다(#5).
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 비율 행이 금액으로 환산되거나 확정된 경우.
+        Side Effects:
+            없음. 메모리 워크북만 사용한다.
+        """
+        raw = memory_workbook(
+            [
+                ("A1", "단위: 천원", "string"),
+                ("B2", "2027년", "string"), ("B3", "계획", "string"), ("B4", "1Q", "string"), ("B5", "1월", "string"),
+                ("A6", "영업이익", "string"), ("B6", "100", "number"),
+                ("A7", "영업이익률", "string"), ("B7", "5", "number"),
+                ("A8", "영업이익률(%)", "string"), ("B8", "0.05", "number"),
+            ]
+        )
+        by_cell = {cell["address"]: cell for cell in raw["sheets"][0]["cells"]}
+        by_cell["B8"]["number_format"] = "0.0%"
+        records = {record["source"]["cell"]: record for record in map_workbook(raw)["records"]}
+        amount, named, formatted = records["B6"], records["B7"], records["B8"]
+        self.assertEqual(amount["value"]["value_kind"], "amount")
+        self.assertEqual(amount["value"]["normalized_value"], Decimal("100000"))
+        self.assertEqual(named["value"]["value_kind"], "ratio")
+        self.assertIsNone(named["value"]["normalized_value"])
+        self.assertEqual(named["value"]["status"], "unresolved")
+        self.assertEqual(named["role"]["kind"], "ratio")
+        self.assertNotEqual(named["mapping"]["status"], "mapped")
+        self.assertIn("RATIO_ITEM_NAME_FORMAT_UNCONFIRMED", named["mapping"]["rule_ids"])
+        # % 서식이 있으면 지금처럼 비율로 확정하고 배율을 다시 곱하지 않는다
+        self.assertEqual(formatted["value"]["value_kind"], "ratio")
+        self.assertEqual(formatted["value"]["normalized_value"], Decimal("0.05"))
+        self.assertNotIn("RATIO_ITEM_NAME_FORMAT_UNCONFIRMED", formatted["mapping"]["rule_ids"])
+
     def test_merged_headers_keep_anchor_provenance(self) -> None:
         """병합 헤더의 기준 셀을 연결하고 원본 빈 헤더를 생성하지 않는다.
 
