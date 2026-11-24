@@ -1840,7 +1840,7 @@ paths:
       description: |-
         행은 답안지 시트 순서(매출 → 영업비용 → 영업이익). Gap 기준을 넘는 셀은 `gapExceeded`, 툴팁용 수락 소명은 `explanation`.
         실적은 그 달 master(없으면 조직별 최신 승인본, 잠정), 계획은 요청 때 고정한 확정 연간 계획, 전월 추정은 전월 최신 master의 이번 달 추정.
-        `period=YEAR`는 1월부터 고른 달까지 누적이며 전월 추정 비교는 null. 영업이익률은 비율이라 `opMargin`으로 따로 준다.
+        `period=YEAR`는 연간 전체(고른 달 시트의 누적 실적 + 남은 달 추정 vs 1~12월 계획, 전월 대비는 전월 시트의 연간 전망). 영업이익률은 비율이라 `opMargin`으로 따로 준다.
       x-fr:
       - FR-HOME-001
       - FR-HOME-004
