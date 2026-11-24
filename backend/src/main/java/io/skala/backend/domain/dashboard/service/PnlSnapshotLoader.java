@@ -22,8 +22,9 @@ import org.springframework.stereotype.Component;
  *   <li>실적: 그 달 월간 요청의 master(masterId가 없으면 최신 master) 조직별 승인본.
  *       master가 없으면 조직별 최신 승인본으로 잠정 계산(PROVISIONAL), 승인본도 없으면 NONE</li>
  *   <li>계획: 월간 요청 때 고정한 확정 연간 계획(request_target.confirmed_plan_submission_id)의 계획 값</li>
- *   <li>전월 추정: 전월 요청의 최신 master(없으면 최신 승인본)에 적힌 이번 달 추정 값. 월간 탭·2월 이후만</li>
- *   <li>연간 탭: 1월부터 고른 달까지 누적(고른 달 시트의 실적, 같은 기간 계획). 전월 추정 비교는 없다</li>
+ *   <li>전월 추정: 전월 요청의 최신 master(없으면 최신 승인본)에 적힌 이번 달 추정 값. 2월 이후만</li>
+ *   <li>연간 탭: 연간 전체. 실적 = 고른 달 시트의 1월~그 달 실적 + 다음 달~12월 추정, 계획 = 1~12월 계획,
+ *       전월 대비 = 전월 시트의 같은 연간 전망</li>
  * </ul>
  */
 @Component
@@ -92,9 +93,9 @@ class PnlSnapshotLoader {
         if (sources.byOrg().isEmpty()) {
             return new Snapshot("NONE", p, year, m, List.of(), items, List.of(), Values.empty(), Values.empty(), Values.empty());
         }
-        int from = p == Period.YEAR ? 1 : m;
+        boolean yearly = p == Period.YEAR;
         Collection<Long> submissions = sources.byOrg().values();
-        Values actual = values(submissions, "ACTUAL", year, from, m);
+        Values actual = yearly ? outlook(submissions, year, m) : values(submissions, "ACTUAL", year, m, m);
 
         Map<Long, Long> plans = new LinkedHashMap<>();
         jdbc.query("""
@@ -104,14 +105,15 @@ class PnlSnapshotLoader {
                     plans.put(rs.getLong(1), rs.getLong(2));
                 }, requestId);
         plans.keySet().retainAll(sources.byOrg().keySet());
-        Values plan = values(plans.values(), "PLAN", year, from, m);
+        Values plan = yearly ? values(plans.values(), "PLAN", year, 1, 12) : values(plans.values(), "PLAN", year, m, m);
 
         Values prevEstimate = Values.empty();
-        Long previousRequest = p == Period.MONTH && m > 1 ? requestId(year, m - 1) : null;
+        Long previousRequest = m > 1 ? requestId(year, m - 1) : null;
         if (previousRequest != null) {
             Map<Long, Long> previous = new LinkedHashMap<>(sources(previousRequest, null).byOrg());
             previous.keySet().retainAll(sources.byOrg().keySet());
-            prevEstimate = values(previous.values(), "ESTIMATE", year, m, m);
+            prevEstimate = yearly ? outlook(previous.values(), year, m - 1)
+                    : values(previous.values(), "ESTIMATE", year, m, m);
         }
         return new Snapshot(sources.status(), p, year, m, orgs(sources.byOrg().keySet()), items,
                 List.copyOf(submissions), actual, plan, prevEstimate);
@@ -144,6 +146,20 @@ class PnlSnapshotLoader {
                     byOrg.put(rs.getLong(1), rs.getLong(2));
                 }, requestId);
         return byOrg.isEmpty() ? Sources.NONE : new Sources("PROVISIONAL", byOrg);
+    }
+
+    /** 그 달 시트의 연간 전망: 1월~그 달 실적 + 다음 달~12월 추정 */
+    private Values outlook(Collection<Long> submissionIds, int year, int month) {
+        Values actual = values(submissionIds, "ACTUAL", year, 1, month);
+        if (month == 12) {
+            return actual;
+        }
+        Map<Long, Map<Long, BigDecimal>> sum = new HashMap<>();
+        for (Values part : List.of(actual, values(submissionIds, "ESTIMATE", year, month + 1, 12))) {
+            part.byOrg().forEach((org, items) -> items.forEach((item, amount) ->
+                    sum.computeIfAbsent(org, k -> new HashMap<>()).merge(item, amount, BigDecimal::add)));
+        }
+        return new Values(sum);
     }
 
     private Values values(Collection<Long> submissionIds, String scenario, int year, int fromMonth, int toMonth) {

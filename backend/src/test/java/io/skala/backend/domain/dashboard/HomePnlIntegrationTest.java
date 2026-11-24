@@ -25,7 +25,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  * 판촉비     A 200             A 100
  * 인건비     A 300 · B 100     A 300 · B 100
  * </pre>
- * 연간 탭 확인용으로 A의 9월 실적 제품매출 900, 9월 계획 900.
+ * 연간 탭 확인용으로 A의 9월 실적 제품매출 900, 10월 시트의 11월 추정 100, 9월 계획 900, 11월 계획 50.
  */
 @AutoConfigureMockMvc
 @EnabledIfEnvironmentVariable(named = "TEST_DB_URL", matches = ".+")
@@ -82,6 +82,7 @@ class HomePnlIntegrationTest extends PostgresIntegrationTest {
         long planA = submission(annual, orgA, "APPROVED", 1);
         values(planA, "PLAN", 10, product, 800, promotion, 100, labor, 300);
         values(planA, "PLAN", 9, product, 900);
+        values(planA, "PLAN", 11, product, 50);
         long planB = submission(annual, orgB, "APPROVED", 1);
         values(planB, "PLAN", 10, product, 600, labor, 100);
 
@@ -95,6 +96,7 @@ class HomePnlIntegrationTest extends PostgresIntegrationTest {
         long octA = submission(october, orgA, "APPROVED", 1);
         values(octA, "ACTUAL", 10, product, 1000, promotion, 200, labor, 300);
         values(octA, "ACTUAL", 9, product, 900);
+        values(octA, "ESTIMATE", 11, product, 100);
         long octB = submission(october, orgB, "PENDING", null);
         values(octB, "ACTUAL", 10, product, 500, labor, 100);
 
@@ -156,12 +158,12 @@ class HomePnlIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.opMargin.planRate").value("64.3"))
                 .andExpect(jsonPath("$.opMargin.vsPlanPoint").value("-4.3"));
 
-        // 연간 탭: 1~10월 누적, 전월 추정 비교 없음
+        // 연간 탭: 연간 전체(1~10월 실적 + 11·12월 추정) vs 1~12월 계획, 전월 대비는 9월 시트의 연간 전망(10월 추정 950)
         mvc.perform(auth(get("/api/v1/home/pnl").param("period", "YEAR").param("year", y()).param("month", "10"), planner))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.kpis[0].actual").value("2400"))
-                .andExpect(jsonPath("$.kpis[0].vsPlanAmount").value("100"))
-                .andExpect(jsonPath("$.rows[1].vsPrevEstimateAmount").isEmpty());
+                .andExpect(jsonPath("$.kpis[0].actual").value("2500"))
+                .andExpect(jsonPath("$.kpis[0].vsPlanAmount").value("150"))
+                .andExpect(jsonPath("$.rows[1].vsPrevEstimateAmount").value("1550"));
 
         mvc.perform(auth(get("/api/v1/home/op-drivers").param("year", y()).param("month", "10"), planner))
                 .andExpect(status().isOk())
