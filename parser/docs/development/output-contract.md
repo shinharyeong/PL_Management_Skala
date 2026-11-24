@@ -46,6 +46,24 @@ JSON은 UTF-8, JSONL은 줄마다 독립 객체입니다. gzip은 중복된 출�
 
 스타일 전체 XML에는 글꼴·색상·채움·정렬·숫자 형식·조건부 차등 서식이 남습니다. 시트의 `structure_xml`, `conditional_formatting`에는 범위·조건·아이콘 등의 원문이 남고 `evaluated=false`입니다. 그려진 표시값이나 조건 충족 여부를 새로 계산했다고 주장하지 않습니다. 등록된 모든 기본 숫자 서식을 렌더링하지는 않으며, 모르는 형식 ID는 원본 스타일 표에 보존합니다.
 
+## xlsb 원본
+
+xlsb는 xlsx와 같은 ZIP 패키지지만 통합 문서·시트·공유 문자열·서식·메모 파트가 BIFF12 바이너리입니다. 추출 결과는 xlsx와 같은 키를 쓰며, 아래만 다릅니다.
+
+| 항목 | xlsb에서의 값 |
+| --- | --- |
+| `package_metadata.format` | `"xlsb"` (xlsx에는 키 없음) |
+| `workbook_xml`, `shared_strings_xml`, `styles.raw_xml`, `cell_formats[].raw_xml`, `structure_xml`, `conditional_formatting` | 원본 XML이 없어 `null` 또는 빈 목록 |
+| `xml_attributes` | 레코드에서 만든 `r`·`s`·`t`만 |
+| `raw_lexeme` | 숫자는 저장값을 왕복 가능한 가장 짧은 십진 문자열로(RK ÷100은 정확한 십진수), 공유 문자열은 인덱스 문자열 |
+| `style_id` | 셀 레코드의 서식 번호. 행·열 서식으로 대체하지 않음 |
+| `formula.text`·`raw_text` | 저장된 토큰을 Excel A1 문장으로 복원. 열 전체는 `$A:$A`, 행 전체는 `1:1`로 줄여 씀. 숫자 상수는 지수 없이 씀 |
+| 공유 수식 | xlsx와 같게 기준 셀에만 문장(`attributes.t=shared`, `ref`, `si`)을 두고 나머지 셀은 `shared_base`로 기준을 가리킴 |
+| 복원하지 못한 수식 | `formula.text=null`, `attributes.unresolved="1"`, `cached_value`는 보존, 시트·셀과 사유가 있는 `XLSB_FORMULA_UNRESOLVED` 진단 |
+| 메모 | 바이너리 메모(`comments*.bin`)와 스레드 메모(XML)를 같은 모양으로. `raw_xml`은 바이너리 메모에서 `null` |
+
+`validate_extraction`은 xlsb이면 추출기와 별도의 레코드 읽기로 시트 목록, 셀 주소, 저장값(숫자·문자열·불리언·오류), 수식 유무를 대조합니다(`source_format: "xlsb"`). 서비스 브리지는 `.xlsb` 파일 이름과 xlsb 통합 문서 형식을 받고, 셀 수·문자열 길이 한도를 레코드 기준으로 적용합니다. 매크로(`vbaProject`)가 있으면 거부합니다.
+
 ## 수식과 캐시
 
 - `formula.text`는 원본 수식 앞에 `=`를 붙인 표현입니다. 수식은 계산하지 않습니다.

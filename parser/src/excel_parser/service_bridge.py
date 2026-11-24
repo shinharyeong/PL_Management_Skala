@@ -16,10 +16,12 @@ from xml.etree import ElementTree as ET
 from xml.parsers import expat
 from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile
 
+from . import xlsb as xlsb_reader
 from .extraction import extract_workbook_bytes
 from .mapping import map_workbook
-from .ooxml import cell_position, local_name, range_bounds
+from .ooxml import cell_position, local_name, range_bounds, relationships
 from .submission_adapter import build_submission_data
+from .xlsb import XLSB_WORKBOOK_TYPE, content_type_of, is_xlsb, workbook_part
 
 PROTOCOL_VERSION = "1.0"
 PREVIEW_CONTRACT_VERSION = "preview-records/1.0"
@@ -89,7 +91,7 @@ def _check_filename(filename: str) -> None:
         or any(ord(character) < 32 or ord(character) == 127 for character in filename)
     ):
         raise BridgeError("INVALID_FILENAME")
-    if PurePosixPath(filename).suffix.lower() != ".xlsx":
+    if PurePosixPath(filename).suffix.lower() not in {".xlsx", ".xlsb"}:
         raise BridgeError("UNSUPPORTED_FILE_TYPE")
 
 
@@ -219,7 +221,11 @@ def _inspect_xml(document: bytes, totals: dict, limits: BridgeLimits) -> None:
                 )
                 or "comment" in relation_type
             )
-            if xml_target and not attributes.get("Target", "").endswith(".xml"):
+            target = attributes.get("Target", "")
+            if xml_target and target.endswith(".bin"):
+                # xlsb의 바이너리 파트. 패키지가 실제 xlsb인지는 _validate_package에서 확인한다.
+                totals["binary_targets"] = True
+            elif xml_target and not target.endswith(".xml"):
                 raise BridgeError("INVALID_WORKBOOK")
 
     def end(name: str) -> None:
@@ -409,13 +415,23 @@ def _validate_package(content: bytes, limits: BridgeLimits) -> None:
             if entry.filename == "[Content_Types].xml":
                 for node in ET.fromstring(document):
                     content_type = node.get("ContentType", "")
-                    if (
+                    # xlsb 통합 문서 형식 이름에는 macroEnabled가 들어 있지만 매크로가 아니다.
+                    # 실제 매크로(vbaProject)는 위 엔트리 이름 검사에서 막는다.
+                    if content_type != XLSB_WORKBOOK_TYPE and (
                         "macroenabled" in content_type.lower()
                         or "vba" in content_type.lower()
                     ):
                         raise BridgeError("UNSUPPORTED_FILE_TYPE")
                     if content_type == _WORKBOOK_TYPE:
                         workbook_parts.append(node.get("PartName", "").lstrip("/"))
+        if not is_xlsb(archive) and totals.get("binary_targets"):
+            raise BridgeError("INVALID_WORKBOOK")
+        if is_xlsb(archive):
+            book_part = workbook_part(archive)
+            if book_part not in names or content_type_of(archive, book_part) != XLSB_WORKBOOK_TYPE:
+                raise BridgeError("INVALID_WORKBOOK")
+            _inspect_xlsb(archive, book_part, limits)
+            return
         if (
             len(workbook_parts) != 1
             or workbook_parts[0] not in names
@@ -423,6 +439,58 @@ def _validate_package(content: bytes, limits: BridgeLimits) -> None:
         ):
             raise BridgeError("INVALID_WORKBOOK")
         _validate_text_budget(totals, limits)
+
+
+def _inspect_xlsb(archive: ZipFile, book_part: str, limits: BridgeLimits) -> None:
+    """xlsb 바이너리 파트에 XML 검사와 같은 자원 한도를 적용한다.
+
+    Args:
+        archive: 크기·경로 검사를 마친 ZIP 패키지.
+        book_part: 통합 문서(workbook.bin) 파트 경로.
+        limits: 셀·텍스트 한도.
+    Returns:
+        없음.
+    Raises:
+        BridgeError: 레코드가 손상됐거나(INVALID_WORKBOOK) 셀·텍스트 한도를 넘은 경우.
+    Side Effects:
+        메모리에서 레코드를 훑기만 한다.
+    """
+    try:
+        sheets, _ = xlsb_reader.read_workbook_sheets(archive, book_part)
+        if not sheets or any(not 1 <= len(sheet["name"]) <= 31 for sheet in sheets):
+            raise BridgeError("INVALID_WORKBOOK")
+        rels = relationships(archive, book_part)
+        text_bytes = 0
+        strings_part = next((entry.get("part") for entry in rels.values()
+                             if entry.get("Type", "").endswith("/sharedStrings")), None)
+        for text in xlsb_reader.read_shared_strings(archive, strings_part):
+            if len(text) > limits.max_text_chars:
+                raise BridgeError("WORKBOOK_LIMIT_EXCEEDED")
+            text_bytes += len(text.encode("utf-8"))
+        cells = physical = 0
+        for sheet in sheets:
+            relation = rels.get(sheet["relationship_id"] or "", {})
+            part = relation.get("part")
+            if not part or not relation.get("Type", "").endswith("/worksheet"):
+                continue
+            for record_type, body in xlsb_reader.iter_records(archive.read(part)):
+                if record_type in range(1, 19):
+                    physical += 1
+                    if record_type not in {1, 12}:
+                        cells += 1
+                    if record_type < 12 and len(body) >= 4:
+                        column = int.from_bytes(body[:4], "little")
+                        if column > xlsb_reader.MAX_COLUMN:
+                            raise BridgeError("INVALID_WORKBOOK")
+                elif record_type == 0 and len(body) >= 4:
+                    if int.from_bytes(body[:4], "little") > xlsb_reader.MAX_ROW:
+                        raise BridgeError("INVALID_WORKBOOK")
+                if physical > limits.max_xml_cells or cells > limits.max_cells:
+                    raise BridgeError("WORKBOOK_LIMIT_EXCEEDED")
+        if text_bytes > limits.max_logical_text_bytes:
+            raise BridgeError("WORKBOOK_LIMIT_EXCEEDED")
+    except xlsb_reader.XlsbFormatError as error:
+        raise BridgeError("INVALID_WORKBOOK") from error
 
 
 def _failure(code: str) -> dict:
