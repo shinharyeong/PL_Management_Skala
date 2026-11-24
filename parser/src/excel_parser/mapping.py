@@ -180,8 +180,13 @@ def _period(cells: list[dict], *, annual: bool = False) -> dict:
         ),
         None,
     )
+    # 월이 있으면 분기 머리글은 월 묶음일 뿐이다(예: 1Q 아래 1·2·3월). 월 없이 분기만 있으면 분기 합계 열.
+    # 월·분기·연간은 서로 다른 집계라 함께 합산하지 않는다(제출 어댑터·master는 month만 쓴다).
     aggregation = (
-        "month" if month else "annual" if annual or "연간" in joined else "unknown"
+        "month" if month
+        else "quarter" if quarter
+        else "annual" if annual or "연간" in joined
+        else "unknown"
     )
     return {
         "year": next((year for label in labels if (year := _year(label))), None),
