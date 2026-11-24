@@ -8,6 +8,8 @@ import dataclasses
 import hashlib
 from pathlib import Path
 
+import psycopg
+
 from ..config import Settings, get_settings
 from . import db, schema
 
@@ -31,7 +33,7 @@ def list_sets(s: Settings | None = None) -> dict:
     s = s or get_settings()
     try:
         con = _reg(s)
-    except db.DbUnavailable:
+    except (db.DbUnavailable, psycopg.Error):                 # 연결이 안 되거나 읽기 전용 계정(스키마·표를 만들 권한 없음)이면 묶음 기능은 없는 것으로 본다
         return {"sets": [], "active": None}
     try:
         a = con.execute("SELECT val FROM dataset_state WHERE key='active'").fetchone()

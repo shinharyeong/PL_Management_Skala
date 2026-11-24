@@ -41,14 +41,17 @@ CREATE INDEX IF NOT EXISTS ix_expl_v ON explanation(version, org_code, year, mon
 """
 
 # AI 에게 보내는 구조 설명(데이터 값은 포함하지 않는다)
-SCHEMA_DOC = """테이블/뷰(PostgreSQL). 금액 컬럼은 모두 원 단위 정수이고 이름이 _won 으로 끝난다.
+SCHEMA_DOC = """테이블/뷰(PostgreSQL). 금액 컬럼은 모두 원 단위이고(소수가 있을 수 있다) 이름이 _won 으로 끝난다. 값이 없는 칸은 행이 없다(0 으로 채우지 않는다): 행이 없는 것과 0 을 구분한다.
 - fact(version, org_code, org_name, kind('매출'|'영업비용'), cat1, cat2, item, detail, team, manager, src, year, month, scenario('ACTUAL'|'ESTIMATE'|'PLAN'), amount_won)
-    합계 행 없이 가장 작은 항목만 있다. cat1/cat2/item 은 항목 계층(대분류/중분류/소분류).
+    합계 행 없이 가장 작은 항목만 있다. cat1/cat2/item 은 항목 계층(대분류/중분류/소분류). 한 version 의 year 는 그 version 의 연도 하나뿐이다(전년 값은 전년도 version 에 있다).
+    team·manager 는 아직 채워지지 않아 비어 있을 수 있다(팀·담당자 질문은 '데이터 없음').
 - v_op(version, org_code, org_name, year, month, scenario, revenue_won, cost_won, op_won)  -- 조직·월별 매출, 영업비용, 영업이익(= 매출 − 영업비용)
-- gap(version, gap_id, gap_type('AMOUNT_REVISION'|'OP_GAP'), org_code, org_name, item, year, month, scenario, basis, previous_won, current_won, diff_won, rate_percent, status, explanation_status)
+- gap(version, gap_id, gap_type('ITEM_GAP'), org_code, org_name, item, year, month, scenario, basis('PLAN'|'PREVIOUS'), previous_won, current_won, diff_won, rate_percent, status('NEEDS_REVIEW'|'SELECTED'|'IN_PROGRESS'|'RE_REVIEW'|'ACCEPTED'|'EXCLUDED'), explanation_status('수락'|'검토중'|'없음'))
+    항목×월×구분 단위의 Gap 이고 임계값을 넘은 것만 있다. previous_won 은 비교 기준(계획 또는 직전 제출본) 금액이다. 임계값 숫자는 없다.
 - explanation(version, explanation_id, gap_key, gap_id, org_code, org_name, kind, item, year, month, scenario, link_type, status('수락'|'검토중'), verdict, rounds, answer, src)
-    answer 는 수락된 소명의 원문만 있고 나머지는 NULL 이다.
-- dim_version(version, kind, label, year, month, source), dim_org(org_code, org_name)
+    answer 는 수락된 소명의 원문만 있고 나머지는 NULL 이다. gap_key 는 소명이 붙은 검토 항목이고 gap_id 로 gap 과 이어진다.
+- dim_version(version, kind('master'|'provisional'), label, year, month, source), dim_org(org_code, org_name)
+    version 은 월마다 하나다: master-YYYY-MM(확정) 또는 provisional-YYYY-MM(master 가 없는 달의 조직별 최신 승인본, 잠정).
 사용할 수 있는 인자: :version(조회 기준 버전), :version_prev(이전 버전), :base_year, :base_month, :scn('ACTUAL' 기본)"""
 
 RULES = """규칙:
