@@ -3,14 +3,13 @@
 POST /v1/chat            질문 → 해석·(되묻기)·SQL 생성(AI)·검사·읽기 전용 조회·설명 문장·엑셀
 GET  /v1/chat/files/{id} 만든 엑셀 내려받기
 GET  /v1/chat/status     DB 범위(버전·조직·월)와 오늘 남은 AI 호출 수
-POST /v1/chat/load       최신(또는 지정) 업로드 실행 결과를 조회 DB 에 적재
 """
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from ..chat import loader_run, service
+from ..chat import service
 
 router = APIRouter(prefix="/v1/chat", tags=["chat (draft)"])
 
@@ -20,10 +19,6 @@ class ChatRequest(BaseModel):
     version: str | None = Field(default=None, description="조회 기준 버전(시점). 비우면 최신 버전")
     quick_id: str | None = Field(default=None, description="예시 질문 id(고정 SQL, AI 로 SQL 을 만들지 않음)")
     conversation_id: str | None = Field(default=None, max_length=64, description="클라이언트가 만든 대화 ID(대화 기억용, 서버 메모리에만 보관)")
-
-
-class LoadRequest(BaseModel):
-    run_id: str | None = None
 
 
 class MemoryRequest(BaseModel):
@@ -60,11 +55,3 @@ def chat_file(file_id: str):
     return FileResponse(path, filename=name, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
-@router.post("/load")
-async def chat_load(req: LoadRequest | None = None):
-    try:
-        return await run_in_threadpool(loader_run.load_run, req.run_id if req else None)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    except (ValueError, KeyError) as e:
-        raise HTTPException(status_code=422, detail=f"적재할 수 없습니다: {e}") from e

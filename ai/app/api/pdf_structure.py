@@ -139,56 +139,6 @@ async def report_guess_block(req: _BlockGuessReq):
     return await run_in_threadpool(block_guess.guess_block, req.action, req.block, req.candidates)
 
 
-class _SetReq(BaseModel):
-    name: str
-
-
-@router.get("/report-data/datasets")
-def report_datasets():
-    """데이터 묶음 목록(조직 수·최신 월은 파일 안 내용에서 읽음)과 지금 쓰는 묶음."""
-    from ..chat import datasets
-    return datasets.list_sets()
-
-
-@router.post("/report-data/dataset")
-def report_dataset_select(req: _SetReq):
-    """묶음을 고르면 그 묶음의 DB 가 조회 DB 가 된다."""
-    from ..chat import datasets
-    try:
-        return datasets.select(req.name)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-
-
-@router.post("/report-data/upload")
-async def report_upload(files: list[UploadFile] = File(...)):
-    """데이터 묶음(엑셀·JSON 또는 zip)을 올려 기존 업로드 실행(pipeline_run.start)을 시작한다. AI 는 쓰지 않는다."""
-    from ..services import pipeline_run
-    blobs = [(f.filename or "", await f.read()) for f in files]
-    return await run_in_threadpool(pipeline_run.start, blobs, ai=False)
-
-
-@router.get("/report-data/upload/{run_id}")
-def report_upload_status(run_id: str):
-    from ..services import pipeline_run
-    st = pipeline_run.read_status(run_id)
-    if st is None:
-        raise HTTPException(status_code=404, detail="실행을 찾을 수 없습니다.")
-    return st
-
-
-@router.post("/report-data/upload/{run_id}/load")
-async def report_upload_load(run_id: str):
-    """끝난 실행 결과를 조회 DB 에 적재한다(기존 챗봇 적재 경로 loader_run.load_run, 현재 DB 를 교체)."""
-    from ..chat import loader_run
-    try:
-        return await run_in_threadpool(loader_run.load_run, run_id)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    except (ValueError, KeyError) as e:
-        raise HTTPException(status_code=422, detail=f"적재할 수 없습니다: {e}") from e
-
-
 class _ChatReq(BaseModel):
     request: str = Field(min_length=1, max_length=300)
     base: dict
