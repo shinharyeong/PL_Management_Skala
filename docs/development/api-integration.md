@@ -86,6 +86,8 @@ OpenAPI의 현재 구현 설명과 미래 목표를 구분했으며, 자동 정�
   파일 확장자, 보고서 요청·AI 패치·표·텍스트 내보내기. 파일이나 실서버를 만들지 않는다.
 - 전체 `node --test src/lib/*.test.js src/prototype/*.test.js`에서는 31개 통과,
   `domain.test.js`·`navigation.test.js` 두 파일은 `pinia` 미설치로 로드 실패했다.
+- CI의 기존 `npm run test:prototype`도 `src/lib` 계약 테스트를 포함하도록 확장했다.
+  의존성을 설치하는 CI에서는 두 폴더의 테스트와 실제 Vite 빌드를 함께 검증한다.
 - 변경된 Vue 9개를 메모리에서 parse·compileScript·compileTemplate 검사했다.
   기존 npm 캐시의 compiler-sfc 3.5.42를 읽었으며 lockfile 3.5.45와는 버전 차이가 있다.
   브라우저 배치·다운로드 검증과 구별한다. OpenAPI YAML 구문 검사도 통과했다.
