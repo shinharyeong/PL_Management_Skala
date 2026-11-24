@@ -4,6 +4,7 @@ import io.skala.backend.domain.request.exception.RequestErrorCode;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.util.Locale;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
@@ -18,6 +19,8 @@ import org.springframework.stereotype.Service;
 public class SubmissionTemplateService {
 
     private static final String XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    /** 실제 배포 양식(Excel 바이너리 통합 문서) */
+    private static final String XLSB = "application/vnd.ms-excel.sheet.binary.macroEnabled.12";
 
     private final Resource resource;
     private final String filename;
@@ -35,10 +38,15 @@ public class SubmissionTemplateService {
             throw RequestErrorCode.TEMPLATE_NOT_FOUND.exception();
         }
         try {
-            return new Download(filename, XLSX, resource.contentLength(), resource.getInputStream());
+            return new Download(filename, contentType(filename), resource.contentLength(), resource.getInputStream());
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /** 내려받는 파일 이름의 확장자로 형식을 정한다(.xlsb면 바이너리 통합 문서, 그 밖은 xlsx). */
+    static String contentType(String filename) {
+        return filename.toLowerCase(Locale.ROOT).endsWith(".xlsb") ? XLSB : XLSX;
     }
 
     public record Download(String filename, String contentType, long size, InputStream content) {
