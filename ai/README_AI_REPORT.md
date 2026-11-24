@@ -90,3 +90,12 @@ AI_PDF_DEV=1 AI_VLM_MODEL=gpt-4o AI_TIMEOUT_SECONDS=120 AI_DAILY_CALL_LIMIT=1000
 - 기존 SQLite 데이터 이전: `AI_DATABASE_URL=… python tools/sqlite_to_postgres.py` (chat.db 와 sets/*.db 를 읽기만 하고 복사).
 - **운영 권고**: AI_DATABASE_URL 에는 조회 전용 계정을 써라. 예) `CREATE ROLE ai_ro LOGIN PASSWORD '…'; GRANT USAGE ON SCHEMA ai TO ai_ro; GRANT SELECT ON ALL TABLES IN SCHEMA ai TO ai_ro;` 적재(쓰기)는 별도 계정이어야 하는데, 지금은 한 URL 로 읽기·쓰기를 같이 한다(읽기 연결은 읽기 전용 세션이라 안전하지만 DB 권한으로 막는 것이 더 강하다). 한계: 쓰기·읽기 계정 분리(`AI_READONLY_DATABASE_URL`)는 아직 없다.
 - 테스트: `tests/conftest.py` 가 `AI_TEST_DATABASE_URL`(없으면 PATH·Homebrew 의 `initdb` 로 임시 서버)을 쓰고 테스트마다 고유 스키마를 만들었다 지운다. PostgreSQL 이 없으면 DB 가 필요한 테스트는 건너뛴다.
+
+## 7차: RDS 보고서용 뷰로 연결 준비 (AI 보고서 연결 가이드 2·3단계의 AI 몫)
+- **뷰 SQL 초안** `docs/report_views.sql`: AI 가 지금 조회하는 6개 표(`fact`·`v_op`·`gap`·`explanation`·`dim_version`·`dim_org`)와 같은 이름·같은 컬럼의 뷰(스키마 `report`) + 내부 보조 뷰 2개. 백엔드가 마이그레이션 파일로 넣고 검토한다(#60). 홈(`PnlSnapshotLoader`)과 같은 규칙: 확정 = 그 달의 최신 master, 잠정 = master 가 없는 달의 조직별 최신 승인본, 계획 = 확정 연간 계획 제출본의 PLAN, 요청 연도 값만, 합계(DERIVED) 제외, 빈칸은 행 없음.
+- **검증**: `tests/test_report_views.py` 가 실제 백엔드 스키마(V1, 외래키만 제외)에 뷰를 올리고 손으로 계산한 시나리오(마스터/잠정, 전년 값·월간 시트 PLAN·합계 제외, Gap 상태, 수락된 원문만)와 컬럼 이름·순서(AI 표와 동일)를 확인하고, AI 의 조회·SQL 가드가 뷰를 그대로 읽는지 본다.
+- **전환 방법**(뷰가 RDS 에 생긴 뒤): `AI_DATABASE_URL` 을 읽기 전용 계정으로, `AI_DB_SCHEMA=report`. 읽기 전용 계정은 뷰 6개에만 SELECT(예시는 `report_views.sql` 끝). AI 코드는 쓰기 권한이 없어도 동작한다(데이터 묶음 목록은 빈 목록).
+- **AI 쪽 고침**: 스키마 설명·규칙(`chat/schema.py`)을 뷰 기준으로(금액에 소수 가능, 행 없음≠0, gap_type `ITEM_GAP`, 상태 값, version 규칙, team·manager 비어 있음), SQL 프롬프트 `chat-sql-v4`. 화면 상단의 "임시 데모"·데이터 묶음 선택·데이터 올리기를 없앴다(데이터는 백엔드 RDS 한 곳).
+- **회의로 정해야 아래가 확정된다(가이드 결정 1~4)**: ① Gap 정의 — 초안은 백엔드 정의(항목 단위 `ITEM_GAP`)라 조직 영업이익 Gap(`OP_GAP`)·이월이 없고, 그래서 `data_select.gaps()` 의 'Gap 카드'(OP_GAP 기준)는 뷰로 바꾸면 비어 보인다. ② version·잠정 규칙(초안은 추천대로). ③ 뷰 마이그레이션 담당. ④ 백엔드 API 계약(`pdf.jobs`, `/v1/nl-query`, `/v1/edit`, 틀 JSON 스키마, 제안 분류 주체).
+- **아직 안 한 것**: #62 삭제(적재기·업로드 파이프라인·데모 화면의 데이터 올리기 API) — 가이드대로 뷰와 틀 API 가 동작을 확인한 뒤. 홈·Gap 화면 숫자와의 실데이터 대조(백엔드 실데이터 필요). 뷰 성능(지금은 일반 뷰라 질문마다 계산한다. 느리면 머티리얼라이즈드 뷰). `status` 는 `ReviewTabs`(+`isAnswered()`: 답이 비어 있지 않음)를 SQL 로 옮긴 것이라 백엔드 규칙이 바뀌면 같이 고쳐야 한다.
+

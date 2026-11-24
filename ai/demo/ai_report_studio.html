@@ -195,19 +195,9 @@ button{font:inherit;cursor:pointer}
 </style></head><body>
 
 <header class="top">
-  <div class="brand"><b>AI 보고서 만들기</b><span>경영기획팀 · 임시 데모(저장 없음)</span></div>
-  <div style="display:flex;align-items:center;gap:12px"><label class="cap" style="display:flex;align-items:center;gap:6px">데이터 묶음 <select id="dset" style="height:34px;border:1px solid var(--line);border-radius:8px;padding:0 8px"></select></label><button class="btn ghost" id="ubtn" type="button" style="height:34px">데이터 올리기</button><div class="steps" id="steps"></div></div>
+  <div class="brand"><b>AI 보고서 만들기</b></div>
+  <div style="display:flex;align-items:center;gap:12px"><div class="steps" id="steps"></div></div>
 </header>
-<div id="upanel" class="msg" style="background:#fff;border:1px solid var(--line);color:var(--ink)" hidden>
-  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-    <b>데이터 묶음 올리기</b><span class="cap">엑셀·JSON·zip(폴더째 가능) → 기존 업로드 실행 → 조회 DB 적재 (<b>현재 조회 DB 를 교체</b>합니다. 2~5단계가 새 데이터로 다시 그려집니다)</span>
-    <label class="btn ghost" style="display:inline-flex;align-items:center;height:34px;cursor:pointer">파일/zip 선택<input type="file" id="ufiles" multiple accept=".xlsx,.json,.zip" hidden></label>
-    <label class="btn ghost" style="display:inline-flex;align-items:center;height:34px;cursor:pointer">폴더 선택<input type="file" id="ufolder" webkitdirectory multiple hidden></label>
-    <span class="cap" id="ucount">선택한 파일 없음</span>
-    <button class="btn" id="ugo" type="button" style="height:34px" disabled>조회 DB 에 적재</button>
-  </div>
-  <div class="cap" id="ustat" style="margin-top:8px"></div>
-</div>
 <div class="msg" id="msg" hidden></div>
 
 <!-- 1 시작 -->
@@ -495,7 +485,7 @@ async function enterStep3(fromSaved) {
     const r = await fetch(SRV() + '/v1/dev/report-data/months');
     D = await r.json();
   } catch (e) { warn('ai 서버에 연결하지 못했습니다.'); return; }
-  if (!D.db_ready || !D.default) { warn('조회 DB 에 데이터가 없습니다. 위 "데이터 올리기"로 데이터를 적재하세요.'); return; }
+  if (!D.db_ready || !D.default) { warn('조회 DB 에 데이터가 없습니다. 백엔드에서 월간 master(또는 승인본)가 생기면 여기에 나타납니다.'); return; }
   BASE = {...D.default};
   if (fromSaved && fromSaved.baseRule && fromSaved.baseRule.mode === 'fixed' && D.months.some(m => m.year === fromSaved.baseRule.year && m.month === fromSaved.baseRule.month)) BASE = {year: fromSaved.baseRule.year, month: fromSaved.baseRule.month};
   YEAR = BASE.year;
@@ -1470,63 +1460,5 @@ function openArchive() {
 }
 document.body.append(h('button', {type: 'button', class: 'btn ghost', id: 'archbtn', style: 'position:fixed;right:16px;top:14px;z-index:20;height:36px', onclick: openArchive}, '틀 아카이브'));
 renderSaved();
-
-// ----- 데이터 올리기(기존 업로드 실행 → 조회 DB 적재) -----
-async function loadSets() {
-  try {
-    const j = await (await fetch(SRV() + '/v1/dev/report-data/datasets')).json();
-    $('dset').replaceChildren(...j.sets.map(x => h('option', {value: x.name, selected: x.active}, `${x.label} (${x.name}${x.latest ? ' · ' + x.latest : ''})`)));
-  } catch (e) { $('dset').replaceChildren(h('option', null, '(서버 연결 안 됨)')); }
-}
-$('dset').addEventListener('change', async e => {
-  try {
-    const r = await fetch(SRV() + '/v1/dev/report-data/dataset', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: e.target.value})});
-    const j = await r.json(); if (!r.ok) throw new Error(j.detail || r.status);
-    warn('데이터 묶음을 바꿨습니다. 3단계부터 새 데이터로 다시 계산합니다.');
-    if (typeof afterReload === 'function') await afterReload();
-  } catch (err) { warn('묶음을 바꾸지 못했습니다: ' + err.message); }
-});
-loadSets();
-$('ubtn').addEventListener('click', () => { $('upanel').hidden = !$('upanel').hidden; });
-let UFILES = [];
-const pickU = () => { UFILES = [...$('ufiles').files, ...$('ufolder').files]; $('ucount').textContent = UFILES.length ? `선택한 파일 ${UFILES.length}개` : '선택한 파일 없음'; $('ugo').disabled = !UFILES.length; };
-$('ufiles').addEventListener('change', pickU); $('ufolder').addEventListener('change', pickU);
-const ustat = t => { $('ustat').textContent = t; };
-$('ugo').addEventListener('click', async () => {
-  if (!UFILES.length) return;
-  $('ugo').disabled = true; warn(''); ustat('올리는 중…');
-  try {
-    const fd = new FormData(); UFILES.forEach(f => fd.append('files', f, f.webkitRelativePath || f.name));
-    let r = await fetch(SRV() + '/v1/dev/report-data/upload', {method: 'POST', body: fd});
-    let j = await r.json(); if (!r.ok) throw new Error(j.detail || r.status);
-    const id = j.run_id, t0 = Date.now();
-    for (;;) {
-      await new Promise(res => setTimeout(res, 1500));
-      r = await fetch(SRV() + '/v1/dev/report-data/upload/' + id); j = await r.json();
-      const st = Object.entries(j.stages || {}).map(([k, v]) => `${k}:${v.state}`).join(' · ');
-      ustat(`실행 중(${Math.round((Date.now() - t0) / 1000)}초) ${st}`);
-      if (j.state !== 'running') break;
-    }
-    if (j.state !== 'done') { const bad = Object.entries(j.stages || {}).find(([, v]) => v.state === 'failed'); throw new Error('업로드 실행 실패' + (bad ? ` — ${bad[0]}: ${bad[1].message}` : '') + (j.error ? ` (${j.error})` : '')); }
-    ustat('조회 DB 에 적재 중…');
-    r = await fetch(SRV() + `/v1/dev/report-data/upload/${id}/load`, {method: 'POST'}); j = await r.json();
-    if (!r.ok) throw new Error(j.detail || r.status);
-    ustat('적재 완료: ' + (j.versions || []).map(v => `${v.version} (사실 ${v.facts ?? v.rows ?? '?'}행${v.gaps != null ? ` · Gap ${v.gaps}건 · 소명 ${v.explanations}건` : ' · Gap·소명 없음(엑셀만 적재)'})`).join(' / ') + ` · ${j.seconds}초`);
-    await afterReload();
-  } catch (e) { ustat(''); warn('데이터 올리기 실패: ' + (e instanceof TypeError ? 'ai 서버에 연결하지 못했습니다.' : e.message)); }
-  finally { $('ugo').disabled = false; }
-});
-async function afterReload() {
-  const vis = ['s3', 's4', 's5'].find(id => !$(id).hidden);
-  if (!vis) return;                                              // 1·2단계면 다음에 들어갈 때 새 데이터를 읽는다
-  const r = await fetch(SRV() + '/v1/dev/report-data/months'); D = await r.json();
-  if (!D.default) { warn('적재한 데이터에 월이 없습니다.'); return; }
-  BASE = {...D.default}; YEAR = BASE.year; FILL = {};
-  if (vis === 's3') { await render3(); return; }
-  const gr = await fetch(SRV() + `/v1/dev/report-data/gaps?year=${BASE.year}&month=${BASE.month}`); G = await gr.json();
-  GI = 0; ASSIGN = {};
-  if (vis === 's4') { render4(); return; }
-  AISENT = null; ST5.gi = 0; ST5.assign = {}; ST5.order = ST5.order.filter(id => id !== 'ai-sent'); DRAFT = null; await refill();
-}
 </script>
 </body></html>
