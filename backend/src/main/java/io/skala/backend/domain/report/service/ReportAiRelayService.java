@@ -19,12 +19,13 @@ public class ReportAiRelayService {
 
     private final ReportAiClient reportAi;
     private final TemplateDefinitionValidator validator;
+    private final ReportMetricService metrics;
 
     public JsonNode data(AuthenticatedUser user, ReportAiRequests.Data request) {
         user.requireRole(UserRole.PLANNER);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("base", Map.of("year", request.base().year(), "month", request.base().month()));
-        body.put("blocks", request.blocks());
+        body.put("blocks", metrics.resolveMetrics(request.blocks()));      // metricId → 지표 사전의 SQL
         return reportAi.post("/v1/data", body, user.id());
     }
 

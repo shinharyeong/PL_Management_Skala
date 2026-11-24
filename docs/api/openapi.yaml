@@ -4593,6 +4593,7 @@ paths:
       tags:
       - AI 보고서
       summary: RPT-09 자주 쓰는 SQL을 지표 사전으로 등록
+      description: SQL은 report-ai의 검사기(sqlguard, `/v1/sql-check`)로 검사한다(SELECT 한 문장, 보고서용 뷰만, version 조건). 목록에는 SQL을 내보내지 않고, 블록은 metricId로 가리킨다(RPT-10에서 backend가 SQL로 바꿔 넘김).
       x-fr:
       - FR-RPT-006
       x-tables:
@@ -4637,6 +4638,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '503':
+          description: '`REPORT_AI_UNAVAILABLE` SQL 검사를 맡는 보고서 AI에 연결할 수 없음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '409':
           description: '`METRIC_CODE_EXISTS` 같은 코드 존재 + 명령 공통 409'
           content:
@@ -4686,7 +4693,7 @@ paths:
                       maximum: 12
                 blocks:
                   type: array
-                  description: 채울 블록(틀의 블록 그대로). 지표(metric)나 확정 SQL은 블록 안에 있다
+                  description: 채울 블록(틀의 블록 그대로). `metricId`가 있으면 backend가 지표 사전의 SQL을 `sql`로 넣어 넘기고, `sql`이 있으면 report-ai가 블록 기준 월 인자(:version·:version_prev·:base_year·:base_month·:scn)로 실행한다
                   items:
                     $ref: '#/components/schemas/ReportBlock'
       responses:

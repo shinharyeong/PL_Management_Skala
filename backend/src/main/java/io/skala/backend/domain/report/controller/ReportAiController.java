@@ -1,12 +1,17 @@
 package io.skala.backend.domain.report.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.skala.backend.domain.report.dto.MetricDtos;
 import io.skala.backend.domain.report.dto.PdfJobResponse;
 import io.skala.backend.domain.report.dto.ReportAiRequests;
 import io.skala.backend.domain.report.service.ReportAiRelayService;
+import io.skala.backend.domain.report.service.ReportMetricService;
 import io.skala.backend.domain.report.service.ReportPdfJobService;
 import io.skala.backend.global.exception.BusinessException;
 import io.skala.backend.global.exception.ErrorCode;
+import io.skala.backend.global.idempotency.IdempotentCommandExecutor;
+import io.skala.backend.global.response.PageResponse;
+import io.skala.backend.global.security.AuthenticatedUser;
 import io.skala.backend.global.security.CurrentUser;
 import jakarta.validation.Valid;
 import java.io.IOException;
@@ -18,6 +23,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -34,7 +40,9 @@ public class ReportAiController {
 
     private final ReportPdfJobService pdfJobs;
     private final ReportAiRelayService relay;
+    private final ReportMetricService metricService;
     private final CurrentUser currentUser;
+    private final IdempotentCommandExecutor idempotency;
 
     /** RPT-01 PDF 업로드 → 분석 요청. 202와 작업(RUNNING) */
     @PostMapping(path = "/pdf-jobs", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -60,6 +68,23 @@ public class ReportAiController {
     @GetMapping(path = "/pdf-jobs/{jobId}/pages/{no}", produces = MediaType.IMAGE_PNG_VALUE)
     public byte[] pdfJobPage(@PathVariable long jobId, @PathVariable int no) {
         return pdfJobs.page(currentUser.get(), jobId, no);
+    }
+
+    /** RPT-08 지표 사전 목록 */
+    @GetMapping("/metrics")
+    public PageResponse<MetricDtos.Metric> metrics(@RequestParam(required = false) String q,
+                                                   @RequestParam(required = false) String cursor,
+                                                   @RequestParam(required = false) Integer limit) {
+        return metricService.list(currentUser.get(), q, cursor, limit);
+    }
+
+    /** RPT-09 지표 등록(SQL은 report-ai sqlguard로 검사) */
+    @PostMapping("/metrics")
+    public ResponseEntity<String> createMetric(@RequestHeader(IdempotentCommandExecutor.HEADER) String idempotencyKey,
+                                               @Valid @RequestBody MetricDtos.CreateRequest request) {
+        AuthenticatedUser user = currentUser.get();
+        return idempotency.execute(user.id(), "POST /api/v1/report/metrics", idempotencyKey, request,
+                () -> ResponseEntity.status(HttpStatus.CREATED).body(metricService.create(user, request)));
     }
 
     /** RPT-10 블록 데이터 채우기 */
