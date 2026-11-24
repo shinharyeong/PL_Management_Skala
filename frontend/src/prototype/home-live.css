@@ -1,3 +1,4 @@
+@layer legacy {
 /* Live data uses the prototype's home composition, with bounded wide-data regions. */
 .home-live .hp-section-heading { flex-wrap: wrap; }
 .home-live .hp-summary .hp-table-scroll { max-height: 480px; overflow: auto; }
@@ -14,4 +15,6 @@
   .home-live .hp-close-steps { min-width: 390px; }
   .home-live .hp-close-card { overflow-x: auto; }
   .home-live .hp-todo-row .btn { max-width: 100%; }
+}
+
 }

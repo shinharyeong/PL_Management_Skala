@@ -1,49 +1,70 @@
-/* Live API content in the original prototype hierarchy and cell grid. */
-.monthly-panel .hierarchy-table.live-gap-table table { width: 1200px; min-width: 1200px; table-layout: fixed; }
-.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-gutter { width: 10px; }
-.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-name { width: 330px; }
-.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-amount { width: 170px; }
-.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-rate { width: 140px; }
-.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-status { width: 190px; }
-.monthly-panel .hierarchy-table.live-gap-table .hierarchy-close td { padding: 0; height: 6px; border: 0; }
-.monthly-panel .hierarchy-table.live-gap-table .hierarchy-rail { padding: 0; border: 0; }
-.monthly-panel .hierarchy-table.live-gap-table th:last-child { text-align: left; }
-.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-item { display: flex; gap: 10px; align-items: flex-start; }
-.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-item input { margin: 14px 0 0; }
-.monthly-panel .hierarchy-table.live-gap-table .cell-link { line-height: 1.6; }
-.monthly-panel .hierarchy-table.live-gap-table .major-row .number { color: white; }
-.monthly-panel .hierarchy-table.live-gap-table .badge { white-space: normal; }
+@layer app {
+/* 월간 PrimeVue 표는 원본 금액과 버전의 의미를 유지하고 작은 화면에서는 가로로 스크롤한다. */
+.monthly-panel .p-datatable,
+.monthly-panel .p-treetable { min-width: 0; max-width: 100%; }
+.monthly-panel .version-controls .p-select { width: 100%; min-width: 0; }
+.monthly-panel .gap-toggle-control { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
+.monthly-panel .gap-toggle-control strong { margin-left: 8px; }
+.monthly-panel .gap-amount-control { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.monthly-panel .gap-controls > .actions .p-button { min-width: 140px; }
+.monthly-panel .unit-field .p-select { min-width: 100px; }
+.monthly-panel .sort-field .p-select { min-width: 190px; }
+.monthly-panel .selection-bar > .field { flex: 1; min-width: 200px; }
+.monthly-panel .selection-bar .p-inputtext { width: 100%; }
+.monthly-panel .answer-card.p-button { align-items: flex-start; text-align: left; white-space: normal; }
+.monthly-panel .answer-card.active { border-color: var(--p-primary-color); background: var(--p-primary-50); }
+.monthly-panel .live-hierarchy-item { display: inline-flex; gap: 10px; align-items: center; min-width: 0; }
+.monthly-panel .live-hierarchy-item .p-checkbox { flex-shrink: 0; }
+.monthly-panel .live-hierarchy-item .cell-link { white-space: normal; text-align: left; line-height: 1.6; }
+.monthly-panel .live-group-label { font-weight: 650; overflow-wrap: anywhere; }
+.monthly-panel .live-gap-table .number .p-treetable-body-cell-content { justify-content: flex-end; font-variant-numeric: tabular-nums; }
+.monthly-panel .live-gap-table tr[aria-level="1"] > td { background: #1e3b5c; color: white; }
+.monthly-panel .live-gap-table tr[aria-level="1"] .p-treetable-node-toggle-button,
+.monthly-panel .live-gap-table tr[aria-level="1"] .negative,
+.monthly-panel .live-gap-table tr[aria-level="1"] .positive { color: white; }
+.monthly-panel .live-gap-table tr[aria-level="2"] > td { background: #e7f2f4; color: #285d66; }
+.monthly-panel .live-gap-table tr[aria-level="3"] > td { background: #eff5e9; color: #405e30; }
+.monthly-panel .live-gap-table tr:has(.gap-selected) > td { background: var(--p-primary-50); }
+.monthly-panel .live-gap-table .p-tag { white-space: normal; }
 .monthly-panel .live-cell-detail .live-summary-values { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px 24px; }
 .monthly-panel .live-cell-detail .live-summary-values div { display: flex; flex-direction: column; gap: 4px; }
 .monthly-panel .live-cell-detail .live-summary-values small { color: #587092; font-size: 12px; }
 .monthly-panel .live-cell-detail .live-summary-values strong { font-size: 17px; font-weight: 650; overflow-wrap: anywhere; }
-.monthly-panel .version-grid.live-version-grid th,
-.monthly-panel .version-grid.live-version-grid td { width: auto; padding: 18px; border-right: 1px solid #dde5ef; overflow-wrap: anywhere; }
-.monthly-panel .version-grid.live-version-grid thead th { background: #f1f5fa; color: #49607c; }
-.monthly-panel .version-grid.live-version-grid th.current-version { background: #245fdb; color: white; }
-.monthly-panel .version-grid.live-version-grid th.new-version { background: #fff3d9; color: #9a5a14; }
-.monthly-panel .version-grid.live-version-grid th > span,
-.monthly-panel .version-grid.live-version-grid th > small { display: block; margin-top: 8px; font-size: 12px; font-weight: 400; line-height: 1.7; }
-.monthly-panel .version-grid.live-version-grid .source-sheet th { background: #eaf1fd; color: #285d9b; padding: 12px 18px; }
-.monthly-panel .version-grid.live-version-grid td.current-cell { background: #f0f5ff; }
-.monthly-panel .version-grid.live-version-grid td.new-cell { background: #fffaf0; }
-.monthly-panel .version-grid.live-version-grid .live-version-value { display: block; font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.monthly-panel .version-grid.live-version-grid .live-version-value small { margin-left: 4px; font-size: 12px; font-weight: 400; }
-.monthly-panel .version-grid.live-version-grid .live-version-change { margin-top: 12px; color: #64748b; font-size: 12px; }
-.monthly-panel .version-grid.live-version-grid .live-version-change b { color: #344c6a; font-size: 14px; font-weight: 550; }
+.monthly-panel .live-version-grid th,
+.monthly-panel .live-version-grid td { vertical-align: top; overflow-wrap: anywhere; }
+.monthly-panel .live-version-grid .version-heading { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; white-space: normal; }
+.monthly-panel .live-version-grid .version-heading small { font-weight: 400; line-height: 1.7; }
+.monthly-panel .live-version-grid .version-source-name { display: block; margin-top: 8px; }
+.monthly-panel .live-version-grid th.current-version { background: #eaf1ff; }
+.monthly-panel .live-version-grid th.new-version { background: #fff3d9; }
+.monthly-panel .live-version-grid td.current-cell { background: #f0f5ff; }
+.monthly-panel .live-version-grid td.new-cell { background: #fffaf0; }
+.monthly-panel .live-version-grid .p-datatable-row-group-header > td { background: #eaf1fd; color: #285d9b; }
+.monthly-panel .live-version-grid .live-version-value { display: block; font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.monthly-panel .live-version-grid .live-version-value small { margin-left: 4px; font-size: 12px; font-weight: 400; }
+.monthly-panel .live-version-grid .live-version-change { margin-top: 12px; color: #64748b; font-size: 12px; }
+.monthly-panel .live-version-grid .live-version-change b { color: #344c6a; font-size: 14px; font-weight: 550; }
 .monthly-panel .live-cell-detail .live-source-notes > article { margin-top: 18px; padding-top: 18px; border-top: 1px solid #e5eaf1; }
 .monthly-panel .live-cell-detail .live-source-notes dl { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 0; font-size: 13px; }
 .monthly-panel .live-cell-detail .live-source-notes dl > div { display: grid; grid-template-columns: 110px minmax(0,1fr); gap: 16px; }
 .monthly-panel .live-cell-detail .live-source-notes dt { color: #667080; }
 .monthly-panel .live-cell-detail .live-source-notes dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.monthly-panel .live-cell-detail .live-evidence summary { cursor: pointer; font-weight: 600; margin-bottom: 16px; }
-.monthly-panel .live-cell-detail .live-evidence table { min-width: 800px; }
-.monthly-panel .live-cell-detail .history-card > p { white-space: pre-wrap; overflow-wrap: anywhere; }
-@media (max-width:600px) {
+.monthly-panel .live-history-panel .timeline { border-left: 2px solid #dce5f5; padding-left: 16px; color: #64748b; font-size: 12px; }
+.monthly-panel .live-history-panel.current-history > .p-panel-header { background: var(--p-primary-50); }
+.monthly-panel .live-history-panel .history-memo { display: grid; gap: 8px; margin: 20px 0; }
+.monthly-panel .live-history-panel .history-memo p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.monthly-panel .monthly-submission-state { display: block; margin-top: 8px; font-size: 12px; white-space: nowrap; color: #526176; }
+.monthly-panel .monthly-submission-review { display: flex; flex-direction: column; gap: 16px; border-top: 1px solid #dce4ef; margin-top: 8px; padding-top: 20px; white-space: normal; }
+.monthly-panel .monthly-submission-review .p-textarea { width: 100%; }
+@media (max-width: 1200px) {
+  .monthly-panel .version-controls > .p-select:last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 600px) {
   .monthly-panel .live-cell-detail .live-summary-values { grid-template-columns: minmax(0,1fr); }
   .monthly-panel .live-cell-detail .live-source-notes dl > div { grid-template-columns: minmax(0,1fr); gap: 4px; }
+  .monthly-panel .gap-controls > .actions .p-button { min-width: 0; flex: 1; }
+  .monthly-panel .selection-bar > .actions { flex-wrap: wrap; }
+  .monthly-panel .selection-bar > .actions .p-button { flex: 1; }
 }
 
-.monthly-panel .monthly-submission-state { display:block; margin-top:8px; font-size:12px; white-space:nowrap; color:#526176; }
-.monthly-panel .monthly-submission-review { display:flex; flex-direction:column; gap:16px; border-top:1px solid #dce4ef; margin-top:8px; padding-top:20px; white-space:normal; }
-.monthly-panel .monthly-submission-review textarea { width:100%; }
+}

@@ -1,0 +1,31 @@
+@layer legacy, primevue, app;
+
+@layer app {
+  :root{font-family:Inter,"Pretendard","Noto Sans KR",system-ui,sans-serif;color:#1e293b;background:#f5f7fb;font-synthesis:none}
+  .p-button{font-weight:600}.p-button-label{white-space:normal}
+  .p-select,.p-inputtext,.p-inputnumber,.p-textarea{max-width:100%}
+  .p-inputnumber-input{min-width:0;width:100%}
+  .p-datatable,.p-treetable{max-width:100%;min-width:0}
+  .p-datatable-table-container,.p-treetable-table-container{overflow-x:auto}
+  .p-datatable-thead>tr>th,.p-treetable-thead>tr>th{white-space:nowrap}
+  .p-datatable-tbody>tr>td,.p-treetable-tbody>tr>td{vertical-align:middle}
+  .p-panel,.p-panel-content-wrapper,.p-panel-content,.report-panel,.report-panel>*{min-width:0;max-width:100%}
+  .p-panel-content-wrapper{width:100%;overflow:hidden}
+  .p-dialog{max-width:calc(100vw - 2rem)}.p-dialog-content{line-height:1.6}
+  .p-fileupload{min-width:0}.p-fileupload-file-list{overflow-wrap:anywhere}
+  .sidebar .p-menu{border:0;background:transparent;width:100%;padding:0}
+  .sidebar .p-menu-item-link{min-height:46px;border-radius:8px;gap:12px;color:#c1cde0;text-decoration:none}
+  .sidebar .p-menu-item-link.active{color:#1d4ed8;background:#eaf1ff;font-weight:700}
+  .sidebar .p-menu-item-link.workspace-item{padding-left:2rem;font-size:13px}
+  .sidebar .p-menu-item-link>svg,.sidebar .p-menu-item-link>img{width:20px;height:20px;flex-shrink:0}
+  .sidebar .p-menu-item-link .p-badge{margin-left:auto}
+  .sidebar .p-menu-item-content:hover .p-menu-item-link{color:#1e293b}
+  .sidebar-user .p-button{justify-self:start;color:#c1cde0}
+  .local-account-button.p-button{display:flex;align-items:flex-start;flex-direction:column;text-align:left;width:100%}
+  .local-account-button span{font-size:12px;font-weight:400}
+  .auth-form .p-inputtext{width:100%}.auth-cta{width:100%;margin-top:1rem}
+  .app-feedback{width:min(620px,calc(100% - 32px))}
+  .page-progress{height:3px;margin-bottom:1rem}
+  .main-content>.p-message{margin-bottom:1rem}
+  @media(max-width:760px){.sidebar .p-menu-list{display:flex;flex-wrap:nowrap;overflow-x:auto}.sidebar .p-menu-item{flex:0 0 auto}.sidebar .p-menu-item-link{white-space:nowrap;min-height:42px}.sidebar-user .p-button{margin-left:auto}.p-dialog{width:calc(100vw - 2rem)}.p-toolbar{gap:.75rem}.p-toolbar-start,.p-toolbar-end{flex-wrap:wrap;gap:.5rem}}
+}

@@ -15,7 +15,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@primeuix/themes": "2.0.3",
+    "chart.js": "4.6.2",
     "pinia": "^4.0.3",
+    "primeicons": "7.0.0",
+    "primevue": "4.5.5",
     "vue": "^3.5.41",
     "vue-router": "^5.3.1"
   },
