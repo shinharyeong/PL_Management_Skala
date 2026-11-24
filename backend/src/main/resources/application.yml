@@ -36,6 +36,11 @@ management:
     web:
       exposure:
         include: health
+  endpoint:
+    health:
+      # 쿠버네티스 프로브용 /actuator/health/readiness·liveness
+      probes:
+        enabled: true
 
 app:
   # 제출 양식(연간·월간 공통). 엑셀은 저장소에 커밋하지 않으므로 배포 환경에 파일을 둔다.

@@ -137,6 +137,8 @@ class AuthFlowIntegrationTest extends PostgresIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isUnauthorized());
         mvc.perform(get("/actuator/health")).andExpect(status().isOk());
+        mvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk());
+        mvc.perform(get("/actuator/health/liveness")).andExpect(status().isOk());
     }
 
     private String json(Object value) throws Exception {
