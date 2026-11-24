@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.config import get_settings
 from app.main import app
 from app.services import key_messages as svc
+from app.services.call_log import CallLog
 from tests.conftest import FAKE_KEY, FACTS, GOOD
 
 client = TestClient(app)
@@ -16,10 +17,32 @@ def _post(facts, status="final"):
 
 
 def _log(tmp_path):
-    return json.loads((tmp_path / "output" / "ai_call_log.json").read_text(encoding="utf-8"))
+    """현재 테스트 그룹의 메모리 호출 지표를 읽는다.
+
+    Args:
+        tmp_path: 테스트 fixture 또는 합성 입력.
+    Returns:
+        현재 테스트 그룹의 calls 목록.
+    Raises:
+        없음.
+    Side Effects:
+        없음. 메모리 지표만 읽는다.
+    """
+    return CallLog(tmp_path / "output").load()
 
 
 def test_a_normal_response(fake, facts, isolated):
+    """변경된 조회·저장 경계의 회귀 동작을 검증한다.
+
+    Args:
+        fake, facts, isolated: 테스트 fixture 또는 합성 입력.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
     c = fake()
     r = _post(facts)
     assert r.status_code == 200
@@ -35,7 +58,7 @@ def test_a_normal_response(fake, facts, isolated):
     assert set(sent[0]) == {"id", "kind", "text"}                            # 사실 목록만 전송
     log = _log(isolated)["calls"][-1]                                        # 토큰 로그(키·원문 없음)
     assert log["outcome"] == "success" and log["input_tokens"] == 120 and log["output_tokens"] == 60
-    raw = (isolated / "output" / "ai_call_log.json").read_text(encoding="utf-8")
+    raw = json.dumps(_log(isolated), ensure_ascii=False)
     assert FAKE_KEY not in raw and "557.7" not in raw
 
 

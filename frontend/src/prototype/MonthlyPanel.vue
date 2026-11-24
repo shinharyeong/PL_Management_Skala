@@ -38,6 +38,7 @@ const session = computed(() => store.monthlySession(store.activeOrg))
 const sessionField = key => computed({ get: () => session.value[key], set: value => { session.value[key] = value } })
 const draft = sessionField('draft'), applied = sessionField('applied'), selection = sessionField('selection'), stage = sessionField('stage'), search = sessionField('search'), sort = sessionField('sort'), unit = sessionField('unit')
 const conditionError = ref(''), feedback = ref('')
+const exclusionReason = ref('')
 const activeCell = sessionField('activeCell'), detailSource = sessionField('detailSource'), dockOpen = ref(false), requestMessage = ref('차이 원인과 영향 기간, 거래별 산출 근거를 확인해 주세요.'), requestDue = ref(''), requestError = ref('')
 const recipientIds = ref(store.organizations.map(o => o.id)), bulkDue = ref(''), bulkMessage = ref(`${month}월 실적 및 추정을 월간 시트 양식에 작성해 회신해 주세요.`), bulkError = ref('')
 const currentOrg = computed(() => store.currentOrg)
@@ -88,7 +89,13 @@ async function addSelected() {
   if(!await store.run(()=>store.addToCart(store.activeOrg, chosen, applied.value)))return
   selection.value = []; emit('navigate','workspace')
 }
-async function excludeSelected(){await store.run(()=>store.excludeItems(store.activeOrg,selection.value));selection.value=[]}
+/** 선택한 항목의 제외 사유를 서버에 기록한 뒤 선택을 비운다.
+ * Args: 없음. Returns: Promise<void>. Raises: 없음(화면 오류로 표시).
+ * Side Effects: 검토 상태 변경; 실패하면 선택과 사유를 유지한다.
+ */
+async function excludeSelected(){
+  if(await store.run(()=>store.excludeItems(store.activeOrg,selection.value,exclusionReason.value))){selection.value=[];exclusionReason.value=''}
+}
 function openDetail(item,source='cart'){activeCell.value=item.id;detailSource.value=source;emit('navigate','cell')}
 function openCalculator(org) {store.activeOrg=org;emit('navigate','calculator')}
 async function sendRequest() {
@@ -160,7 +167,7 @@ watch(() => props.page, async page => {
       <div v-if="!applied" class="empty-state calculator-empty"><h3>비교 대상을 선택하고 기준을 적용해 주세요.</h3></div>
       <div v-else-if="!rows.length" class="empty-state"><h3>조건에 맞는 항목이 없습니다.</h3><p>진행 단계, 검색어 또는 금액 조건을 확인해 주세요.</p></div>
       <LiveGapTable v-else :rows="rows" :selected="selection" :unit="unit" :type="applied.type" :editable="store.currentSubmission?.status==='PENDING'" @select="toggle" @all="selectVisible" @detail="item=>openDetail(item,'calculator')" />
-      <div v-if="applied" class="selection-bar"><strong>{{ selection.length }}개 항목 선택</strong><div class="actions"><button class="btn text" :disabled="!selection.length" @click="selection = []">{{ copy.monthly.clearSelection }}</button><button class="btn" :disabled="!selection.length || ['소명 진행중','소명 승인 완료'].includes(stage)" @click="excludeSelected">{{ copy.monthly.exclude }}</button><button class="btn primary" :disabled="!selection.length || ['제외됨','소명 진행중','소명 승인 완료'].includes(stage)" @click="addSelected">{{ copy.monthly.reviewSelected }}</button></div></div>
+      <div v-if="applied" class="selection-bar"><strong>{{ selection.length }}개 항목 선택</strong><label class="field">제외 사유<input v-model="exclusionReason" maxlength="4000" placeholder="제외할 때 입력해 주세요" /></label><div class="actions"><button class="btn text" :disabled="!selection.length" @click="selection = []">{{ copy.monthly.clearSelection }}</button><button class="btn" :disabled="store.busy || !selection.length || !exclusionReason.trim() || ['소명 진행중','소명 승인 완료'].includes(stage)" @click="excludeSelected">{{ copy.monthly.exclude }}</button><button class="btn primary" :disabled="!selection.length || ['제외됨','소명 진행중','소명 승인 완료'].includes(stage)" @click="addSelected">{{ copy.monthly.reviewSelected }}</button></div></div>
 
     </template>
 

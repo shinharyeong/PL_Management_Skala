@@ -20,7 +20,7 @@ info:
 
     - 오류는 RFC 9457 Problem Details(`application/problem+json`)에 `code`·`requestId`·`errors`를 더해 내려줍니다. 화면 분기는 `code`로 합니다.
 
-    - 파일 업로드는 `multipart/form-data`로 backend에 보내고, backend가 형식·크기·조직을 검사한 뒤 S3에 저장합니다. 다운로드는 backend가 권한을 확인하고 S3에서 읽어 그대로 내려줍니다(presigned URL 미사용).
+    - 파일 업로드는 `multipart/form-data`로 backend에 보내고, backend가 형식·크기·조직을 검사한 뒤 현재는 로컬 디스크/PVC에 저장합니다. 다운로드는 backend가 권한을 확인하고 파일을 읽어 전달합니다. S3·RabbitMQ 전환과 초안 수명 주기 정리는 2차 목표입니다.
 
     - 모든 응답에 `X-Request-ID`, `Cache-Control: private, no-store` 헤더가 붙습니다.
 
@@ -54,7 +54,7 @@ tags:
 - name: AI 보고서
   description: FR-RPT (경영기획팀)
 - name: 파일
-  description: 서버 경유 업로드·다운로드(S3 저장)
+  description: 서버 경유 업로드·다운로드(현재 로컬/PVC 저장)
 components:
   securitySchemes:
     bearerAuth:
@@ -213,7 +213,7 @@ components:
         X-Request-ID:
           $ref: '#/components/headers/XRequestId'
     FileStream:
-      description: 파일 스트림. backend가 S3(또는 DB 숫자로 생성)에서 읽어 그대로 전달
+      description: 파일 스트림. backend가 로컬/PVC에서 읽거나 DB 숫자로 생성해 전달
       headers:
         Content-Disposition:
           description: '`attachment; filename*=UTF-8''''...`'
@@ -2469,7 +2469,6 @@ paths:
         description: 기준 대상(기본 현재 기준 버전)
         schema:
           $ref: '#/components/schemas/Id'
-      - $ref: '#/components/parameters/Unit'
       responses:
         '200':
           description: OK
@@ -2512,7 +2511,6 @@ paths:
         in: query
         schema:
           $ref: '#/components/schemas/Id'
-      - $ref: '#/components/parameters/Unit'
       responses:
         '200':
           $ref: '#/components/responses/FileStream'
@@ -3481,11 +3479,11 @@ paths:
       tags:
       - 업로드·검증
       summary: UP-03 제출 초안 생성 + 파일 규칙 확인 + 파싱 작업 등록
-      description: '엑셀 파일을 multipart로 받아 파일 이름·확장자(.xlsx·.xlsb, 요청당 1개)·조직(코드)을 먼저 확인하고, 통과하면 S3 `drafts/excel/`에 저장한 뒤 DRAFT를 만들고 파싱 작업을 큐(`parse.jobs`)에 넣는다.
+      description: '엑셀 파일을 multipart로 받아 파일 이름·확장자(.xlsx·.xlsb, 요청당 1개)·조직(코드)을 먼저 확인하고, 통과하면 로컬/PVC 초안 위치에 저장한 뒤 DRAFT와 parsing_job을 만들고 프로세스 내 실행기로 파서를 호출한다. RabbitMQ `parse.jobs`는 2차 목표이다.
 
         응답의 `kind`로 화면 제목(연간 계획 제출 / 월간 시트 제출)을 정한다(FR-UPLOAD-001). ''파일 다시 선택''도 이 API로 새 DRAFT를 만든다.
 
-        제출하지 않은 초안의 파일은 `drafts/` 수명 주기 규칙(7일)으로 자동 삭제된다.'
+        초안 7일 자동 삭제는 2차 목표이며 현재 구현은 자동 삭제하지 않는다.'
       x-fr:
       - FR-UPLOAD-001
       - FR-UPLOAD-003
@@ -3752,7 +3750,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-      description: 권한을 확인한 뒤 backend가 S3에서 원본을 읽어 그대로 내려준다.
+      description: 권한을 확인한 뒤 backend가 로컬/PVC에서 원본을 읽어 그대로 내려준다.
   /submissions/{submissionId}/diagnostics:
     get:
       operationId: getSubmissionDiagnostics
@@ -4072,7 +4070,7 @@ paths:
           $ref: '#/components/responses/TooLarge'
         '415':
           $ref: '#/components/responses/UnsupportedFile'
-      description: 파일을 multipart로 받아 검사(1~16MiB) 후 S3 `drafts/attachments/`에 저장하고 현재 소명 회차에 연결한다. 제출하면 `uploads/`로 옮겨 보존한다.
+      description: 파일을 multipart로 받아 검사(1~16MiB) 후 로컬/PVC 초안 위치에 저장하고 현재 소명 회차에 연결한다. 제출 트랜잭션에서 보존 위치로 복사한다.
   /review-items/{reviewItemId}/attachments/{attachmentId}/file:
     get:
       operationId: downloadExplanationAttachment
@@ -4105,7 +4103,7 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
-      description: 권한을 확인한 뒤 backend가 S3에서 원본을 읽어 그대로 내려준다.
+      description: 권한을 확인한 뒤 backend가 로컬/PVC에서 원본을 읽어 그대로 내려준다.
   /submissions/{submissionId}/submit-preview:
     get:
       operationId: getSubmitPreview
@@ -4177,7 +4175,7 @@ paths:
       tags:
       - 소명·제출
       summary: PROOF-08 제출하기 → 새 제출본 '검토 대기'
-      description: 모든 소명 대상에 소명이 있어야 제출된다. 같은 요청·조직의 검토 대기 제출본은 하나만 허용. 제출이 확정되면 원본 엑셀과 소명 첨부를 S3 `drafts/`에서 `uploads/`로 복사해 영구 보존한다(커밋 후 복사, 복사 실패 시 제출 실패).
+      description: 모든 소명 대상에 소명이 있어야 제출된다. 같은 요청·조직의 검토 대기 제출본은 하나만 허용. 제출 트랜잭션에서 원본 엑셀과 소명 첨부를 로컬/PVC 초안 위치에서 보존 위치로 복사한다. 복사 실패 시 제출도 실패한다.
       x-fr:
       - FR-PROOF-006
       - FR-PROOF-010
@@ -4250,7 +4248,7 @@ paths:
       tags:
       - AI 보고서
       summary: RPT-01 PDF 분석 요청(비전 LLM)
-      description: PDF를 multipart로 받아 S3 `uploads/pdf/`에 저장하고 RabbitMQ `pdf.jobs`로 report-ai에 넘긴다. 원본 숫자는 가져오지 않는다. 틀로 저장되지 않은 분석의 PDF·결과는 30일 뒤 정리한다.
+      description: PDF를 multipart로 받아 로컬/PVC에 저장하고 HTTP `/v1/pdf-jobs`로 report-ai 분석을 요청한다. 완료 결과는 내부 callback으로 받는다. maskNumbers 기본값은 true이다. RabbitMQ 전환과 미사용 PDF·결과의 30일 정리는 2차 목표이며 현재 자동 정리는 구현하지 않는다.
       x-fr:
       - FR-RPT-001
       x-tables:

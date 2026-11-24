@@ -1,7 +1,6 @@
 """backend 계약 /v1/nl-query(명세 12절, RPT-11 모양). 흐름은 /v1/chat 과 같은 LangGraph 그래프다. 실제 OpenAI 호출 없음."""
 from fastapi.testclient import TestClient
 
-from app.chat import db
 from app.chat.graph import GRAPH
 from app.main import app
 from test_chat import GOOD_SQL, ai, seed  # noqa: F401 — ai 는 pytest fixture
@@ -14,6 +13,17 @@ def ask(question, year=2026, month=11):
 
 
 def test_ok_returns_sql_explanation_and_typed_preview(ai):
+    """변경된 조회·저장 경계의 회귀 동작을 검증한다.
+
+    Args:
+        ai: 테스트 fixture 또는 합성 입력.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
     seed()
     ai({"sql": GOOD_SQL}, {"text": "사업부18의 영업이익은 4.4억원으로 가장 큽니다. 조회 행은 2행입니다."})
     r = ask("11월 조직별 영업이익")
@@ -24,8 +34,8 @@ def test_ok_returns_sql_explanation_and_typed_preview(ai):
     assert [c["type"] for c in body["preview"]["columns"]] == ["TEXT", "MONEY", "MONEY", "MONEY"]
     assert body["preview"]["rows"][0] == {"org_name": "사업부18", "revenue_won": 945_640_000, "cost_won": 509_970_000, "op_won": 435_670_000}
     assert body["clarifyQuestion"] is None and body["clarifyOptions"] == []
-    files = db.files_dir()
-    assert not files.exists() or not list(files.glob("*.xlsx"))                       # 계약 호출은 엑셀을 만들지 않는다(파일이 쌓이지 않게)
+    assert "file" not in body
+
 
 
 def test_clarify_unknown_blocked_and_missing_month(isolated):

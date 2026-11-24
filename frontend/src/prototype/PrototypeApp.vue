@@ -7,6 +7,7 @@ import HomePanel from './LiveHomePanel.vue'
 import MonthlyPanel from './MonthlyPanel.vue'
 import OrgPanel from './LiveOrgPanel.vue'
 import ManagementPanels from './LiveManagementPanels.vue'
+import ReportPanel from './LiveReportPanel.vue'
 import { clockText } from './auth-demo.js'
 import { pageTitles } from './router.js'
 import NavIcon from './NavIcon.vue'
@@ -139,6 +140,7 @@ watch(page,async value=>{
       <HomePanel v-if="page === 'home'" @navigate="navigate" />
       <MonthlyPanel v-else-if="monthlyPages.includes(page)" :page="page" @navigate="navigate" />
       <OrgPanel v-else-if="page.startsWith('org-')" :page="page" @navigate="navigate" />
+      <ReportPanel v-else-if="page==='reports'" />
       <ManagementPanels v-else :page="page" @navigate="navigate" />
     </main>
     </div>

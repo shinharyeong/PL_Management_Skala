@@ -8,11 +8,11 @@ from __future__ import annotations
 import re
 
 from ..chat import db
+from ..services.numeric import amount_precision, exact_json_value
 from ..report_template import periods
 from ..report_template.model import Period
 
-STATE_RANK = {"master": 3, "close": 2, "provisional": 1}
-STATE_LABEL = {"master": "확정", "close": "마감", "provisional": "잠정"}
+STATE_LABEL = {"master": "확정", "provisional": "잠정"}
 COMPARE_WORDS = (("전년", "전년 동월"), ("전월", "직전 월"), ("지난달", "직전 월"), ("계획", "계획"), ("추정", "직전 추정"))
 DERIVED = {"영업이익": "v_op"}                      # 합계 행이 없어 DB 뷰가 계산하는 지표(챗봇과 같은 규칙: 매출 − 영업비용)
 
@@ -34,19 +34,26 @@ def match_org(label: str, orgs: list[dict]) -> str | None:
 
 
 def months() -> dict:
+    """백엔드가 정한 월별 출처 상태와 기본 기준 월을 그대로 조회한다.
+
+    Args:
+        없음.
+    Returns:
+        DB 준비 여부, 월별 출처·상태, 기본 월, 지표·조직 목록.
+    Raises:
+        DB 조회 오류는 호출부에 전달한다.
+    Side Effects:
+        보고서용 뷰를 읽고 연결을 닫는다. 잠정·확정 판정이나 마스터를 만들지 않는다.
+    """
     con = _con()
     if con is None:
         return {"db_ready": False, "months": [], "default": None, "metrics": [], "orgs": []}
     try:
-        best: dict[tuple[int, int], dict] = {}
-        for r in con.execute("SELECT version, kind, year, month, is_latest FROM dim_version WHERE year IS NOT NULL AND month IS NOT NULL"):
-            k = (r["year"], r["month"])
-            cur = best.get(k)
-            if cur is None or STATE_RANK.get(r["kind"], 0) > STATE_RANK.get(cur["kind"], 0):
-                best[k] = {"year": r["year"], "month": r["month"], "kind": r["kind"], "state": STATE_LABEL.get(r["kind"], r["kind"]), "version": r["version"], "is_latest": bool(r["is_latest"])}
-        ms = sorted(best.values(), key=lambda m: (m["year"], m["month"]))
-        masters = [m for m in ms if m["kind"] in ("master", "close")]
-        default = (masters or ms or [None])[-1]
+        rows = con.execute("SELECT version, kind, year, month, is_latest FROM dim_version "
+                           "WHERE year IS NOT NULL AND month IS NOT NULL AND kind IN ('master','provisional') ORDER BY year, month")
+        ms = [{"year": r["year"], "month": r["month"], "kind": r["kind"], "state": STATE_LABEL[r["kind"]],
+               "version": r["version"], "is_latest": bool(r["is_latest"])} for r in rows]
+        default = next((m for m in ms if m["is_latest"]), None)
         metrics = sorted({r[0] for r in con.execute("SELECT DISTINCT kind FROM fact")} | set(DERIVED))
         orgs = [{"code": r["org_code"], "name": r["org_name"]} for r in con.execute("SELECT org_code, org_name FROM dim_org ORDER BY org_code")]
         return {"db_ready": True, "months": ms, "default": {"year": default["year"], "month": default["month"]} if default else None, "metrics": metrics, "orgs": orgs}
@@ -98,37 +105,58 @@ def resolve(base: dict, blocks: list[dict]) -> dict:
     return {"base": base, "blocks": res, "provisional": any(r["state"] == "잠정" for r in res)}
 
 
-BASIS_LABEL = {"PLAN": "계획 대비"}
+BASIS_LABEL = {"PLAN": "계획 대비", "PREVIOUS": "직전 추정 대비"}
 
 
+@amount_precision()
 def gaps(year: int, month: int) -> dict:
-    """소명 분류용 Gap 카드. 조회 DB 의 gap(영업이익 Gap)과 연결된 explanation 을 읽어 돌려준다. 금액은 DB 값 그대로(원 단위 정수), 합계는 SQL 로 따로 계산한다.
+    """백엔드 ITEM_GAP과 수락 소명을 보고서 화면용 카드로 읽는다.
 
-    같은 기준월의 Gap 이 (시나리오, 비교 기준)별로 여러 묶음이면 묶음마다 따로 돌려준다(서로 다른 기준은 합산하지 않는다).
+    Args:
+        year: 기준 연도.
+        month: 기준 월. 실적은 이 월, 추정은 다음 월의 항목을 읽는다.
+    Returns:
+        출처 버전과 비교 종류별 카드. total_won은 해당 보고 항목 차이의 합계이며
+        영업이익 기여도나 자체 임계값 판정 결과가 아니다.
+    Raises:
+        DB 조회 오류는 호출부에 전달한다.
+    Side Effects:
+        gap·explanation 뷰만 읽는다. 소명을 분류·저장하거나 Gap을 재판정하지 않는다.
     """
     info = months()
-    m = next((x for x in info["months"] if x["year"] == year and x["month"] == month), None)
-    if not info["db_ready"] or m is None:
-        return {"db_ready": info["db_ready"], "version": None, "groups": []}
+    current = next((v for v in info["months"] if v["year"] == year and v["month"] == month), None)
+    empty = {"db_ready": info["db_ready"], "version": None, "state": None, "year": year, "month": month, "groups": []}
+    if current is None:
+        return empty
     con = _con()
+    if con is None:
+        return {**empty, "db_ready": False}
     try:
-        ver = m["version"]
+        ver = current["version"]
         groups = []
-        keys = con.execute("SELECT scenario, basis, COUNT(*) n FROM gap WHERE version=? AND gap_type='OP_GAP' AND year=? AND month=? GROUP BY scenario, basis ORDER BY n DESC, scenario, basis", (ver, year, month)).fetchall()
-        for k in keys:
-            rows = con.execute("SELECT gap_id, org_code, org_name, diff_won, previous_won, current_won, status, explanation_status FROM gap "
-                               "WHERE version=? AND gap_type='OP_GAP' AND year=? AND month=? AND scenario=? AND basis=? ORDER BY org_code", (ver, year, month, k["scenario"], k["basis"])).fetchall()
-            total = con.execute("SELECT COALESCE(SUM(diff_won),0) FROM gap WHERE version=? AND gap_type='OP_GAP' AND year=? AND month=? AND scenario=? AND basis=?", (ver, year, month, k["scenario"], k["basis"])).fetchone()[0]
+        next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+        keys = con.execute("SELECT scenario, basis, year, month, COUNT(*) n FROM gap WHERE version=? AND gap_type='ITEM_GAP' "
+                           "AND ((scenario='ACTUAL' AND year=? AND month=?) OR (scenario='ESTIMATE' AND year=? AND month=?)) "
+                           "GROUP BY scenario, basis, year, month ORDER BY scenario, basis", (ver, year, month, next_year, next_month)).fetchall()
+        for key in keys:
+            rows = con.execute("SELECT gap_id, org_code, org_name, item, diff_won, previous_won, current_won, status, explanation_status FROM gap "
+                               "WHERE version=? AND gap_type='ITEM_GAP' AND year=? AND month=? AND scenario=? AND basis=? ORDER BY org_code, gap_id",
+                               (ver, key["year"], key["month"], key["scenario"], key["basis"])).fetchall()
             cards = []
-            for r in rows:
-                ex = con.execute("SELECT explanation_id, item, kind, status, answer FROM explanation WHERE version=? AND gap_id=? ORDER BY explanation_id", (ver, r["gap_id"])).fetchall()
-                accepted = [e for e in ex if e["status"] == "수락" and e["answer"]]
-                cards.append({"gap_id": r["gap_id"], "org_code": r["org_code"], "org_name": r["org_name"], "diff_won": r["diff_won"],
-                              "summary": " / ".join(dict.fromkeys(e["answer"] for e in accepted)) if accepted else None,  # 같은 소명 문장은 한 번만
-                              "items": [e["item"] for e in ex], "explained": bool(accepted), "explanation_count": len(ex),
-                              "carried_over": r["status"] == "CARRIED_OVER_ELIGIBLE", "status": r["status"]})
-            groups.append({"scenario": k["scenario"], "basis": k["basis"], "basis_label": BASIS_LABEL.get(k["basis"], k["basis"]), "total_won": total, "cards": cards})
-        return {"db_ready": True, "version": ver, "state": m["state"], "year": year, "month": month, "groups": groups}
+            for row in rows:
+                gap_key = row["gap_id"].rsplit("-", 1)[0]
+                explanations = con.execute("SELECT explanation_id, item, kind, status, answer FROM explanation "
+                                           "WHERE version=? AND gap_key=? ORDER BY rounds DESC, explanation_id DESC", (ver, gap_key)).fetchall()
+                latest = explanations[0] if explanations else None
+                accepted = latest if latest and latest["status"] == "수락" and latest["answer"] and row["explanation_status"] == "수락" else None
+                cards.append({"gap_id": row["gap_id"], "org_code": row["org_code"], "org_name": row["org_name"], "item": row["item"],
+                              "diff_won": row["diff_won"], "summary": accepted["answer"] if accepted else None,
+                              "items": [row["item"]], "explained": accepted is not None, "explanation_count": len(explanations),
+                              "carried_over": False, "status": row["status"]})
+            groups.append({"scenario": key["scenario"], "basis": key["basis"], "year": key["year"], "month": key["month"],
+                           "basis_label": BASIS_LABEL.get(key["basis"], key["basis"]),
+                           "total_won": sum(row["diff_won"] for row in rows), "cards": cards})
+        return {"db_ready": True, "version": ver, "state": current["state"], "year": year, "month": month, "groups": groups}
     finally:
         con.close()
 
@@ -162,11 +190,22 @@ def eok(won, *, diff: bool = False, plain_sign: bool = True) -> str:
 
 
 def _won(v) -> str | None:
-    """셀의 원 단위 값(내보내기용). 화면 글자(text)는 반올림·단위 환산된 값이라 따로 둔다. 소수 끝 0 은 지운다."""
+    """내보내기 원 금액을 반올림하지 않은 십진 문자열로 만든다.
+
+    Args:
+        v: 원 단위 정수·Decimal 또는 None.
+    Returns:
+        소수 끝의 불필요한 0을 뺀 정확한 금액 문자열 또는 None.
+    Raises:
+        decimal.InvalidOperation: 숫자 형식이 잘못된 경우.
+    Side Effects:
+        없음. Decimal 기본 정밀도에 따른 normalize·quantize를 하지 않는다.
+    """
     if v is None:
         return None
     d = Decimal(str(v))
-    return format(d.quantize(Decimal(1)) if d == d.to_integral_value() else d.normalize(), "f")
+    text = format(d, "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
 
 
 def retime(text: str, orig: tuple[int, int] | None, base: dict) -> str:
@@ -218,12 +257,49 @@ def _metric_in(text: str, metrics) -> str | None:
     return min(hits)[1] if hits else None
 
 
+def _accepted_causes(gap_set: dict, year: int, month: int) -> dict[str, str]:
+    """블록 기준 월의 실적 원문만 조직별로 묶어 원인 칸에 표시한다.
+
+    Args:
+        gap_set: backend Gap과 최신 수락 소명을 읽은 groups 목록.
+        year: 보고서 블록의 기준 연도.
+        month: 보고서 블록의 기준 월.
+    Returns:
+        조직 코드별 수락 원문. PLAN/PREVIOUS의 같은 문장은 한 번만 표시한다.
+    Raises:
+        KeyError: 내부 Gap 카드의 필수 필드가 없는 경우.
+    Side Effects:
+        없음. 다음 월 추정 사유를 실적 칸에 섞거나 금액을 재배분하지 않는다.
+    """
+    parts = {}
+    for group in gap_set["groups"]:
+        if (group["scenario"], group["year"], group["month"]) != ("ACTUAL", year, month):
+            continue
+        for card in group["cards"]:
+            if card["summary"]:
+                parts.setdefault(card["org_code"], []).append(card["summary"])
+    return {org: " / ".join(dict.fromkeys(texts)) for org, texts in parts.items()}
+
+
+@amount_precision()
 def fill_report(base: dict, blocks: list[dict], orig: tuple[int, int] | None = None) -> dict:
-    """블록마다 실제 값을 채운다. 모든 숫자는 조회 DB 값에서 코드로 계산하며, 계산할 수 없는 칸은 missing=True 로 표시한다."""
+    """백엔드 보고서용 뷰 값과 수락 소명으로 보고서 블록을 채운다.
+
+    Args:
+        base: 기준 year·month.
+        blocks: 기간·조직·표현 형식을 가진 블록 목록.
+        orig: 원래 문서 기준 연월 또는 None.
+    Returns:
+        채운 블록과 출처 상태. 없는 값은 missing으로 표시한다.
+    Raises:
+        DB 조회·블록 입력 오류는 호출부에 전달한다.
+    Side Effects:
+        읽기 전용 DB 조회와 요청 문맥 설정을 수행한다. Gap 임계값·소명 분류·출처 확정은 하지 않는다.
+    """
     info = months()
     out = {"base": base, "blocks": [], "provisional": False}
     if not info["db_ready"]:
-        return out
+        return exact_json_value(out)
     con = _con()
     try:
         y, m = base["year"], base["month"]
@@ -233,7 +309,7 @@ def fill_report(base: dict, blocks: list[dict], orig: tuple[int, int] | None = N
         metrics = [k for k in info["metrics"] if k in METRIC_COL]
         orgs = info["orgs"]
         gset = gaps(y, m) if cur else {"groups": []}
-        cause = {c["org_code"]: c["summary"] for gr in gset["groups"][:1] for c in gr["cards"]}
+        gap_sets = {(y, m): gset}
         for b in blocks:
             kind = b.get("kind")
             res = {"id": b["id"], "kind": kind, "missing": False}
@@ -247,6 +323,9 @@ def fill_report(base: dict, blocks: list[dict], orig: tuple[int, int] | None = N
                 ms = periods.resolve(Period.model_validate(b["period"]), (y, m))
                 by, bm = ms[-1] if b["period"].get("rule") == "recent_n" else ms[0]
             bmeta = {"year": by, "month": bm}
+            if (by, bm) not in gap_sets:
+                gap_sets[(by, bm)] = gaps(by, bm)
+            cause = _accepted_causes(gap_sets[(by, bm)], by, bm)
             if by != y or bm != m:
                 res["period"] = f"{by}.{bm:02d}"
             if b.get("sql"):                                        # 지표 사전·자연어 질의로 확정한 SQL(FR-RPT-005·006): 기준 월 인자로 다시 실행
@@ -305,14 +384,27 @@ def fill_report(base: dict, blocks: list[dict], orig: tuple[int, int] | None = N
                 res["why"] = _why(kind, res, b, metrics, orgs)
             out["blocks"].append(res)
         out["provisional"] = out["state"] == "잠정"
-        return out
+        return exact_json_value(out)
     finally:
         con.close()
 
 
 def _sql_block(con, info, base: dict, sql: str, scenario: str | None = None) -> dict:
-    """확정한 SQL 을 블록 기준 월의 version 으로 실행한다. 검사·실행은 챗봇과 같은 sqlguard(읽기 전용·행 상한·시간 상한).
-    인자: :version(그 달 확정 master, 없으면 잠정) :version_prev :base_year :base_month :scn(기본 ACTUAL). 숫자는 SQL 결과 그대로."""
+    """확정 SQL을 블록 기준 월에 실행하고 금액 정밀도를 보존한다.
+
+    Args:
+        con: 읽기 전용 연결.
+        info: backend 월·버전 목록.
+        base: 블록 기준 연월.
+        sql: 확정 SQL.
+        scenario: 구분. 생략하면 ACTUAL.
+    Returns:
+        표·누락 상태. 소수 및 큰 정수 셀은 정확한 십진 문자열.
+    Raises:
+        DB·설정 오류를 전달한다. SqlRejected는 누락 이유로 반환한다.
+    Side Effects:
+        허용된 읽기 전용 SQL을 실행하며 파일을 만들지 않는다.
+    """
     from ..chat import sqlguard
     from ..config import get_settings
     cur = next((v for v in info["months"] if v["year"] == base["year"] and v["month"] == base["month"]), None)
@@ -325,7 +417,7 @@ def _sql_block(con, info, base: dict, sql: str, scenario: str | None = None) -> 
         r = sqlguard.execute(con, sql, params, row_limit=s.chat_row_limit, timeout_s=s.chat_sql_timeout_seconds)
     except sqlguard.SqlRejected as e:
         return {"table": None, "missing": True, "text": f"SQL 을 실행할 수 없습니다({e.code})"}
-    return {"table": {"columns": list(r.columns), "rows": [list(x) for x in r.rows], "truncated": r.truncated},
+    return {"table": {"columns": list(r.columns), "rows": exact_json_value(r.rows), "truncated": r.truncated},
             "missing": r.row_count == 0, "state": cur["state"]}
 
 
@@ -594,8 +686,21 @@ def _breakdown(con, info, base, metric):
 
 
 # ===================================================================== 5단계: 보고 문장(OpenAI)
+@amount_precision()
 def build_facts(base: dict, assign: dict, gi: int = 0) -> list[dict]:
-    """보고 문장의 재료(사실 목록). 모든 숫자는 조회 DB 에서 코드로 계산한 값이고, AI 는 이 문자열만 쓸 수 있다."""
+    """보고서용 뷰의 숫자와 수락 소명으로 문장 작성 근거를 구성한다.
+
+    Args:
+        base: 기준 year·month.
+        assign: 이전 개발 화면 호환 인자. 분류는 백엔드가 담당하므로 여기서는 사용하지 않는다.
+        gi: 표시할 Gap 비교 그룹 번호.
+    Returns:
+        확인된 지표·수락 소명의 id·kind·text 목록.
+    Raises:
+        DB 조회 오류는 호출부에 전달한다.
+    Side Effects:
+        보고서용 뷰를 읽는다. 분류·원인별 금액 배분·업무 데이터 저장을 하지 않는다.
+    """
     info = months()
     y, m = base["year"], base["month"]
     cur = next((v for v in info["months"] if v["year"] == y and v["month"] == m), None)
@@ -620,13 +725,7 @@ def build_facts(base: dict, assign: dict, gi: int = 0) -> list[dict]:
         if grp:
             explained = sorted([c for c in grp["cards"] if c["explained"]], key=lambda c: -abs(c["diff_won"]))[:2]
             for c in explained:
-                facts.append({"kind": "소명", "text": f"{c['org_name']}의 영업이익 {grp['basis_label']} Gap은 {eok(c['diff_won'], diff=True)}억원이며, 수락된 소명 원문은 \"{c['summary']}\"입니다."})
-            bins = {"1": 0, "3": 0, "4": 0, "5": 0}
-            for c in grp["cards"]:
-                bins[assign.get(c["gap_id"]) if assign.get(c["gap_id"]) in ("1", "3", "4") else "5"] += c["diff_won"]
-            if any(assign.get(c["gap_id"]) in ("1", "3", "4") for c in grp["cards"]):
-                facts.append({"kind": "소명", "text": f"영업이익 {grp['basis_label']} Gap {eok(grp['total_won'], diff=True)}억원은 월정액 추정 {eok(bins['1'], diff=True)}억원, 이연 효과 {eok(bins['3'], diff=True)}억원, "
-                                                      f"일시적 효과 {eok(bins['4'], diff=True)}억원, 기타 과추정 {eok(bins['5'], diff=True)}억원으로 분류했습니다."})
+                facts.append({"kind": "소명", "text": f"{c['org_name']}의 {c['item']} {grp['basis_label']} Gap은 {eok(c['diff_won'], diff=True)}억원이며, 수락된 소명 원문은 \"{c['summary']}\"입니다."})
     finally:
         con.close()
     return [{"id": f"F{i}", **f} for i, f in enumerate(facts, 1)]
@@ -729,15 +828,29 @@ def q_org_rank(base, metric, order, limit):
 
 
 def q_gap_orgs(base):
-    g = gaps(base["year"], base["month"])
-    if not g["groups"]:
+    """백엔드 Gap 대상 조직과 보고 항목을 표시한다.
+
+    Args:
+        base: 기준 year·month.
+    Returns:
+        중복 제거한 조직 수와 항목별 차이·소명 표.
+    Raises:
+        DB 조회 오류는 호출부에 전달한다.
+    Side Effects:
+        보고서용 뷰 조회만 수행한다.
+    """
+    result = gaps(base["year"], base["month"])
+    if not result["groups"]:
         return {"text": f"{base['year']}년 {base['month']}월에는 Gap 데이터가 없습니다."}
-    gr = g["groups"][0]
-    return {"text": f"{base['year']}년 {base['month']}월 영업이익 {gr['basis_label']} Gap이 걸린 조직은 {len(gr['cards'])}곳입니다(합계 {eok(gr['total_won'], diff=True)}억원).",
-            "table": _tbl(["조직", "Gap(억원)", "소명"], [[c["org_name"], eok(c["diff_won"], diff=True), "수락됨" if c["explained"] else ("검토 중/없음")] for c in sorted(gr["cards"], key=lambda c: -abs(c["diff_won"]))])}
+    cards = [(group, card) for group in result["groups"] for card in group["cards"]]
+    org_count = len({card["org_code"] for _, card in cards})
+    return {"text": f"{base['year']}년 {base['month']}월 보고 항목 Gap이 있는 조직은 {org_count}곳입니다(비교 기준별 표시).",
+            "table": _tbl(["조직", "항목", "구분", "비교", "Gap(억원)", "소명"],
+                          [[c["org_name"], c["item"], group["scenario"], group["basis_label"], eok(c["diff_won"], diff=True), "수락됨" if c["explained"] else "검토 중/없음"]
+                           for group, c in sorted(cards, key=lambda pair: -abs(pair[1]["diff_won"]))])}
 
 
-GAP_KIND_LABEL = {("OP_GAP", "PLAN"): "계획 대비 영업이익 Gap", ("OP_GAP", "PREVIOUS"): "직전 제출 대비 영업이익 Gap", ("AMOUNT_REVISION", "PREVIOUS"): "직전 제출 대비 금액 변경"}
+GAP_KIND_LABEL = {("ITEM_GAP", "PLAN"): "계획 대비 보고 항목 Gap", ("ITEM_GAP", "PREVIOUS"): "직전 추정 대비 보고 항목 Gap"}
 
 
 def _gap_label(gt, basis):
@@ -776,24 +889,50 @@ def q_org_gap_count(base, limit=None):
         con.close()
 
 
-def q_explanation_count(base):
+def q_explanation_count(base: dict) -> dict:
+    """소명 이력을 검토 항목별 최신 회차로 묶어 상태별 건수를 표시한다.
+
+    Args:
+        base: 조회할 year·month.
+    Returns:
+        검토 항목 단위 소명 건수와 Gap 비교 항목 연결 수.
+    Raises:
+        DB 조회 오류는 호출부에 전달한다.
+    Side Effects:
+        보고서용 뷰만 조회한다. 소명 회차·상태를 변경하지 않는다.
+    """
     info = months()
     ver = _best_version(info, base["year"], base["month"])
     con = _con()
     try:
-        rows = con.execute("SELECT COALESCE(status,'상태 없음') st, COUNT(*) n FROM explanation WHERE version=? GROUP BY st ORDER BY n DESC", (ver,)).fetchall() if ver else []
+        rows = con.execute("WITH latest AS (SELECT status, ROW_NUMBER() OVER (PARTITION BY gap_key ORDER BY rounds DESC, explanation_id DESC) rn "
+                           "FROM explanation WHERE version=?) SELECT COALESCE(status,'상태 없음') st, COUNT(*) n "
+                           "FROM latest WHERE rn=1 GROUP BY status ORDER BY n DESC, st", (ver,)).fetchall() if ver else []
         if not rows:
             return {"text": "소명 데이터가 없습니다."}
         total = sum(r["n"] for r in rows)
         ng = con.execute("SELECT COUNT(*) FROM gap WHERE version=?", (ver,)).fetchone()[0]
-        return {"text": f"소명은 모두 {total}건입니다(" + ", ".join(f"{r['st']} {r['n']}건" for r in rows) + f"). Gap {ng}건 중 소명이 연결된 항목은 {ng - len(_unlinked(con, ver))}건입니다.",
+        return {"text": f"소명은 검토 항목 기준 모두 {total}건입니다(" + ", ".join(f"{r['st']} {r['n']}건" for r in rows) + f"). Gap 비교 {ng}건 중 소명이 연결된 항목은 {ng - len(_unlinked(con, ver))}건입니다.",
                 "table": _tbl(["상태", "건수"], [[r["st"], str(r["n"])] for r in rows] + [["합계", str(total)]])}
     finally:
         con.close()
 
 
-def _unlinked(con, ver):
-    return con.execute("SELECT gap_id FROM gap WHERE version=? AND gap_id NOT IN (SELECT gap_id FROM explanation WHERE version=? AND gap_id IS NOT NULL)", (ver, ver)).fetchall()
+def _unlinked(con: db.Conn, ver: str) -> list:
+    """소명 gap_key가 연결되지 않은 Gap 비교 항목을 조회한다.
+
+    Args:
+        con: 읽기 전용 DB 연결.
+        ver: 조회 버전.
+    Returns:
+        소명이 없는 Gap 식별자 행 목록.
+    Raises:
+        DB 조회 오류는 호출부에 전달한다.
+    Side Effects:
+        읽기 전용 SQL 한 번을 실행한다.
+    """
+    return con.execute("SELECT g.gap_id FROM gap g WHERE g.version=? AND NOT EXISTS "
+                       "(SELECT 1 FROM explanation e WHERE e.version=g.version AND g.gap_id=e.gap_key || '-' || g.basis)", (ver,)).fetchall()
 
 
 def q_cost_top(base, limit=None, org=None, metric="영업비용"):
@@ -847,16 +986,29 @@ def q_org_explanation(base, org_code):
         con.close()
 
 
-def q_unexplained(base):
-    g = gaps(base["year"], base["month"])
-    if not g["groups"]:
+def q_unexplained(base: dict) -> dict:
+    """모든 비교 기준에서 아직 소명이 수락되지 않은 Gap 항목을 표시한다.
+
+    Args:
+        base: 조회할 year·month.
+    Returns:
+        현재 실적·다음 월 추정의 미수락 Gap 비교 항목 표.
+    Raises:
+        DB 조회 오류는 호출부에 전달한다.
+    Side Effects:
+        보고서용 뷰를 조회한다. 소명 상태를 변경하지 않는다.
+    """
+    result = gaps(base["year"], base["month"])
+    if not result["groups"]:
         return {"text": f"{base['year']}년 {base['month']}월에는 Gap 데이터가 없습니다."}
-    gr = g["groups"][0]
-    miss = [c for c in gr["cards"] if not c["explained"]]
-    if not miss:
-        return {"text": f"소명이 없는 Gap 항목은 없습니다(Gap {len(gr['cards'])}건 모두 소명이 수락됨)."}
-    return {"text": f"소명이 없는(수락되지 않은) Gap 항목 {len(miss)}건입니다.",
-            "table": _tbl(["조직", "Gap(억원)", "소명 건수"], [[c["org_name"], eok(c["diff_won"], diff=True), str(c["explanation_count"])] for c in miss])}
+    cards = [(group, card) for group in result["groups"] for card in group["cards"]]
+    missing = [(group, card) for group, card in cards if not card["explained"]]
+    if not missing:
+        return {"text": f"소명이 없는 Gap 항목은 없습니다(Gap 비교 {len(cards)}건 모두 소명이 수락됨)."}
+    return {"text": f"소명이 없는(수락되지 않은) Gap 비교 항목 {len(missing)}건입니다.",
+            "table": _tbl(["조직", "항목", "구분", "비교", "Gap(억원)", "소명 회차 수"],
+                          [[card["org_name"], card["item"], group["scenario"], group["basis_label"], eok(card["diff_won"], diff=True), str(card["explanation_count"])]
+                           for group, card in missing])}
 
 
 # ===================================================================== 표 블록 편집(행·열 스펙) · 차트 · 소명 목록 · 조회 블록
@@ -1019,7 +1171,25 @@ def fill_spec_table(con, info, base, spec, cause, guess=None):
 
 
 def _chart(con, info, base, metric, limit, ctype="bar", scope=None, months_n=None, months=None):
-    """차트용 값. bar·donut=조직별(상위 N, scope=조직 코드 목록이면 그 조직만), line=월별 추이(최근 N개월), waterfall=계획→조직별 증감→실적. 값은 모두 DB 합계(코드 계산)."""
+    """보고서용 뷰의 값으로 차트 표시 행을 구성한다.
+
+    Args:
+        con: 읽기 전용 연결.
+        info: 월·버전 정보.
+        base: 기준 연월.
+        metric: 허용된 지표.
+        limit: 조직 표시 상한.
+        ctype: bar·donut·line·waterfall.
+        scope: 선택 조직 목록.
+        months_n: 최근 월 수.
+        months: 명시적으로 선택한 월 목록.
+    Returns:
+        정확한 won 문자열·반올림 표시를 가진 차트 행과 누락 여부.
+    Raises:
+        DB 조회·숫자 인자 오류를 전달한다.
+    Side Effects:
+        뷰 조회만 수행한다. 차트 표시 합계를 만들며 Gap을 판정하지 않는다.
+    """
     ver = _best_version(info, base["year"], base["month"])
     if ver is None or metric not in METRIC_COL:
         return [], True
@@ -1030,7 +1200,7 @@ def _chart(con, info, base, metric, limit, ctype="bar", scope=None, months_n=Non
         rs = con.execute(f"SELECT month, SUM({col}) s FROM v_op WHERE version=? AND year=? AND scenario='ACTUAL' AND month<=?" + (" AND org_code IN (%s)" % ",".join("?" * len(scope)) if scope else "") + " GROUP BY month ORDER BY month",
                          (ver, base["year"], 12 if sel else base["month"]) + tuple(scope or ())).fetchall()
         rs = [r for r in rs if r["month"] in sel] if sel else rs[-n:]                # 사용자가 고른 월이 있으면 그 월만, 없으면 최근 N개월
-        return [{"name": f"{r['month']}월", "won": r["s"], "text": eok(r["s"])} for r in rs], not rs
+        return [{"name": f"{r['month']}월", "won": _won(r["s"]), "text": eok(r["s"])} for r in rs], not rs
     if ctype == "waterfall":
         q = f"SELECT org_name, SUM(CASE WHEN scenario='ACTUAL' THEN {col} ELSE 0 END) a, SUM(CASE WHEN scenario='PLAN' THEN {col} ELSE 0 END) p FROM v_op WHERE version=? AND year=? AND month=? GROUP BY org_code, org_name"
         rs = con.execute(q, (ver, base["year"], base["month"])).fetchall()
@@ -1039,24 +1209,38 @@ def _chart(con, info, base, metric, limit, ctype="bar", scope=None, months_n=Non
         pt, at = sum(r["p"] for r in rs), sum(r["a"] for r in rs)
         d = sorted(((r["a"] - r["p"], r["org_name"]) for r in rs), key=lambda x: -abs(x[0]))
         top, rest = d[: max(1, int(limit) if int(limit) < 8 else 5)], d[max(1, int(limit) if int(limit) < 8 else 5):]
-        out = [{"name": "계획", "won": pt, "text": eok(pt), "type": "total"}] + [{"name": n_, "won": w, "text": eok(w, diff=True), "type": "delta"} for w, n_ in top]
+        out = [{"name": "계획", "won": _won(pt), "text": eok(pt), "type": "total"}] + [{"name": n_, "won": _won(w), "text": eok(w, diff=True), "type": "delta"} for w, n_ in top]
         if rest:
             w = sum(x[0] for x in rest)
-            out.append({"name": f"기타 {len(rest)}곳", "won": w, "text": eok(w, diff=True), "type": "delta"})
-        out.append({"name": "실적", "won": at, "text": eok(at), "type": "total"})
+            out.append({"name": f"기타 {len(rest)}곳", "won": _won(w), "text": eok(w, diff=True), "type": "delta"})
+        out.append({"name": "실적", "won": _won(at), "text": eok(at), "type": "total"})
         return out, False
     q = f"SELECT org_name, SUM({col}) s FROM v_op WHERE version=? AND year=? AND month=? AND scenario='ACTUAL'" + (" AND org_code IN (%s)" % ",".join("?" * len(scope)) if scope else "") + " GROUP BY org_code, org_name ORDER BY s DESC LIMIT ?"
     rows = con.execute(q, (ver, base["year"], base["month"]) + tuple(scope or ()) + (int(limit),)).fetchall()
-    return [{"name": r["org_name"], "won": r["s"], "text": eok(r["s"])} for r in rows], not rows
+    return [{"name": r["org_name"], "won": _won(r["s"]), "text": eok(r["s"])} for r in rows], not rows
 
 
 def _numbercards(con, info, base, cards, metrics):
-    """숫자 카드: 카드 이름에서 지표를 찾아 현재 값, 보조 글자(전년比·계획比 등)는 비교 기준 값으로 계산한다."""
+    """지표 카드의 표시값과 내보내기 원 금액을 함께 구성한다.
+
+    Args:
+        con: 읽기 전용 연결.
+        info: 월·버전 정보.
+        base: 기준 연월.
+        cards: 지표 이름·비교 표기를 가진 카드.
+        metrics: 허용된 지표 목록.
+    Returns:
+        value·unit·won·delta·missing 카드 목록과 누락 여부.
+    Raises:
+        DB 조회·숫자 변환 오류를 전달한다.
+    Side Effects:
+        보고서용 뷰를 읽는다. won은 반올림하지 않은 원 단위 문자열이며 파일은 쓰지 않는다.
+    """
     out, miss = [], False
     for c in cards:
         label = str(c.get("label") or "")
         metric = _metric_in(label, [k for k in metrics if k in METRIC_COL])
-        item = {"label": label, "unit": UNIT.get(), "delta_label": c.get("delta_label"), "value": None, "delta": None, "missing": False}
+        item = {"label": label, "unit": UNIT.get(), "delta_label": c.get("delta_label"), "value": None, "won": None, "delta": None, "missing": False}
         if metric is None:
             item["missing"] = True
             miss = True
@@ -1069,6 +1253,7 @@ def _numbercards(con, info, base, cards, metrics):
             miss = True
         else:
             item["value"] = eok(cur)
+            item["won"] = _won(cur)
         dl = str(c.get("delta_label") or "")
         key = next((name for word, name in COMPARE_WORDS if word in dl), None) if dl else None
         if key and cur is not None:

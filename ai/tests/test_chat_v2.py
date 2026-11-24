@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from app.chat import db, memory, schema
+from tests import db_support as db
+from app.chat import memory
 from app.main import app
 from app.services import openai_client
 from tests.conftest import FAKE_KEY
@@ -43,7 +44,17 @@ def clean_memory():
 
 
 def seed(orgs=(("F10", "사업부1"), ("F12", "사업부2"), ("F20", "사업부3")), dup=False):
-    """확정 master(11월 실적 + 12월 추정, 2026) 와 10월 마감 버전."""
+    """확정 master(11월 실적 + 12월 추정, 2026) 와 10월 마감 버전.
+
+    Args:
+        orgs, dup: 테스트 fixture 또는 합성 입력.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
     con = db.open_writer()
     with con:
         con.executemany("INSERT INTO dim_org VALUES(?,?)", list(orgs) + ([("F99", "사업부1")] if dup else []))
@@ -59,7 +70,7 @@ def seed(orgs=(("F10", "사업부1"), ("F12", "사업부2"), ("F20", "사업부3
                      ("close-2026-10", code, name, "영업비용", "마케팅", None, "광고", None, None, None, "s", 2026, 10, "ACTUAL", i * 380_000_000)]
         con.executemany("INSERT INTO fact VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
         db.mark_latest(con)
-        con.executescript(schema.INDEXES)
+        con.executescript(db.INDEXES)
     con.close()
 
 
@@ -119,6 +130,17 @@ def first_turn(ai, cid="c1"):
 
 
 def test_followups_are_handled_by_rules_without_ai_and_chips_show_conditions(ai):
+    """변경된 조회·저장 경계의 회귀 동작을 검증한다.
+
+    Args:
+        ai: 테스트 fixture 또는 합성 입력.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
     seed()
     c = first_turn(ai)
     n0 = c.calls
@@ -130,7 +152,8 @@ def test_followups_are_handled_by_rules_without_ai_and_chips_show_conditions(ai)
     assert r3["handled_by"] == "rule" and c.calls == n0 and "'F20'" in r3["sql"] and r3["rows_preview"][0] == [12, "ESTIMATE", 3 * 1_100_000_000 - 3 * 450_000_000]
     assert [x["label"] for x in r3["memory"]["chips"]] == ["사업부3", "12월", "영업이익"]
     r4 = ask("엑셀로 줘", "c1")
-    assert r4["handled_by"] == "rule" and r4["file"] and c.calls == n0 and r4["row_count"] == 1
+    assert r4["handled_by"] == "rule" and r4["file"] is None and c.calls == n0 and r4["row_count"] == 1
+    assert "내보내기" in r4["notice"]
     r5 = ask("상위 3개만", "c1")
     assert r5["handled_by"] == "rule" and r5["row_count"] <= 3 and "LIMIT 3" in r5["sql"]
 
@@ -205,24 +228,48 @@ def test_write_requests_are_politely_refused_without_sql_or_ai():
 
 
 # ------------------------------------------------------------------ 4. 테스트 로그
-def test_test_log_has_metrics_but_no_question_text_or_key(ai, monkeypatch, isolated):
+def test_test_log_has_metrics_but_no_question_text_or_key(ai, monkeypatch, isolated, caplog):
+    """변경된 조회·저장 경계의 회귀 동작을 검증한다.
+
+    Args:
+        ai, monkeypatch, isolated, caplog: 테스트 fixture 또는 합성 입력.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
+    caplog.set_level("INFO", logger="ai.chat.metrics")
     seed()
     monkeypatch.setenv("CHAT_TEST_LOG", "1")
     ai({"sql": OP_SQL}, TEXT)
     secret_question = "사업부1 11월 영업이익 비밀문장XYZ"
     ask(secret_question, "c1")
     ask("12월은?", "c1")
-    path = isolated / "cache" / "chat" / "test_log.jsonl"
-    lines = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines()]
+    raw = "\n".join(record.getMessage() for record in caplog.records if record.name == "ai.chat.metrics")
+    lines = [json.loads(line.removeprefix("chat_metrics ")) for line in raw.splitlines()]
     assert len(lines) == 2
     need = {"ts", "conversation_id", "followup", "handled", "ai_calls", "input_tokens", "output_tokens", "fix_count", "cache_hit", "row_count", "seconds", "status"}
     assert need <= set(lines[0]) and lines[0]["handled"] == "ai" and lines[0]["ai_calls"] == 2 and lines[0]["input_tokens"] == 200
     assert lines[1]["followup"] is True and lines[1]["handled"] == "rule" and lines[1]["ai_calls"] == 0 and lines[1]["status"] == "ok"
-    raw = path.read_text(encoding="utf-8")
     assert "비밀문장XYZ" not in raw and FAKE_KEY not in raw and "영업이익" not in raw
 
 
-def test_test_log_off_by_default(ai, isolated):
+def test_test_log_off_by_default(ai, isolated, caplog):
+    """변경된 조회·저장 경계의 회귀 동작을 검증한다.
+
+    Args:
+        ai, isolated, caplog: 테스트 fixture 또는 합성 입력.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
+    caplog.set_level("INFO", logger="ai.chat.metrics")
     seed()
     ask("11월 조직별 영업이익", None, quick_id="org_op")
+    assert not [record for record in caplog.records if record.name == "ai.chat.metrics"]
     assert not (isolated / "cache" / "chat" / "test_log.jsonl").exists()

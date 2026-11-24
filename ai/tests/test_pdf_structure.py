@@ -1,4 +1,5 @@
 """PDF → 블록 구조(데모). 키·OpenAI 없이 동작. 합성 PDF 로 종류·표·각주·숫자 가림을 확인하고, 샘플 PDF 가 있으면 함께 본다."""
+from decimal import Decimal
 import os
 from pathlib import Path
 
@@ -229,7 +230,18 @@ def test_endpoint_accepts_png_with_raw_image(monkeypatch):
 
 # ---------------- 데이터 선택(구성 확인 다음 단계) ----------------
 def _seed_versions():
-    from app.chat import db, schema
+    """회귀 테스트용 합성 자료를 구성한다.
+
+    Args:
+        없음.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
+    from tests import db_support as db
     con = db.open_writer()
     with con:
         con.executemany("INSERT INTO dim_org VALUES(?,?)", [("O1", "조직가"), ("O2", "조직나")])
@@ -237,7 +249,7 @@ def _seed_versions():
                         [("m-a", "master", "확정", 2031, 3, "t", "t", 0), ("p-b", "provisional", "잠정", 2031, 4, "t", "t", 0)])
         con.execute("INSERT INTO fact VALUES('m-a','O1','조직가','매출','c1',NULL,'i',NULL,NULL,NULL,'s',2031,3,'ACTUAL',100)")
         db.mark_latest(con)
-        con.executescript(schema.INDEXES)
+        con.executescript(db.INDEXES)
     con.close()
 
 
@@ -267,32 +279,54 @@ def test_data_select_reads_months_and_resolves_relative_periods(monkeypatch):
     assert client.post("/v1/dev/report-data/resolve", json={"base": {"year": 2031, "month": 3}, "blocks": [{"id": "x", "kind": "table", "period": {"rule": "fixed"}}]}).status_code == 422
 
 
-def test_gaps_endpoint_cards_totals_and_deferral_flag(monkeypatch):
+def test_gaps_endpoint_uses_backend_item_gaps_and_status(monkeypatch):
+    """변경된 조회·저장 경계의 회귀 동작을 검증한다.
+
+    Args:
+        monkeypatch: 테스트 fixture 또는 합성 입력.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
     monkeypatch.setenv("AI_PDF_DEV", "1")
-    from app.chat import db, schema
+    from tests import db_support as db
     con = db.open_writer()
     with con:
         con.execute("INSERT INTO dim_version(version, kind, label, year, month, loaded_at, source, row_count, is_latest) VALUES('m','master','확정',2032,5,'t','t',0,0)")
-        con.executemany("INSERT INTO gap(version,gap_id,gap_type,org_code,org_name,item,year,month,scenario,basis,previous_won,current_won,diff_won,rate_percent,status,explanation_status) VALUES('m',?,'OP_GAP',?,?,'영업이익',2032,5,'ACTUAL',?,0,0,?,'0',?,'연결됨')",
-                        [("g1", "A", "갑", "PLAN", 30_000_000, "ACTIVE"), ("g2", "B", "을", "PLAN", -60_000_000, "CARRIED_OVER_ELIGIBLE"), ("g3", "C", "병", "PLAN", 10_000_000, "ACTIVE"), ("g4", "D", "정", "PREV", 5, "ACTIVE")])
-        con.executemany("INSERT INTO explanation(version,explanation_id,gap_key,gap_id,org_code,org_name,kind,item,year,month,scenario,link_type,status,verdict,rounds,answer,src) VALUES('m',?,?,?,?,?,'매출',?,2032,5,'ACTUAL','CONTRIBUTES_TO_OP_GAP',?,'v',1,?,'s')",
-                        [("e1", "k1", "g1", "A", "갑", "항목1", "수락", "소명 하나"), ("e2", "k2", "g2", "B", "을", "항목2", "수락", "소명 둘"), ("e3", "k3", "g3", "C", "병", "항목3", "검토중", None)])
+        con.executemany("INSERT INTO gap(version,gap_id,gap_type,org_code,org_name,item,year,month,scenario,basis,previous_won,current_won,diff_won,rate_percent,status,explanation_status) VALUES('m',?,'ITEM_GAP',?,?,'광고비',2032,5,'ACTUAL',?,0,0,?,'0',?,'수락')",
+                        [("k1-PLAN", "A", "갑", "PLAN", 30_000_000, "ACCEPTED"), ("k2-PLAN", "B", "을", "PLAN", -60_000_000, "ACCEPTED"), ("k3-PLAN", "C", "병", "PLAN", 10_000_000, "NEEDS_REVIEW"), ("k4-PREVIOUS", "D", "정", "PREVIOUS", 5, "NEEDS_REVIEW")])
+        con.executemany("INSERT INTO explanation(version,explanation_id,gap_key,gap_id,org_code,org_name,kind,item,year,month,scenario,link_type,status,verdict,rounds,answer,src) VALUES('m',?,?,?,?,?,'매출',?,2032,5,'ACTUAL','GAP',?,'v',1,?,'s')",
+                        [("e1", "k1", "k1-PLAN", "A", "갑", "항목1", "수락", "소명 하나"), ("e2", "k2", "k2-PLAN", "B", "을", "항목2", "수락", "소명 둘"), ("e3", "k3", "k3-PLAN", "C", "병", "항목3", "검토중", None)])
         db.mark_latest(con)
     con.close()
     j = client.get("/v1/dev/report-data/gaps?year=2032&month=5").json()
     g = j["groups"][0]
-    assert (g["basis"], g["total_won"], len(g["cards"])) == ("PLAN", -20_000_000, 3)              # 큰 묶음이 먼저, 합계는 SQL SUM
+    assert (g["basis"], g["total_won"], len(g["cards"])) == ("PLAN", -20_000_000, 3)              # 비교 기준별 표시 합계
     assert sum(c["diff_won"] for c in g["cards"]) == g["total_won"]
     by = {c["org_name"]: c for c in g["cards"]}
-    assert by["을"]["carried_over"] is True and by["갑"]["carried_over"] is False
+    assert by["을"]["carried_over"] is False and by["갑"]["carried_over"] is False
     assert by["갑"]["summary"] == "소명 하나" and by["병"]["explained"] is False and by["병"]["summary"] is None
-    assert [x["basis"] for x in j["groups"]] == ["PLAN", "PREV"]                                   # 다른 기준은 합산하지 않고 따로
+    assert [x["basis"] for x in j["groups"]] == ["PLAN", "PREVIOUS"]                                   # 다른 기준은 합산하지 않고 따로
     assert client.get("/v1/dev/report-data/gaps?year=1999&month=1").json()["groups"] == []
 
 
 def test_fill_report_numbers_come_from_db_and_unmatched_orgs_do_not_collide(monkeypatch):
+    """변경된 조회·저장 경계의 회귀 동작을 검증한다.
+
+    Args:
+        monkeypatch: 테스트 fixture 또는 합성 입력.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
     monkeypatch.setenv("AI_PDF_DEV", "1")
-    from app.chat import db
+    from tests import db_support as db
     con = db.open_writer()
     with con:
         con.executemany("INSERT INTO dim_org VALUES(?,?)", [("A1", "사업부1"), ("A10", "사업부10")])
@@ -328,20 +362,42 @@ def test_fill_report_numbers_come_from_db_and_unmatched_orgs_do_not_collide(monk
 
 
 def _seed_report_db():
-    from app.chat import db
+    """회귀 테스트용 합성 자료를 구성한다.
+
+    Args:
+        없음.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
+    from tests import db_support as db
     con = db.open_writer()
     with con:
         con.execute("INSERT INTO dim_org VALUES('A1','사업부1')")
         con.execute("INSERT INTO dim_version(version, kind, label, year, month, loaded_at, source, row_count, is_latest) VALUES('m','master','확정',2034,7,'t','t',0,0)")
         con.executemany("INSERT INTO fact VALUES('m','A1','사업부1',?,'c',NULL,'i',NULL,NULL,NULL,'s',2034,7,?,?)",
                         [("매출", "ACTUAL", 1_000_000_000), ("영업비용", "ACTUAL", 400_000_000), ("매출", "PLAN", 900_000_000), ("영업비용", "PLAN", 400_000_000)])
-        con.execute("INSERT INTO gap VALUES('m','g1','OP_GAP','A1','사업부1','영업이익',2034,7,'ACTUAL','PLAN',0,0,100000000,'0','ACTIVE','연결됨')")
-        con.execute("INSERT INTO explanation VALUES('m','e1','k1','g1','A1','사업부1','매출','i',2034,7,'ACTUAL','CONTRIBUTES_TO_OP_GAP','수락','v',1,'신규 계약이 시작되었습니다.','s')")
+        con.execute("INSERT INTO gap VALUES('m','k1-PLAN','ITEM_GAP','A1','사업부1','영업이익',2034,7,'ACTUAL','PLAN',0,0,100000000,'0','ACCEPTED','수락')")
+        con.execute("INSERT INTO explanation VALUES('m','e1','k1','k1-PLAN','A1','사업부1','매출','i',2034,7,'ACTUAL','GAP','수락','v',1,'신규 계약이 시작되었습니다.','s')")
         db.mark_latest(con)
     con.close()
 
 
 def test_sentences_use_real_key_messages_path_with_tokens_and_validation(monkeypatch, fake):
+    """변경된 조회·저장 경계의 회귀 동작을 검증한다.
+
+    Args:
+        monkeypatch, fake: 테스트 fixture 또는 합성 입력.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
     monkeypatch.setenv("AI_PDF_DEV", "1")
     _seed_report_db()
     body = {"base": {"year": 2034, "month": 7}, "assign": {"g1": "1"}, "gi": 0}
@@ -356,7 +412,8 @@ def test_sentences_use_real_key_messages_path_with_tokens_and_validation(monkeyp
     src = [s["source"] for s in j["sentences"]]
     assert src[0] == "ai" and "template" in src                                # 숫자가 맞는 문장은 AI, 틀린 문장은 기본 문구
     assert all(f["text"] for f in j["facts"]) and "10.0억원" in j["facts"][0]["text"] and "+1.0억원" in j["facts"][0]["text"]
-    assert any("월정액 추정" in f["text"] for f in j["facts"])                  # 4단계 분류 결과가 사실에 들어감
+    assert not any("월정액 추정" in f["text"] for f in j["facts"])
+    assert any("신규 계약" in f["text"] for f in j["facts"])
     assert facts.status_code == 200
 
 
@@ -584,6 +641,17 @@ def test_chat_chart_and_numbercard_blocks_are_validated_by_code(monkeypatch):
 
 
 def test_fill_chart_types_numbercard_and_unit_are_code_computed(monkeypatch):
+    """차트·카드·편집 연결에서 서버 금액 문자열을 검증한다.
+
+    Args:
+        monkeypatch: 환경 설정 fixture.
+    Returns:
+        없음.
+    Raises:
+        AssertionError: 금액·블록 결과 불일치.
+    Side Effects:
+        승인된 테스트 DB의 합성 자료를 조회한다.
+    """
     monkeypatch.setenv("AI_PDF_DEV", "1")
     _seed_report_db()
     blocks = [{"id": "c1", "kind": "chart", "metric": "영업이익", "limit": 5, "chart_type": "waterfall"},
@@ -594,7 +662,7 @@ def test_fill_chart_types_numbercard_and_unit_are_code_computed(monkeypatch):
     by = {b["id"]: b for b in j["blocks"]}
     wf = by["c1"]["rows"]
     assert wf[0]["type"] == "total" and wf[-1]["type"] == "total" and wf[0]["name"] == "계획" and wf[-1]["name"] == "실적"
-    assert sum(r["won"] for r in wf[1:-1]) == wf[-1]["won"] - wf[0]["won"]                # 증감의 합 = 실적 − 계획
+    assert sum(Decimal(r["won"]) for r in wf[1:-1]) == Decimal(wf[-1]["won"]) - Decimal(wf[0]["won"])                # 증감의 합 = 실적 − 계획
     assert by["n1"]["cards"][0]["value"] == "10.0" and by["n1"]["cards"][1]["missing"] is True
     rows = by["t1"]["rows"]
     assert rows[0][0]["text"] == "지표 (백만원)" and rows[1][1]["text"] == "1,000.0"

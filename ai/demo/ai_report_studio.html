@@ -599,6 +599,13 @@ $('back4').addEventListener('click', () => { $('s4').hidden = true; $('s3').hidd
 
 $('gsel').addEventListener('change', e => { GI = +e.target.value; ASSIGN = {}; render4(); });
 
+/**
+ * 백엔드 Gap 카드를 개발용 분류 화면에 표시한다.
+ * Args: 없음.
+ * Returns: 없음.
+ * Raises: DOM 구성 오류를 전파한다.
+ * Side Effects: 개발 화면 DOM을 갱신한다. 분류는 업무 데이터에 저장하지 않는다.
+ */
 function render4() {
   if (!G.groups.length) {
     $('gsel').hidden = true; $('sum4').textContent = `${BASE.year}.${String(BASE.month).padStart(2, '0')} · ${G.state || ''}`;
@@ -610,7 +617,7 @@ function render4() {
   const sel = $('gsel');
   sel.hidden = G.groups.length < 2;
   sel.replaceChildren(...G.groups.map((x, i) => h('option', {value: i, selected: i === GI}, `${x.basis_label} · ${x.cards.length}건${WANT ? (x.basis === WANT ? ' · 3단계 조건과 일치' : ' · 3단계 조건과 다름') : ''}`)));
-  $('sum4').textContent = `영업이익 Gap · ${BASE.year}.${String(BASE.month).padStart(2, '0')} ${g.basis_label} · ${G.state} ${G.version}`;
+  $('sum4').textContent = `보고 항목 Gap · ${BASE.year}.${String(BASE.month).padStart(2, '0')} ${g.basis_label} · ${G.state} ${G.version}`;
   if (WANT && g.basis !== WANT) $('sum4').textContent += ` · ⚠ 3단계 Gap 분해 블록은 ‘${WANT === 'PLAN' ? '계획' : '직전'}’ 대비인데 다른 비교 기준 묶음을 보고 있습니다`;
   const byId = Object.fromEntries(g.cards.map(c => [c.gap_id, c]));
   const binOf = c => ASSIGN[c.gap_id] || '5';
@@ -628,7 +635,7 @@ function render4() {
   }) : [h('div', {class: 'cap'}, '모든 수락 카드를 분류함에 넣었습니다.')]), ...(waiting.length ? [h('div', {class: 'cap', style: 'margin-top:10px;font-weight:700'}, `사유 확인 중 ${waiting.length}건 — 수락되면 분류할 수 있습니다`), ...waiting.map(c => h('div', {class: 'gcard nodrag'}, h('div', {class: 'r'}, h('b', null, c.org_name), h('b', {class: cls(c.diff_won)}, eok(c.diff_won))), h('div', {class: 's'}, '사유 확인 중')))] : []));
   // 오른쪽: 분류함
   const sums = {1: 0, 3: 0, 4: 0, 5: 0};
-  g.cards.forEach(c => { sums[binOf(c)] += c.diff_won; });
+  g.cards.forEach(c => { sums[binOf(c)] += Number(c.diff_won); });
   const mkBin = ([k, name]) => {
     const mine = g.cards.filter(c => ASSIGN[c.gap_id] === k);
     const bin = h('div', {class: 'bin', 'data-bin': k},
@@ -645,7 +652,7 @@ function render4() {
   $('bins').replaceChildren(mkBin(BINS[0]), mkBin(BINS[1]), mkBin(BINS[2]), bin5);
   // 합계 검증: 화면에서 합친 분류 합계 = DB 가 SQL 로 계산한 Gap 합계
   const classified = sums[1] + sums[3] + sums[4] + sums[5];
-  const ok = classified === g.total_won;
+  const ok = classified === Number(g.total_won);
   $('sumrow').replaceChildren(h('span', null, `2 일시적/비경상 요인 (3+4 자동) = `, h('b', {class: cls(sums[3] + sums[4])}, eok(sums[3] + sums[4]))),
     h('span', null, `분류 합계 ${eok(classified)} · Gap 합계(DB) ${eok(g.total_won)} · `, h('span', {class: ok ? 'vok' : 'vbad'}, ok ? '일치' : '불일치')));
 }
@@ -859,27 +866,43 @@ function tableEl(rows, hr, id) {
   };
   return h('table', null, rows.map((r, i) => h('tr', null, r.map((c, j) => cell(c, i, j)).filter(Boolean))));
 }
+/**
+ * 개발 화면 분류함의 Gap 목록을 표시한다.
+ * Args: 없음.
+ * Returns: Gap 목록 DOM 요소.
+ * Raises: DOM 구성 오류를 전파한다.
+ * Side Effects: 새 DOM 요소를 메모리에 구성한다.
+ */
 function gapList() {
   if (!G.groups.length) return h('div', {class: 'empty5'}, '소명 Gap 데이터 없음 (조회 DB 에 이 기준 월의 Gap 이 없습니다)');
   const st = stateOf(), g = G.groups[ST5.gi], A = st.assign;
   const binOf = c => A[c.gap_id] || '5';
-  const sum = k => g.cards.filter(c => binOf(c) === k).reduce((a, c) => a + c.diff_won, 0);
+  const sum = k => g.cards.filter(c => binOf(c) === k).reduce((a, c) => a + Number(c.diff_won), 0);
   const line = (k, name, w, cards) => h('div', null, h('div', {class: 'row'}, h('b', null, `${k} ${name}`), h('b', {class: 'dv'}, eok(w))),
     ...cards.map(c => h('div', {class: 'sub'}, `· ${c.org_name} · ${c.items[0] || ''} `, h('span', {class: 'dv'}, eok(c.diff_won)))));
   const of = k => g.cards.filter(c => binOf(c) === k);
   const total = sum('1') + sum('3') + sum('4') + sum('5');
   return h('div', {class: 'gd'}, line('1', '월정액 추정 Gap', sum('1'), of('1')), line('2', '일시적/비경상 요인 (3+4 자동)', sum('3') + sum('4'), []),
     line('3', '이연 효과', sum('3'), of('3')), line('4', '일시적 효과', sum('4'), of('4')), line('5', '기타 과추정 등', sum('5'), of('5')),
-    h('div', {class: 'cap', style: 'margin-top:6px'}, `분류 합계 ${eok(total)} · Gap 합계(DB) ${eok(g.total_won)} · ${total === g.total_won ? '일치' : '불일치'}`));
+    h('div', {class: 'cap', style: 'margin-top:6px'}, `분류 합계 ${eok(total)} · Gap 합계(DB) ${eok(g.total_won)} · ${total === Number(g.total_won) ? '일치' : '불일치'}`));
 }
 // ---- 차트(SVG): 막대 · 선 · 도넛 · 워터폴. 값은 서버가 DB 에서 계산한 행 그대로
 const SVGNS = 'http://www.w3.org/2000/svg';
 const sv = (tag, attrs, ...kids) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v); kids.flat().forEach(c => c != null && e.append(c.nodeType ? c : document.createTextNode(c))); return e; };
 const PAL = ['#2F5BD8', '#216943', '#5f636b', '#b83c35', '#8b641d', '#14171e', '#7C9BE8', '#1E3F9E'];
+/**
+ * 정확한 금액 문자열을 표시하고 수치 좌표로 차트를 그린다.
+ * Args: rows: 서버 금액·표시 문자열 목록. o: 차트 설정. unit: 표시 단위.
+ * Returns: 차트 DOM 요소.
+ * Raises: DOM 구성 오류를 전파한다.
+ * Side Effects: 화면 좌표에만 Number 근삿값을 사용하며 원본 rows는 변경하지 않는다.
+ */
 function chartEl(rows, o, unit) {
   const type = o.chart_type || 'bar', metric = o.metric || '영업이익';
   if (!rows || !rows.length) return h('div', {class: 'empty5'}, '차트 — 데이터 없음');
   const cap = h('div', {class: 'cap'}, `${type === 'line' ? '월별' : '조직별'} ${metric} (${unit || '억원'}${type === 'bar' || type === 'donut' ? `, 상위 ${rows.length}` : ''})`);
+  // 좌표 계산만 Number로 바꾸고 서버의 금액 표시 문자열은 그대로 사용한다.
+  rows = rows.map(r => ({...r, won: Number(r.won)}));
   const vals = rows.map(r => r.won), W = 520, Hh = 220;
   if (type === 'bar') {
     const max = Math.max(...vals.map(Math.abs), 1);

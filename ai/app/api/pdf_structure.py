@@ -5,7 +5,6 @@ POST /v1/dev/pdf-structure   PDF 한 개 → 페이지 이미지(PNG, base64) + 
 import base64
 
 from pydantic import BaseModel, Field
-from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
 
@@ -68,10 +67,22 @@ def report_resolve(req: _ResolveReq):
 
 
 @router.get("/report-data/gaps")
-def report_gaps(year: int, month: int):
-    """소명 분류 단계: 기준 월의 영업이익 Gap 카드와 연결된 소명. 읽기만 한다(분류 결과는 저장하지 않는다)."""
+def report_gaps(year: int, month: int) -> dict:
+    """기준 월의 backend Gap·소명을 정밀도 손실 없이 개발 화면에 반환한다.
+
+    Args:
+        year: 기준 연도.
+        month: 기준 월.
+    Returns:
+        항목별 비교·소명 카드. 큰 정수·소수는 문자열.
+    Raises:
+        DB 조회 오류를 전달한다.
+    Side Effects:
+        보고서용 뷰만 읽는다. 분류 결과를 저장하지 않는다.
+    """
     from ..pdf_structure import data_select
-    return data_select.gaps(year, month)
+    from ..services.numeric import exact_json_value
+    return exact_json_value(data_select.gaps(year, month))
 
 
 class _FillReq(BaseModel):
@@ -113,30 +124,6 @@ async def report_cause_summary(req: _CauseReq):
     """5단계 '주요 원인' 칸을 한 줄로 줄인다. AI 는 문장만 줄이고 숫자·코드는 코드가 원문과 대조해 검증한다(실패한 줄은 원문 유지)."""
     from ..pdf_structure import cause_summary
     return await run_in_threadpool(cause_summary.summarize, req.texts)
-
-
-class _GuessReq(BaseModel):
-    labels: list[str] = Field(default_factory=list)
-
-
-@router.post("/report-data/guess")
-async def report_guess(req: _GuessReq):
-    """[현재 화면에서는 쓰지 않음 — 나중을 위해 남김] 읽지 못한 표의 행 이름이 어느 DB 지표인지 AI 가 추측한다(추측만, 값은 DB 에서 코드가 계산). 지표 사전에 있는 지표만 돌려준다."""
-    from ..pdf_structure import row_guess
-    return await run_in_threadpool(row_guess.guess, req.labels)
-
-
-class _BlockGuessReq(BaseModel):
-    action: str
-    block: dict = Field(default_factory=dict)
-    candidates: list[dict] = Field(default_factory=list)
-
-
-@router.post("/report-data/guess-block")
-async def report_guess_block(req: _BlockGuessReq):
-    """[현재 화면에서는 쓰지 않음 — 나중을 위해 남김] 2단계 노란 블록 AI 추측(link=각주가 붙은 블록, kind=블록 종류, metric=행 이름의 지표). 허용 목록 밖의 답은 버린다."""
-    from ..pdf_structure import block_guess
-    return await run_in_threadpool(block_guess.guess_block, req.action, req.block, req.candidates)
 
 
 class _ChatReq(BaseModel):

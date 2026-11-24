@@ -1,60 +1,40 @@
-# ai — 보고서 AI 파트 (FastAPI)
+# AI 보고서 서비스
 
-경영기획 보고서 자료의 **핵심 메시지 초안**을 만드는 AI 서비스입니다. 숫자는 코드가 계산하고, AI는 주어진 사실만으로 문장을 다듬습니다.
+백엔드 보고서용 뷰를 읽어 PDF 구조 분석, 자연어 SQL 조회, 보고서 값 채우기와 편집 변경안을 제공합니다. LangGraph가 질의·검사·재시도 흐름을 제어하고, LangChain 공통 LLM 인터페이스를 사용합니다. 업로드 적재·Gap 판정·소명 상태·확정 마스터·틀 저장·XLSX 내보내기는 백엔드가 담당합니다.
 
-> **API 명세는 초안입니다(백엔드와 합의 전).** 엔드포인트·요청/응답 필드는 합의 후 바뀔 수 있습니다.
+## 통합 경계
 
-## 구조
-```
-ai/
-├─ app/
-│  ├─ main.py            FastAPI 앱
-│  ├─ config.py          설정(ai/.env > 셸 환경변수 > 기본값)
-│  ├─ api/               라우터 (health.py, report.py)
-│  ├─ schemas/           요청·응답 스키마
-│  ├─ services/          핵심 메시지 서비스(검증·캐시·일일 상한·토큰 로그), LLM 호출(llm.py, LangChain)
-├─ tests/                pytest (OpenAI 는 모의, 실제 호출 없음)
-├─ output/               파이프라인 결과 JSON(OUTPUT_DIR), ai_call_log.json
-├─ .cache/               AI 응답 캐시(AI_CACHE_DIR)
-├─ docs/integration.md   통합 안내(초안)
-├─ requirements.txt  .env.example  pytest.ini  .gitignore
-```
+- Vue → 백엔드 `/api/v1/report/*` → AI 계약 `/v1/pdf-jobs`, `/v1/data`, `/v1/nl-query`, `/v1/edit`, `/v1/sql-check` 순서로 연결합니다.
+- AI의 DB 연결은 `AI_DATABASE_URL`과 `AI_DB_SCHEMA=report`를 사용하며 항상 읽기 전용입니다. 스키마 생성·값 적재 함수는 운영 앱에서 제거했습니다.
+- `ITEM_GAP`과 `gap_key`를 사용하고, 기준 월과 확정·잠정 상태는 백엔드 `dim_version` 값을 따릅니다. 소명 건수는 검토 항목별 최신 회차 기준입니다.
+- AI는 파일 결과·호출 로그·디스크 캐시를 만들지 않습니다. XLSX는 백엔드 RPT-16으로 내보내며 AI 채팅 응답의 `file`은 `null`입니다.
+- 개발 데모와 `/v1/dev/*`는 Vue의 필요한 기능이 모두 이관될 때까지 유지합니다. 개발 경로는 `AI_PDF_DEV=1`에서만 열립니다. `/v1/chat`, `/v1/report/key-messages`는 같은 핵심 서비스를 확인하는 얇은 개발 입구입니다. 호출이 없던 옛 `/v1/report-authoring/*`와 행·블록 추측 경로는 제거했습니다.
 
-## 설정 (`ai/.env.example` 복사 → `ai/.env`)
-| 변수 | 기본값 | 설명 |
+## LangChain과 LangGraph의 역할
+
+LangGraph는 자연어 조회의 해석·검사·실행·재시도 순서를 관리합니다. LangChain은 각 단계에서 사용하는 공통 모델 호출 인터페이스입니다. 둘은 같은 일을 두 번 수행하지 않습니다. 실제 SDK 전송은 `services/llm.py` 한 곳이며, 최신 백엔드 계약과 PDF·편집·핵심 문장 기능이 이를 공유합니다. 별도 Responses 호출을 만들던 폐기된 보고 작성 경로는 삭제했습니다.
+
+## 설정과 사용량
+
+설정 우선순위는 `ai/.env` → 셸 환경변수 → 기본값입니다. 실제 비밀값은 저장소나 로그에 남기지 않습니다.
+
+| 설정 | 기본값 | 의미 |
 |---|---|---|
-| OPENAI_API_KEY | (없음) | 키. 값은 어디에도 기록하지 않고 출처(ai/.env 또는 env)만 로그에 남깁니다 |
-| OPENAI_MODEL | gpt-4o-mini | 추론(reasoning) 설정은 보내지 않습니다 |
-| AI_TEMPERATURE / AI_MAX_OUTPUT_TOKENS | 0.2 / 500 | |
-| AI_TIMEOUT_SECONDS / AI_MAX_RETRIES | 30 / 0 | 재시도 없음 |
-| AI_DAILY_CALL_LIMIT | 30 | 하루 실제 호출 상한. 넘으면 호출 없이 템플릿 문장 |
-| AI_CACHE_DIR | ai/.cache | (모델+프롬프트 버전+사실 목록 해시) 캐시 |
-| OUTPUT_DIR | ai/output | 결과·호출 로그 폴더 |
+| `OPENAI_MODEL` | `gpt-4o-mini` | 공통 텍스트 모델 |
+| `AI_TIMEOUT_SECONDS` / `AI_MAX_RETRIES` | `30` / `0` | 호출 제한 시간·SDK 재시도 |
+| `AI_DAILY_CALL_LIMIT` | `30` | 한국 날짜 기준 프로세스 내 성공·실패 호출 수 상한 |
+| `AI_DB_SCHEMA` | `report` | 백엔드 보고서용 뷰 스키마 |
+| `REPORT_AI_TOKEN` | 없음 | 백엔드와 AI의 내부 인증 토큰 |
+| `AI_REQUIRE_INTERNAL_TOKEN` | `false` | 운영에서는 `true`로 설정 |
+| `CHAT_MEMORY` | `true` | 프로세스 메모리의 최근 대화 조건 |
+| `CHAT_TEST_LOG` | `false` | 활성화 시 질의 사용량을 stdout으로 출력 |
 
-우선순위는 **ai/.env → 셸 환경변수 → 기본값**입니다. 상대 경로는 저장소 루트 기준입니다.
+응답 캐시는 프로세스당 최대 256개·1시간이며 재시작하면 사라집니다. 호출 이력은 최근 1,000개만 메모리에 유지하고 일일 실제 호출 수는 별도 집계합니다. 여러 프로세스의 전역 비용 한도는 외부에서 관리해야 합니다. `AI_CACHE_DIR`, `OUTPUT_DIR`, `AI_LOG_DIR`는 기존 호출부와의 호환을 위한 메모리 그룹 식별자이며 폴더를 만들지 않습니다.
 
-## 엔드포인트 (초안)
-- **LLM 호출은 `app/services/llm.py` 한 곳**입니다. `chat_model()` 은 LangChain `BaseChatModel`(LangGraph 노드가 그대로 씀), `ask_json()` 은 JSON 응답 한 번 호출입니다. 전송은 OpenAI 공식 SDK(`openai_client.make_client`)라 재시도·제한 시간 설정과 테스트의 가짜 클라이언트가 그대로 동작합니다. `ChatOpenAI` 로 바꾸려면 `llm.py` 의 `_SdkChatModel` 만 바꿉니다.
-- `GET /health` → `{"status","model","openai_key_present"}` (OpenAI 호출 없음, 키는 true/false만)
-- `POST /v1/report/key-messages`
-  - 요청: `{"status":"provisional|final","facts":[{"id":"F1","kind":"매출|비용|영업이익|연간|소명|주의","text":"..."}]}`
-  - 응답: `{"sentences":[{"text","fact_ids","source":"ai|template","reason"}],"usage":{"input_tokens","output_tokens","cached"}}`
-  - 문장별 검증(숫자 일치, fact_ids 존재, 빈 문장·5문장 초과·금지어 금지, 미분해 사실은 밝힐 것). 실패한 문장만 템플릿으로 대체하고 `reason` 에 사유를 적습니다.
+## 개발 문서와 검증
 
-## 토큰 절약 장치
-- 사실 목록(id·kind·text)만 보냅니다. 엑셀 원본·소명 전체·반려된 소명은 보내지 않습니다.
-- JSON 응답만 받고 `max_tokens` 로 제한합니다.
-- 같은 (모델+`PROMPT_VERSION`+사실 목록 해시)는 `AI_CACHE_DIR` 에 저장된 결과를 쓰고 OpenAI 를 부르지 않습니다.
-- 일일 호출 상한 초과·키 없음·호출 실패(재시도 없음)는 템플릿 문장으로 대체하고 이유를 표시합니다.
-- 호출마다 토큰 사용량(입력/출력)을 `ai/output/ai_call_log.json` 에 누적합니다(키·입력 원문 없음).
+- [통합 API·운영 경계](docs/integration.md)
+- [#62 변경 함수·호출 관계·검증 범위](docs/development/ai-issue-contract.md)
+- [기존 데모 기록](README_AI_REPORT.md)
 
-## 실행·통합
-실행 방법(.env, uvicorn, pytest), 현재 엔드포인트(초안), 입력 데이터가 REP-01 응답으로 바뀌는 대응표, 소명 상태 이름 대응, 팀이 정할 것은 **[docs/integration.md](docs/integration.md)** 를 보세요.
-
-```bash
-cd ai && cp .env.example .env && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
-uvicorn app.main:app --reload && python -m pytest -q
-```
-자연어 질문 챗봇(AI 작업실, `POST /v1/chat`)은 `report.html` 오른쪽 패널에서 씁니다(조회 DB 는 업로드 실행 후 자동 적재). 자세한 내용은 integration.md.
-업로드·파싱·Gap·소명·master 는 백엔드가 맡고, AI 는 백엔드 보고서용 뷰를 읽기만 합니다(백엔드와의 계약은 docs/integration.md).
-`ai/.gitignore` 가 `.env`, `.venv/`, `.cache/`, `_backup_before_rename/`, `preview_html/` 을 저장소에서 제외합니다.
+외부 패키지·실제 DB·모델 호출 없이 회귀 검증하려면 저장소 루트에서 `python3 -B ai/tests/test_stateless_runtime.py`를 실행합니다. 전체 pytest는 외부 패키지와 PostgreSQL이 필요하며 기존 fixture가 임시 서버·파일을 만들 수 있으므로 생성이 승인된 환경에서만 실행합니다.

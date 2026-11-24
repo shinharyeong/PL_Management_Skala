@@ -5,23 +5,20 @@
         ├ 예시 질문(고정 SQL)   ─┤
         └ AI: 저장된 SQL → SQL 생성 ⇄ 검사·실행(실패하면 고쳐서 다시, 최대 CHAT_MAX_FIX번)
                  └ AI 를 못 쓰면 → 기본 질의(예시 질문과 맞으면)
-                                 ─┴→ 설명 문장 → 엑셀 → 기억 갱신 → 응답
+                                 ─┴→ 설명 문장 → 근거 구성 → 기억 갱신 → 응답
 
-- 노드는 기존 단계 함수(interpret·followup·nl2sql·sqlguard·quick·excel_out)를 그대로 부른다. 숫자는 항상 SQL 결과에서 코드가 계산한다.
+- 노드는 기존 단계 함수(interpret·followup·nl2sql·sqlguard·quick)를 그대로 부른다. 숫자는 항상 SQL 결과에서 코드가 계산한다.
 - 중간에 끝나는 경로(차단·되묻기·조회 불가·오류)는 state["resp"] 를 채우고 END 로 간다.
 - 상태에는 DB 연결·설정 같은 파이썬 객체가 들어 있어 체크포인터를 쓰지 않는다(대화 기억은 memory.py, 서버 메모리).
 """
 from __future__ import annotations
 
-import json
 import time
-import uuid
-from datetime import datetime
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from . import db, excel_out, followup, interpret, memory, nl2sql, quick, sqlguard
+from . import db, followup, interpret, memory, nl2sql, quick, sqlguard
 
 GUARD_STEP_CODES = ("EMPTY", "MULTI_OR_SEMICOLON", "COMMENT", "NOT_SELECT", "FORBIDDEN_KEYWORD", "RECURSIVE", "TABLE_NOT_ALLOWED",
                     "NO_VERSION_FILTER", "VERSION_LITERAL")
@@ -33,7 +30,6 @@ class ChatState(TypedDict, total=False):
     version: str | None
     quick_id: str | None
     conversation_id: str | None
-    make_excel: bool    # False 면 엑셀 파일을 만들지 않는다(backend 계약 /v1/nl-query: 내려받을 곳이 없어 파일만 쌓임)
     settings: Any
     steps: Any          # service.Steps
     budget: Any         # nl2sql.Budget
@@ -329,23 +325,22 @@ def explain(state: ChatState) -> dict:
     return {"text": text, "text_source": text_source}
 
 
-def excel(state: ChatState) -> dict:
+def collect_evidence(state: ChatState) -> dict:
+    """조회 응답의 출처만 구성하고 파일 내보내기는 백엔드에 맡긴다.
+
+    Args:
+        state: 조회 결과·버전·기준 설명을 가진 그래프 상태.
+    Returns:
+        근거 목록 ev와 파일 없음(file=None).
+    Raises:
+        KeyError: 내부 그래프 필수 상태가 누락된 경우.
+    Side Effects:
+        없음. 파일 생성이나 별도 저장을 하지 않는다.
+    """
     from .service import _evidence
-    s, res, it, steps = state["settings"], state["res"], state["it"], state["steps"]
-    ev = _evidence(it.version, state["basis"], res.columns, res.rows)
-    file = None
-    if res.row_count > 0 and state.get("make_excel", True):
-        t4 = time.perf_counter()
-        fid = uuid.uuid4().hex[:16]
-        name = f"chat_{it.version}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        path = db.files_dir(s) / f"{fid}.xlsx"
-        info = excel_out.build_excel(path, question=state["question"], version=state["basis"] or it.version, params=state["params"], columns=res.columns,
-                                     rows=res.rows, sql=state["sql"], ai=state["budget"].public(), answer_text=state["text"],
-                                     answer_source=state["text_source"], evidence=ev, truncated=res.truncated)
-        (db.files_dir(s) / f"{fid}.json").write_text(json.dumps({"name": name}, ensure_ascii=False), encoding="utf-8")
-        file = {"id": fid, "name": name, "url": f"/v1/chat/files/{fid}"}
-        steps.add("엑셀", "ok", f"시트 {', '.join(info['sheets'])} · {info['rows']}행" + (" · 차트 포함" if info["chart"] else ""), t4)
-    return {"ev": ev, "file": file}
+    res, it = state["res"], state["it"]
+    notice = "파일은 보고서 화면의 내보내기에서 XLSX로 받을 수 있습니다." if (state.get("fu") or {}).get("kind") == "excel" else state.get("notice")
+    return {"ev": _evidence(it.version, state["basis"], res.columns, res.rows), "file": None, "notice": notice}
 
 
 def respond(state: ChatState) -> dict:
@@ -367,10 +362,21 @@ def respond(state: ChatState) -> dict:
 
 # ------------------------------------------------------------------ 그래프
 def build():
+    """읽기 전용 질의·검사·재시도·근거 응답의 그래프를 구성한다.
+
+    Args:
+        없음.
+    Returns:
+        파일 내보내기 노드가 없는 컴파일된 LangGraph.
+    Raises:
+        ValueError: 그래프 연결이 유효하지 않은 경우.
+    Side Effects:
+        메모리에 그래프를 구성한다. 모델·DB·파일에는 접근하지 않는다.
+    """
     g = StateGraph(ChatState)
     for name, fn in (("guard", guard), ("open_db", open_db), ("understand", understand), ("follow_up", follow_up), ("prepare", prepare),
                      ("run_rule", run_rule), ("run_quick", run_quick), ("ai_cached", ai_cached), ("ai_generate", ai_generate),
-                     ("ai_check", ai_check), ("fallback_quick", fallback_quick), ("explain", explain), ("excel", excel), ("respond", respond)):
+                     ("ai_check", ai_check), ("fallback_quick", fallback_quick), ("explain", explain), ("evidence", collect_evidence), ("respond", respond)):
         g.add_node(name, fn)
     g.add_edge(START, "guard")
     for a, b in (("guard", "open_db"), ("open_db", "understand"), ("understand", "follow_up"), ("follow_up", "prepare")):
@@ -382,8 +388,8 @@ def build():
     g.add_conditional_edges("ai_generate", lambda s: s["ai_kind"],
                             {"check": "ai_check", "fallback": "fallback_quick", "unknown": END, "blocked": END, "clarify": END})
     g.add_conditional_edges("ai_check", lambda s: s["ai_kind"], {"ok": "explain", "retry": "ai_generate", "fallback": "fallback_quick"})
-    g.add_edge("explain", "excel")
-    g.add_edge("excel", "respond")
+    g.add_edge("explain", "evidence")
+    g.add_edge("evidence", "respond")
     g.add_edge("respond", END)
     return g.compile()
 

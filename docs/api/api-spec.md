@@ -21,7 +21,7 @@
 | 목록 | `?cursor=&limit=` (기본 50, 최대 100). 응답 `{ items: [...], nextCursor }` — 0-2 참고 |
 | 상태 변경 명령 | `Idempotency-Key` 헤더와 `expectedStateToken` 본문 필드 — 0-1, 0-2 참고 |
 | 오류 형식 | RFC 9457 Problem Details(`application/problem+json`) + `code`·`requestId`·`errors` — 0-3 참고 |
-| 파일 | 업로드는 `multipart/form-data`로 backend에 보내고, backend가 형식·크기·조직을 검사한 뒤 S3에 저장(`stored_object`에는 위치·크기·해시만). 초안 파일은 `drafts/`에 두고 제출 시 `uploads/`로 복사해 보존, `drafts/`는 수명 주기 규칙으로 7일 뒤 삭제. 다운로드는 backend가 권한 확인 후 S3에서 읽어 그대로 내려줌 |
+| 파일 | 업로드는 `multipart/form-data`로 backend에 보내고, 형식·크기·조직 검사 후 현재는 로컬 디스크/PVC에 저장(`stored_object`에는 위치·크기·해시). 제출 트랜잭션에서 초안 원본·첨부를 보존 위치로 복사하고, 다운로드는 backend가 권한 확인 후 전달. S3 전환·초안 7일 자동 삭제는 2차 목표이며 현재 자동 정리는 구현하지 않음 |
 | 버전 표기 | 조직 제출본 `YYYY-MM-NN`(제출 회차 `seq`) · 승인 버전 `ver{월}.{NN}`(`approved_seq`) · 연간 `YYYY-PLAN-NN` · 월간 master `master_ver{월}.{NN}` · 연간 master `master_plan{연도}.{NN}` — 모두 서버가 계산해 `label`로 내려줌 |
 
 ### 0-1. 공통 요청 헤더
@@ -136,7 +136,7 @@ API별 업무 오류 코드(`REQUEST_ALREADY_EXISTS`, `PENDING_ALREADY_EXISTS`, 
 | ID | 메서드 | 경로 | 설명 | 주요 요청 | 주요 응답 | 권한 | FR | 관련 테이블 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | AUTH-01 | POST | `/auth/codes` | 인증 메일 요청·재전송. 등록된 사내 도메인·계정만 허용, 재전송은 1분 후 | `email` | `202` `expiresAt`(3분), `resendAvailableAt` · 오류 `UNREGISTERED_EMAIL`, `CODE_RESEND_WAIT`(429) | 공개 | AUTH-001, 002 | app_user |
-| AUTH-02 | POST | `/auth/sessions` | 인증코드로 로그인 | `email`, `code` | `token`, `user{id,name,role,organization}`, `homePath`(P: 전사 손익 / O: 요청함) · 오류 `CODE_MISMATCH`, `CODE_EXPIRED` | 공개 | AUTH-002, 003, 004 | app_user |
+| AUTH-02 | POST | `/auth/sessions` | 인증코드로 로그인 | `email`, `code` | `token`, `expiresAt`, `me{user,role,organization,homePath,menus}` · 오류 `INVALID_AUTH_CODE`, 상세 `errors[].code`=MISMATCH·EXPIRED·TOO_MANY_ATTEMPTS | 공개 | AUTH-002, 003, 004 | app_user |
 | AUTH-03 | DELETE | `/auth/session` | 로그아웃(세션 종료) | — | `204` | P·O | AUTH-007 | — |
 | AUTH-04 | GET | `/me` | 로그인 사용자·역할·조직. 메뉴 구성과 조직 고정에 사용 | — | `user`, `role`, `organization{id,code,name}`(O만), `menus[]` | P·O | AUTH-004, MENU-001, 002 | app_user, organization |
 | AUTH-05 | GET | `/me/badges` | 메뉴 배지 건수. 0이면 프론트에서 숨김 | — | P: `unreadNotifications`, `monthlyReviewNeeded`, `annualReviewNeeded` · O: `openRequests` | P·O | MENU-004 | notification, review_item, submission, request_target |
@@ -191,7 +191,7 @@ HOME-03~06 계산 기준:
 
 | ID | 메서드 | 경로 | 설명 | 주요 요청 | 주요 응답 | 권한 | FR | 관련 테이블 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| GAP-01 | GET | `/submissions/{submissionId}/comparison` | 기준 대상·비교 대상 버전으로 Gap 계산 결과 | `baseSubmissionId`(기본: 현재 기준 버전), `unit`, `organizationId` | `base{label}`, `target{label}`, `rows[...]` | P | MONTH-004 | submission, financial_value |
+| GAP-01 | GET | `/submissions/{submissionId}/comparison` | 기준 대상·비교 대상 버전으로 Gap 계산 결과 | `baseSubmissionId`(기본: 현재 기준 버전; 금액은 원 단위, 조직은 제출본으로 결정) | `base{label}`, `target{label}`, `rows[...]` | P | MONTH-004 | submission, financial_value |
 | GAP-02 | GET | `/submissions/{submissionId}/comparison/file` | Gap 계산 결과 엑셀 다운로드 | GAP-01과 같음 | xlsx 스트림 | P | MONTH-004 | — |
 | GAP-03 | GET | `/gap-thresholds/current` | 현재 Gap 기준(비교 3종) | — | `items[{comparison: ACTUAL_VS_PLAN·ESTIMATE_VS_PREVIOUS·ESTIMATE_VS_PLAN, percentEnabled, percent, amountEnabled, amount}]` | P | MONTH-005 | gap_threshold |
 | GAP-04 | POST | `/gap-thresholds/preview` | 기준 적용 전 영향 건수 미리보기 | `comparison`, `percentEnabled`, `percent`, `amountEnabled`, `amount` | `affectedCount` | P | MONTH-005 | gap_threshold, review_item |
@@ -224,7 +224,7 @@ HOME-03~06 계산 기준:
 | ID | 메서드 | 경로 | 설명 | 주요 요청 | 주요 응답 | 권한 | FR | 관련 테이블 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | UP-01 | GET | `/submission-template/file` | 제출 양식 다운로드(연간·월간 공통 파일 하나) | — | 파일 스트림 · 파일이 없으면 404 `TEMPLATE_NOT_FOUND` | P·O | UPLOAD-002 | — |
-| UP-03 | POST | `/submission-requests/{requestId}/submissions` | 엑셀 업로드 → 파일 규칙 확인 → S3 `drafts/` 저장 → 제출 초안 생성 → 파싱 작업 등록 | multipart `file`(.xlsx·.xlsb, 요청당 1개) | `202` `submission{id, status: DRAFT, kind: ANNUAL_PLAN·MONTHLY_ACTUAL, title}`, `parsingJob{status: QUEUED}` · 오류 `INVALID_FILENAME`(422), `ORGANIZATION_MISMATCH`, `UNSUPPORTED_FILE_TYPE`(415), `FILE_TOO_LARGE`(413) | O | UPLOAD-001, 003, 004, 005 | submission, stored_object, parsing_job |
+| UP-03 | POST | `/submission-requests/{requestId}/submissions` | 엑셀 업로드 → 파일 규칙 확인 → 로컬/PVC 초안 저장 → 제출 초안 생성 → 프로세스 내 파싱 작업 등록 | multipart `file`(.xlsx·.xlsb, 요청당 1개) | `202` `submission{id, status: DRAFT, kind: ANNUAL_PLAN·MONTHLY_ACTUAL, title}`, `parsingJob{status: QUEUED}` · 오류 `INVALID_FILENAME`(422), `ORGANIZATION_MISMATCH`, `UNSUPPORTED_FILE_TYPE`(415), `FILE_TOO_LARGE`(413) | O | UPLOAD-001, 003, 004, 005 | submission, stored_object, parsing_job |
 | UP-04 | GET | `/submissions/{submissionId}` | 제출본 상태 조회. 파싱 진행 중에는 폴링 | — | `submission{status, label, ...}`, `parsingJob{status: QUEUED·RUNNING·SUCCEEDED·FAILED}`, `validation{canSubmit}` | P·O | UPLOAD-005 | submission, parsing_job |
 | UP-05 | GET | `/submissions/{submissionId}/diagnostics` | 검증 결과 · 수정 필요 표 | — | `errorCount`, `items[{sourceCell, item, rule, guide}]` (예: 손익제출!N40 · 설비 임차료 · 금액 누락) | O | UPLOAD-006 | parsing_job, submission_validation |
 | UP-06 | POST | `/submissions/{submissionId}/parsing-retries` | 같은 파일로 파싱 재시도 | `expectedStateToken` | `parsingJob{status: QUEUED, attemptNo}` | O | UPLOAD-005 | parsing_job |
@@ -239,7 +239,7 @@ HOME-03~06 계산 기준:
 | PROOF-02 | GET | `/review-items` | 소명 대상 목록(매출/비용 → 대상 월 실적/추정 → 항목). Gap 기준은 내려주지 않음 | `submissionId`, `view=ORG` | `tree[{group, month, scenario, items[{reviewItemId, name, sourceCell, baseline, current, previous?, rate, rateLabel, answerState: EMPTY·WRITTEN}]}]` | O | PROOF-002, RESUB-005 | review_item, financial_value |
 | PROOF-03 | GET | `/review-items/{reviewItemId}` | 변경 내역 상세 + 지난 소명 사유(승인 배지) (GAP-08과 같은 경로, 조직 보기) | — | `rows[{sourceCell, baseline, previous?, current, diff, rate}]`, `previousExplanation{answer, verdict: ACCEPTED, label}?`, `requestNote?`(재제출 요청 메시지) | O | PROOF-003, 004, RESUB-005 | review_item, review_explanation |
 | PROOF-04 | PUT | `/review-items/{reviewItemId}/answer` | 이번 소명 작성·수정(제출 전까지) | `answer`, `expectedStateToken` | `answerState: WRITTEN`, `progress` | O | PROOF-005 | review_explanation |
-| PROOF-05 | POST | `/review-items/{reviewItemId}/attachments` | 소명 파일 첨부(검사 후 S3 `drafts/` 저장, 제출 시 보존) | multipart `file`(1~16MiB), `expectedStateToken` | `attachment{id, name, size}` | O | PROOF-005 | review_attachment, stored_object |
+| PROOF-05 | POST | `/review-items/{reviewItemId}/attachments` | 소명 파일 첨부(검사 후 로컬/PVC 초안 저장, 제출 시 보존) | multipart `file`(1~16MiB), `expectedStateToken` | `attachment{id, name, size}` | O | PROOF-005 | review_attachment, stored_object |
 | PROOF-06 | GET | `/review-items/{reviewItemId}/attachments` · `/attachments/{attachmentId}/file` | 첨부 목록·다운로드 | — | 목록 · 파일 스트림 | P·O | PROOF-005, MONTH-011 | review_attachment |
 | PROOF-07 | GET | `/submissions/{submissionId}/submit-preview` | 제출 내용 확인 화면 | — | `file{name, savedAs}`, `expectedLabel`, `baseline{label}`, `items[{name, month, scenario, amount}]` | O | PROOF-008, 009, RESUB-007 | submission, review_item |
 | PROOF-08 | POST | `/submissions/{submissionId}/submit` | 제출하기 → 새 제출본 '검토 대기' | `replyMessage`, `expectedStateToken` | `submission{status: PENDING, seq, label}` · 오류 `ANSWER_REQUIRED`(미작성 항목 목록), `VALIDATION_FAILED` | O | PROOF-006, 010, RESUB-007, YEAR-003 | submission.reply_message, notification |

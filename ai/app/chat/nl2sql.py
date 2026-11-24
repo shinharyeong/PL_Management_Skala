@@ -10,11 +10,11 @@ import json
 import re
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
-from pathlib import Path
 
 from ..config import Settings
-from ..services import ai_reasons, llm
+from ..services import ai_reasons, llm, response_cache
 from ..services.call_log import CallLog
+from ..services.numeric import amount_precision
 from ..services.key_messages import FORBIDDEN, numbers_in
 from . import schema
 
@@ -97,22 +97,37 @@ def sql_cache_key(s: Settings, question: str, interp_values: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _cache_path(s: Settings, key: str) -> Path:
-    return s.ai_cache_dir / "chat" / "sql_cache" / f"{key}.json"
-
-
 def cache_get(s: Settings, key: str) -> dict | None:
-    p = _cache_path(s, key)
-    try:
-        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
-    except (OSError, ValueError):
-        return None
+    """SQL 초안을 제한된 메모리 캐시에서 읽는다.
+
+    Args:
+        s: 캐시 격리 키를 포함한 요청 설정.
+        key: 모델·스키마·질문·해석 문맥의 해시.
+    Returns:
+        SQL 응답 사본 또는 캐시가 없으면 None.
+    Raises:
+        없음.
+    Side Effects:
+        메모리 조회 순서만 갱신한다. 파일을 읽거나 쓰지 않는다.
+    """
+    return response_cache.get((str(s.ai_cache_dir), "sql", key))
 
 
 def cache_put(s: Settings, key: str, resp: dict) -> None:
-    p = _cache_path(s, key)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(resp, ensure_ascii=False), encoding="utf-8")
+    """SQL 응답 사본을 메모리에 저장한다.
+
+    Args:
+        s: 캐시 격리 키를 포함한 요청 설정.
+        key: 모델·스키마·질문·해석 문맥의 해시.
+        resp: 검사한 SQL을 담은 응답.
+    Returns:
+        없음.
+    Raises:
+        없음.
+    Side Effects:
+        제한된 메모리 캐시만 갱신한다. 파일·업무 DB 저장은 없다.
+    """
+    response_cache.put((str(s.ai_cache_dir), "sql", key), resp)
 
 
 def generate_sql(s: Settings, question: str, interp_values: dict, params_names: list[str], budget: Budget, *, previous: tuple[str, str] | None = None,
@@ -137,8 +152,23 @@ def _eok2(v) -> Decimal:
     return (Decimal(str(v)) / Decimal(10) ** 8).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+@amount_precision()
 def allowed_numbers(columns: list[str], rows: list[tuple], question: str, interp_values: dict, row_count: int) -> set[str]:
-    """설명 문장에 나와도 되는 숫자: 결과 셀 값, 금액의 억원 환산(1·2자리), 열 합계, 행 수, 질문·해석값에 나온 숫자."""
+    """설명에 허용할 숫자를 조회 결과와 명시된 문맥에서 구성한다.
+
+    Args:
+        columns: 결과 열 이름.
+        rows: 실제 조회 행.
+        question: 사용자 질문.
+        interp_values: 해석한 조직·기간·버전.
+        row_count: 조회 행 수.
+    Returns:
+        원 값·합계·금액 환산·질문에 있는 숫자의 문자열 집합.
+    Raises:
+        숫자 변환 오류를 전달한다.
+    Side Effects:
+        Decimal 정밀도 문맥만 임시 변경하며 저장·모델 호출을 하지 않는다.
+    """
     ok: set[str] = set(numbers_in(question)) | {str(row_count), str(len(columns))}
     for m in interp_values.get("months", []):
         ok.add(str(m))
@@ -146,15 +176,15 @@ def allowed_numbers(columns: list[str], rows: list[tuple], question: str, interp
         ok |= set(numbers_in(str(o)))
     ok |= set(numbers_in(str(interp_values.get("version") or "")))
     for ci, c in enumerate(columns):
-        vals = [r[ci] for r in rows if isinstance(r[ci], (int, float)) and not isinstance(r[ci], bool)]
+        vals = [r[ci] for r in rows if isinstance(r[ci], (int, float, Decimal)) and not isinstance(r[ci], bool)]
         money = c.endswith("_won")
         for v in vals + ([sum(vals)] if vals else []):
             for x in {v, abs(v)}:
-                ok.add(str(int(x)) if float(x) == int(x) else str(x))
+                ok.add(str(int(x)) if x == int(x) else str(x))
                 if money:
                     ok |= {str(_eok(x)), str(_eok2(x)), str(_eok(x).quantize(Decimal(1), rounding=ROUND_HALF_UP))}
                 else:
-                    ok |= {str(round(float(x), 1)), str(round(float(x), 2))}
+                    ok |= {str(round(Decimal(str(x)), 1)), str(round(Decimal(str(x)), 2))}
         for r in rows:
             if isinstance(r[ci], str):
                 ok |= set(numbers_in(r[ci]))
@@ -184,17 +214,31 @@ LABELS = {"revenue_won": "매출", "cost_won": "영업비용", "op_won": "영업
           "prev_op_won": "이전 영업이익"}
 
 
+@amount_precision()
 def template_text(columns: list[str], rows: list[tuple], row_count: int, truncated: bool) -> str:
-    """AI 없이 쓰는 기본 문장: 조회 행 수, 금액 열 합계, 첫 행. 숫자는 모두 결과에서 계산한다."""
+    """조회 결과에 근거한 기본 설명을 Decimal 정밀도로 구성한다.
+
+    Args:
+        columns: 결과 열 이름.
+        rows: 실제 조회 행.
+        row_count: 조회 행 수.
+        truncated: 행 상한 적용 여부.
+    Returns:
+        행 수·금액 합계·첫 행을 설명하는 한국어 문장.
+    Raises:
+        숫자 변환 오류를 전달한다.
+    Side Effects:
+        Decimal 문맥만 임시 변경한다. 파일·모델·DB 접근은 없다.
+    """
     if row_count == 0:
         return "해당 데이터가 없습니다."
     parts = [f"{row_count}행을 조회했습니다" + ("(행 상한으로 일부만 표시)." if truncated else ".")]
     won_cols = [i for i, c in enumerate(columns) if c.endswith("_won")][:2]
     for i in won_cols:
-        vals = [r[i] for r in rows if isinstance(r[i], (int, float))]
+        vals = [r[i] for r in rows if isinstance(r[i], (int, float, Decimal))]
         if vals:
             parts.append(f"{LABELS.get(columns[i], columns[i])} 합계는 {_eok(sum(vals))}억원입니다.")
     text_i = next((i for i, c in enumerate(columns) if not c.endswith("_won") and isinstance(rows[0][i], str)), None)
-    if won_cols and text_i is not None and isinstance(rows[0][won_cols[0]], (int, float)):
+    if won_cols and text_i is not None and isinstance(rows[0][won_cols[0]], (int, float, Decimal)):
         parts.append(f"첫 행은 {rows[0][text_i]} {LABELS.get(columns[won_cols[0]], columns[won_cols[0]])} {_eok(rows[0][won_cols[0]])}억원입니다.")
     return " ".join(parts)

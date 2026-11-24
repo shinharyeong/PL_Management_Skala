@@ -10,11 +10,11 @@ import hashlib
 import json
 import logging
 import re
-from pathlib import Path
 
 from ..config import Settings, get_settings, log_key_source
 from . import llm
 from .call_log import CallLog
+from . import response_cache
 
 logger = logging.getLogger("ai.key_messages")
 
@@ -88,13 +88,6 @@ def validate_sentence(sentence: dict, by_id: dict) -> list[str]:
     return reasons
 
 
-def _read_cache(path: Path):
-    try:
-        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
-    except (OSError, ValueError):
-        return None
-
-
 def _call_openai(settings: Settings, facts: list[dict], system_prompt: str | None = None):
     # 추론(reasoning) 설정은 보내지 않는다
     reply = llm.ask_json(settings, system_prompt or SYSTEM_PROMPT,
@@ -108,7 +101,25 @@ def _call_openai(settings: Settings, facts: list[dict], system_prompt: str | Non
 
 def generate(facts: list[dict], status: str, *, templates: list[dict] | None = None, force: bool = False, allow_call: bool = True,
              settings: Settings | None = None, system_prompt: str | None = None, prompt_version: str | None = None) -> dict:
-    """system_prompt·prompt_version 을 주면 다른 프롬프트로 같은 흐름(캐시·상한·로그·검증)을 쓴다(narratives 서비스용)."""
+    """검증된 사실로 보고 문장을 만들고 메모리 캐시와 호출 상한을 적용한다.
+
+    Args:
+        facts: id·kind·text를 가진 확인된 사실 목록.
+        status: 잠정 또는 확정 상태.
+        templates: 실패 시 사용할 기본 문장. 없으면 사실에서 구성한다.
+        force: 메모리 캐시를 건너뛰는지 여부.
+        allow_call: 외부 모델 호출을 허용하는지 여부.
+        settings: 요청 설정. 없으면 공통 설정을 읽는다.
+        system_prompt: 기본값을 대체할 내부 지시문.
+        prompt_version: 캐시를 구분하는 지시문 버전.
+    Returns:
+        검증된 문장, 대체 사유와 호출 사용량.
+    Raises:
+        ValueError: 입력 사실의 필수 값이나 형식이 잘못된 경우.
+    Side Effects:
+        허용 시 모델을 호출하고 메모리 캐시·사용량 집계 및 stdout 로그를 갱신한다.
+        파일이나 업무 DB에는 저장하지 않는다.
+    """
     s = settings or get_settings()
     pv = prompt_version or PROMPT_VERSION
     log_key_source(s)
@@ -123,7 +134,7 @@ def generate(facts: list[dict], status: str, *, templates: list[dict] | None = N
               "model": s.openai_model, "prompt_version": pv, "notes": []}
     ai_sents, why_not = None, None
 
-    cached = None if force else _read_cache(cpath)
+    cached = None if force else response_cache.get(cpath)
     if cached and isinstance(cached.get("sentences"), list):
         ai_sents = cached["sentences"]
         result["cached"] = True
@@ -142,8 +153,7 @@ def generate(facts: list[dict], status: str, *, templates: list[dict] | None = N
         try:
             ai_sents, usage = _call_openai(s, facts, system_prompt)
             result["usage"] = {**usage, "cached": False}
-            s.ai_cache_dir.mkdir(parents=True, exist_ok=True)
-            cpath.write_text(json.dumps({"sentences": ai_sents, "usage": usage, "model": s.openai_model, "prompt_version": pv}, ensure_ascii=False), encoding="utf-8")
+            response_cache.put(cpath, {"sentences": ai_sents, "usage": usage, "model": s.openai_model, "prompt_version": pv})
             log.append({**meta, "outcome": "success", "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"]})
         except Exception as e:  # 오류 종류만 기록(키·응답 원문 없음)
             kind = type(e).__name__ + (f" HTTP {e.status_code}" if getattr(e, "status_code", None) else "")

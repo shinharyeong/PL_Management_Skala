@@ -11,11 +11,6 @@ VALIDATION = {"NUMBER_NOT_IN_FACTS", "NUMBER_NOT_IN_RESULT", "FORBIDDEN_WORD", "
               "CAUSE_WORD_NOT_IN_SOURCE", "IMPACT_WITHOUT_SOURCE_CUE", "EMPTY", "MISSING_FIELD"}
 
 
-def call_failed(error_type: str) -> str:
-    """예외 이름('APITimeoutError HTTP 429' 꼴 포함)을 'AI_CALL_FAILED:<이름>' 코드로."""
-    return "AI_CALL_FAILED:" + (error_type or "Error")
-
-
 def ko(r: str | None) -> str | None:
     if not r:
         return None
