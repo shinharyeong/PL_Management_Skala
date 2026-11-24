@@ -35,6 +35,27 @@ BUILTIN_FORMATS = {
     47: "mmss.0",
     48: "##0.0E+0",
     49: "@",
+    # ko-KR 로캘의 암시적 날짜·시간 서식(ECMA-376 Part 1 18.8.30). numFmts에 적지 않고 번호만 쓰므로
+    # 없으면 날짜 일련번호가 number로 분류된다. 표시 문자열은 한국어 Excel 기준.
+    27: 'yyyy"년" mm"월" dd"일"',
+    28: "mm-dd",
+    29: "mm-dd",
+    30: "mm-dd-yy",
+    31: 'yyyy"년" mm"월" dd"일"',
+    32: 'h"시" mm"분"',
+    33: 'h"시" mm"분" ss"초"',
+    34: "yyyy-mm-dd",
+    35: "yyyy-mm-dd",
+    36: 'yyyy"년" mm"월" dd"일"',
+    50: 'yyyy"년" mm"월" dd"일"',
+    51: "mm-dd",
+    52: "yyyy-mm-dd",
+    53: "yyyy-mm-dd",
+    54: "mm-dd",
+    55: "yyyy-mm-dd",
+    56: "yyyy-mm-dd",
+    57: 'yyyy"년" mm"월" dd"일"',
+    58: "mm-dd",
 }
 
 
@@ -94,6 +115,76 @@ def cell_position(address: str) -> tuple[int, int, str]:
     for character in column:
         index = index * 26 + ord(character) - ord("A") + 1
     return int(match.group(2)), index, column
+
+
+def column_letters(index: int) -> str:
+    """1부터 시작하는 열 번호를 A, B, …, XFD로 바꾼다.
+
+    Args:
+        index: 1 이상의 열 번호.
+    Returns:
+        열 문자.
+    Raises:
+        없음.
+    Side Effects:
+        없음.
+    """
+    name = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        name = chr(65 + remainder) + name
+    return name
+
+
+class CellAddresses:
+    """행·셀의 r 속성이 없을 때 문서 순서로 주소를 정한다.
+
+    ECMA-376은 row@r·c@r을 생략할 수 있게 하며, 생략하면 바로 앞 행·셀의 다음 위치다.
+    일부 내보내기 도구가 r을 생략하므로 추출기·검증기·서비스 브리지가 같은 규칙을 쓴다.
+    """
+
+    def __init__(self) -> None:
+        self.row = 0
+        self.column = 0
+
+    def next_row(self, reference: str | None) -> int:
+        """행 시작. r이 있으면 그 번호, 없으면 앞 행 + 1.
+
+        Args:
+            reference: row@r 원문 또는 None.
+        Returns:
+            1부터 시작하는 행 번호.
+        Raises:
+            ValueError: r이 1 이상의 정수가 아닌 경우.
+        Side Effects:
+            현재 행을 바꾸고 열 위치를 처음으로 되돌린다.
+        """
+        if reference:
+            if not reference.isascii() or not reference.isdecimal() or int(reference) < 1:
+                raise ValueError(f"행 번호를 해석할 수 없습니다: {reference}")
+            self.row = int(reference)
+        else:
+            self.row += 1
+        self.column = 0
+        return self.row
+
+    def next_cell(self, reference: str | None) -> str:
+        """셀 주소. r이 있으면 그대로, 없으면 현재 행에서 앞 셀의 다음 열.
+
+        Args:
+            reference: c@r 원문 또는 None.
+        Returns:
+            A1 형식 주소.
+        Raises:
+            ValueError: r이 유효한 셀 주소가 아닌 경우.
+        Side Effects:
+            현재 열 위치를 바꾼다.
+        """
+        if reference:
+            _, self.column, _ = cell_position(reference)
+            return reference
+        self.column += 1
+        return f"{column_letters(self.column)}{max(self.row, 1)}"
 
 
 def range_bounds(reference: str) -> tuple[int, int, int, int]:

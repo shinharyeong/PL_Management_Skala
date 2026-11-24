@@ -903,6 +903,32 @@ Side Effects:
     없음.
 ```
 
+### column_letters
+
+정의: [ooxml.py](../../src/excel_parser/ooxml.py)
+
+서명: `column_letters(index: int) -> str`
+
+정적 호출 관계: `ooxml.CellAddresses.next_cell`.
+
+```text
+1부터 시작하는 열 번호를 A, B, …, XFD로 바꾼다.
+```
+
+### CellAddresses
+
+정의: [ooxml.py](../../src/excel_parser/ooxml.py)
+
+서명: `CellAddresses().next_row(reference: str | None) -> int`, `CellAddresses().next_cell(reference: str | None) -> str`
+
+정적 호출 관계: `extraction._extract_sheet`(공유 수식 사전 수집·셀 순회), `service_bridge._inspect_xml`. 독립 검증기(`validation`)는 같은 규칙을 별도 코드로 다시 구현한다.
+
+```text
+행·셀의 r 속성이 없을 때 문서 순서로 주소를 정한다(ECMA-376: 생략하면 앞 행·셀의 다음 위치).
+next_row: r이 있으면 그 번호(1 이상 정수가 아니면 ValueError), 없으면 앞 행 + 1. 열 위치를 처음으로.
+next_cell: r이 있으면 그대로 쓰고 열 위치를 맞춤, 없으면 현재 행에서 앞 셀의 다음 열.
+```
+
 ### range_bounds
 
 정의: [ooxml.py](../../src/excel_parser/ooxml.py)

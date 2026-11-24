@@ -87,6 +87,29 @@ class IndependentValidationTests(unittest.TestCase):
             report = validate_extraction(self.source, workbook)
         self.assertTrue(report["passed"], report["issues"])
 
+    def test_missing_r_attributes_match_in_both_readers(self) -> None:
+        """r 없는 행·셀을 추출기와 독립 검증기가 같은 주소로 읽어 검증이 통과한다(#6).
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 두 읽기 결과의 주소가 다른 경우.
+        Side Effects:
+            메모리 패키지만 읽는다.
+        """
+        package = make_package({
+            "주소": '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+            '<row><c><v>10</v></c><c><v>20</v></c></row><row r="3"><c r="B3"><v>30</v></c><c><v>40</v></c></row>'
+            "</sheetData></worksheet>"
+        })
+        workbook = extract_memory(package)
+        self.assertEqual(sorted(cell["address"] for cell in workbook["sheets"][0]["cells"]), ["A1", "B1", "B3", "C3"])
+        with patch("excel_parser.validation.ZipFile", side_effect=lambda _: open_memory_archive(package)):
+            report = validate_extraction(self.source, workbook)
+        self.assertTrue(report["passed"], report["issues"])
+
     def test_unmodified_package_matches_independent_xml(self) -> None:
         """직접 작성한 XML의 다섯 내용 셀과 한 빈 구조 셀을 대조한다.
 
