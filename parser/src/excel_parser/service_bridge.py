@@ -19,7 +19,7 @@ from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile
 from . import xlsb as xlsb_reader
 from .extraction import extract_workbook_bytes
 from .mapping import map_workbook
-from .ooxml import cell_position, local_name, range_bounds, relationships
+from .ooxml import CellAddresses, cell_position, local_name, range_bounds, relationships
 from .submission_adapter import build_submission_data
 from .xlsb import XLSB_WORKBOOK_TYPE, content_type_of, is_xlsb, workbook_part
 
@@ -134,6 +134,7 @@ def _inspect_xml(document: bytes, totals: dict, limits: BridgeLimits) -> None:
     row_text = {}
     current_cell = None
     current_string = None
+    addresses = CellAddresses()
     parser = expat.ParserCreate(namespace_separator="}")
 
     def start(name: str, attributes: dict) -> None:
@@ -174,6 +175,9 @@ def _inspect_xml(document: bytes, totals: dict, limits: BridgeLimits) -> None:
                 or not 1 <= len(attributes.get("name", "")) <= 31
             ):
                 raise BridgeError("INVALID_WORKBOOK")
+        if root == "worksheet" and tag == "row":
+            if addresses.next_row(attributes.get("r")) > 1_048_576:
+                raise BridgeError("INVALID_WORKBOOK")
         if (root == "sst" and tag == "si") or (root == "worksheet" and tag == "is"):
             if current_string is not None:
                 raise BridgeError("INVALID_WORKBOOK")
@@ -185,7 +189,7 @@ def _inspect_xml(document: bytes, totals: dict, limits: BridgeLimits) -> None:
             totals["xml_cells"] += 1
             if totals["xml_cells"] > limits.max_xml_cells:
                 raise BridgeError("WORKBOOK_LIMIT_EXCEEDED")
-            address = attributes.get("r", "")
+            address = addresses.next_cell(attributes.get("r"))
             if len(address) > 16:
                 raise BridgeError("INVALID_WORKBOOK")
             row, column, _ = cell_position(address)

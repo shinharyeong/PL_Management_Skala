@@ -160,9 +160,13 @@ def _scan_sheet(archive: ZipFile, part: str, strings: list[str]) -> dict[str, An
         "content_count": 0,
         "default_hidden": False,
     }
+    # r 생략 시 앞 행·셀의 다음 위치(ECMA-376). 추출기와 독립적으로 같은 규칙을 다시 적용한다.
+    current_row = current_column = 0
     with archive.open(part) as stream:
         for event, element in ET.iterparse(stream, events=("start", "end")):
             if event == "start" and element.tag == f"{_NS}row":
+                current_row = int(element.get("r") or current_row + 1)
+                current_column = 0
                 result["rows"].append(dict(element.attrib))
             elif event == "start" and element.tag == f"{_NS}sheetFormatPr":
                 result["default_hidden"] = element.get("zeroHeight") in {"1", "true"}
@@ -171,7 +175,18 @@ def _scan_sheet(archive: ZipFile, part: str, strings: list[str]) -> dict[str, An
             elif event == "start" and element.tag == f"{_NS}mergeCell":
                 result["merges"].append(element.attrib["ref"])
             elif event == "end" and element.tag == f"{_NS}c":
-                address = element.attrib["r"]
+                address = element.get("r")
+                if address:
+                    current_column = 0
+                    for character in re.match(r"[A-Z]+", address).group():
+                        current_column = current_column * 26 + ord(character) - 64
+                else:
+                    current_column += 1
+                    letters, number = "", current_column
+                    while number:
+                        number, remainder = divmod(number - 1, 26)
+                        letters = chr(65 + remainder) + letters
+                    address = f"{letters}{max(current_row, 1)}"
                 result["addresses"].add(address)
                 # c@s가 없으면 OOXML 기본값 0(_decode_cell). 행·열 서식으로 대체하지 않는다.
                 decoded = _decode_cell(element, strings)

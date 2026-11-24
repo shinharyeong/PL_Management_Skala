@@ -8,6 +8,7 @@ from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
 from .ooxml import (
+    CellAddresses,
     cell_position,
     is_date_format,
     local_name,
@@ -183,14 +184,18 @@ def _extract_sheet(
     ]
     merge_bounds = [(range_bounds(merge["range"]), merge) for merge in merges]
     shared_formulas = {}
-    for node in root.findall("./{*}sheetData/{*}row/{*}c"):
-        formula = node.find("{*}f")
-        if formula is not None and formula.get("t") == "shared" and formula.text:
-            shared_formulas[formula.get("si")] = {
-                "address": node.attrib["r"],
-                "raw_text": formula.text,
-                "attributes": dict(formula.attrib),
-            }
+    prepass = CellAddresses()
+    for row_node in root.findall("./{*}sheetData/{*}row"):
+        prepass.next_row(row_node.get("r"))
+        for node in row_node.findall("{*}c"):
+            address = prepass.next_cell(node.get("r"))
+            formula = node.find("{*}f")
+            if formula is not None and formula.get("t") == "shared" and formula.text:
+                shared_formulas[formula.get("si")] = {
+                    "address": address,
+                    "raw_text": formula.text,
+                    "attributes": dict(formula.attrib),
+                }
     dimension = root.find("{*}dimension")
     sheet_format = root.find("{*}sheetFormatPr")
     default_hidden = sheet_format is not None and sheet_format.get("zeroHeight") in {
@@ -219,14 +224,16 @@ def _extract_sheet(
                     {"range": child.get("sqref"), "raw_xml": raw, "evaluated": False}
                 )
     seen = set()
+    addresses = CellAddresses()
     for row_node in root.findall("./{*}sheetData/{*}row"):
+        addresses.next_row(row_node.get("r"))
         sheet["rows"].append(dict(row_node.attrib))
         row_hidden = row_node.get("hidden", "true" if default_hidden else "false") in {
             "1",
             "true",
         }
         for node in row_node.findall("{*}c"):
-            address = node.attrib["r"]
+            address = addresses.next_cell(node.get("r"))
             seen.add(address)
             row, column_index, column = cell_position(address)
             sheet["counts"]["xml_cells"] += 1

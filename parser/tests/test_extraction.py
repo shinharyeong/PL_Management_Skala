@@ -116,6 +116,48 @@ class ExtractionBoundaryTests(unittest.TestCase):
         self.assertEqual(cells["C1"]["style_id"], 0)
         self.assertEqual(sheet["rows"][0].get("s"), "5")  # 행 서식 자체는 보존
 
+    def test_korean_builtin_date_format_and_missing_r_attributes(self) -> None:
+        """ko-KR 기본 날짜 서식(31)은 날짜로, r 없는 행·셀은 문서 순서 주소로 읽는다(#6).
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: 날짜가 number로 분류되거나 주소 계산이 틀린 경우.
+        Side Effects:
+            메모리 ZIP만 사용한다.
+        """
+        document = (
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+            '<row><c s="1"><v>45292</v></c><c><v>7</v></c></row>'
+            '<row r="4"><c r="C4"><v>1</v></c><c><v>2</v></c></row>'
+            '<row><c><f t="shared" si="0" ref="A5:B5">A1+1</f><v>8</v></c><c><f t="shared" si="0"/><v>9</v></c></row>'
+            "</sheetData></worksheet>"
+        )
+        styles = (
+            '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="31"/></cellXfs></styleSheet>'
+        )
+        stream = BytesIO()
+        with ZipFile(stream, "w") as archive:
+            archive.writestr("xl/worksheets/sheet1.xml", document)
+            archive.writestr("xl/styles.xml", styles)
+        stream.seek(0)
+        with ZipFile(stream) as archive:
+            sheet = _extract_sheet(
+                archive,
+                {"name": "주소", "sheet_id": "1", "state": "visible", "part": "xl/worksheets/sheet1.xml"},
+                {"source_id": "memory", "file_id": "memory"},
+                [],
+                read_styles(archive, "xl/styles.xml"),
+            )
+        cells = {cell["address"]: cell for cell in sheet["cells"]}
+        self.assertEqual(sorted(cells), ["A1", "A5", "B1", "B5", "C4", "D4"])
+        self.assertEqual(cells["A1"]["data_type"], "date")
+        self.assertEqual(cells["B1"]["data_type"], "number")
+        self.assertEqual(cells["B5"]["formula"]["shared_base"]["address"], "A5")
+
     def test_stored_values_ignore_visual_signs(self) -> None:
         """색상·괄호·대시·퍼센트 서식이 원본 저장값을 바꾸지 않음을 확인한다.
 

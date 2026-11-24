@@ -180,6 +180,31 @@ class ServiceBridgeTests(unittest.TestCase):
             self.assertEqual(limited["errorCode"], "WORKBOOK_LIMIT_EXCEEDED")
             mapper.assert_not_called()
 
+    def test_missing_r_attributes_are_accepted(self) -> None:
+        """r 없는 행·셀도 문서 순서 주소로 검사해 받아들인다(#6).
+
+        Args:
+            없음.
+        Returns:
+            없음.
+        Raises:
+            AssertionError: r이 없다는 이유로 INVALID_WORKBOOK이 되는 경우.
+        Side Effects:
+            메모리 ZIP만 사용한다.
+        """
+        sheet = _SHEET.replace(' r="5"', "")
+        for column in "ABCDEFG":
+            sheet = sheet.replace(f' r="{column}5"', "")
+        _, result, _ = _invoke(_package({"xl/worksheets/sheet1.xml": sheet}))
+        self.assertNotEqual(result["status"], "FAILED", result.get("errorCode"))
+        _, baseline, _ = _invoke(_package())
+        def comparable(values: list[dict]) -> list[dict]:
+            # 원본 해시가 다르면 레코드 ID만 달라지므로 빼고 비교한다.
+            return [{key: value for key, value in item.items() if key != "sourceRecordId"} for item in values]
+
+        self.assertEqual(comparable(result["submissionData"]["lines"][0]["values"]),
+                         comparable(baseline["submissionData"]["lines"][0]["values"]))
+
     def test_invalid_worksheet_column_ranges_remain_rejected(self) -> None:
         """그림 호환성 수정 뒤에도 워크시트 열 범위를 검사하는지 확인한다.
 
