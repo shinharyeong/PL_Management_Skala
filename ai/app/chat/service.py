@@ -1,4 +1,4 @@
-"""POST /v1/chat 처리 순서: 차단 확인 → 해석 → (후속 질문 규칙) → 되묻기 → SQL 생성(AI, 캐시) → 검사 → 자기 수정 → 읽기 전용 실행 → 설명 문장 → 엑셀.
+"""text2SQL(backend 계약 /v1/nl-query). 흐름은 graph.py(LangGraph): 차단 확인 → 해석 → (후속 질문 규칙) → 되묻기 → SQL 생성(AI, 캐시) → 검사 → 자기 수정 → 읽기 전용 실행 → 설명 문장.
 - 조직이 없으면 전사 합산으로 답한다("전사 기준"). 되묻기는 (a) 누구인지 모르는 지칭 (b) 비교 대상 없음 (c) 같은 이름이 둘 이상일 때만 한다.
 - 대화 기억(CHAT_MEMORY)이 켜져 있으면 짧은 후속 질문은 AI 없이 규칙으로 이전 조건에 덮어쓴다(memory.py: 서버 메모리에만, 질문 원문·결과 값은 저장하지 않음).
 - AI 를 못 쓰면(키 없음·상한 초과·실패) 예시 질문의 고정 SQL 로 대신 답한다. steps 에는 실제로 거친 단계만 기록한다."""
@@ -6,17 +6,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import time
-import uuid
 from datetime import datetime
-from pathlib import Path
 
 from ..config import Settings, get_settings
-from ..services.call_log import CallLog
-from . import db, excel_out, followup, interpret, memory, nl2sql, quick, sqlguard
+from . import db, interpret, memory, nl2sql
 
-FILE_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 BLOCK_TEXT = {"write": "조회만 가능합니다. 데이터를 지우거나 바꾸는 요청은 처리하지 않아요. 조회하고 싶은 내용을 알려 주세요.",
               "sql": "조회만 가능합니다. 데이터를 바꾸거나 지우는 SQL 은 실행하지 않았어요(SELECT 조회만 허용). 조회하고 싶은 내용을 알려 주세요."}
 
@@ -37,29 +32,6 @@ def _stamp(con) -> str:
     """조회 DB 적재 상태(버전 목록과 적재 시각). 바뀌면 대화 기억을 비운다(보고서 실행·버전이 바뀐 경우)."""
     rows = [tuple(r) for r in con.execute("SELECT version, loaded_at FROM dim_version ORDER BY version")]
     return hashlib.sha256(json.dumps(rows).encode()).hexdigest()[:12]
-
-
-def status(s: Settings | None = None) -> dict:
-    """서버·DB·AI 상태(상단 점 3개)와 DB 범위, 예시 질문."""
-    s = s or get_settings()
-    used = CallLog(s.log_dir or s.output_dir).calls_today()
-    ai = {"key_present": s.key_present, "model": s.openai_model, "daily_limit": s.ai_daily_call_limit, "used_today": used, "remaining_today": max(0, s.ai_daily_call_limit - used),
-          "state": "no_key" if not s.key_present else ("limit" if used >= s.ai_daily_call_limit else "ready")}
-    try:
-        con = db.open_readonly(s)
-    except FileNotFoundError as e:
-        return {"db_ready": False, "message": str(e), "versions": [], "ai": ai, "quick": quick.public(), "memory": s.chat_memory}
-    try:
-        vs = db.versions(con)
-        rng = con.execute("SELECT COUNT(DISTINCT org_code) AS orgs, MIN(month) AS m1, MAX(month) AS m2, COUNT(*) AS n FROM fact").fetchone()
-        dv = interpret.default_version(sorted(vs, key=lambda v: (v["year"], v["month"])))
-        lv = next((v for v in vs if v["version"] == dv), None)
-        names = [r["org_name"] for r in con.execute("SELECT org_name FROM dim_org ORDER BY org_code")]
-        return {"db_ready": True, "versions": vs, "default_version": dv, "default_basis": interpret.version_label(lv), "latest_year": lv["year"] if lv else None, "latest_month": lv["month"] if lv else None,
-                "org_samples": names[:2], "org_names": names, "orgs": rng["orgs"], "months": [rng["m1"], rng["m2"]], "fact_rows": rng["n"], "ai": ai, "stamp": _stamp(con),
-                "quick": quick.public(lv["month"] if lv else None, names[0] if names else None), "memory": s.chat_memory}
-    finally:
-        con.close()
 
 
 def _evidence(version: str, label: str | None, columns: list[str], rows: list[tuple]) -> list[dict]:
@@ -124,8 +96,7 @@ def _test_log(s: Settings, entry: dict) -> None:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def run_chat(question: str, *, version: str | None = None, quick_id: str | None = None, conversation_id: str | None = None, settings: Settings | None = None,
-             excel: bool = True) -> dict:
+def run_chat(question: str, *, version: str | None = None, quick_id: str | None = None, conversation_id: str | None = None, settings: Settings | None = None) -> dict:
     s = settings or get_settings()
     steps, budget = Steps(), nl2sql.Budget()
     t_all = time.perf_counter()
@@ -151,7 +122,7 @@ def run_chat(question: str, *, version: str | None = None, quick_id: str | None 
     from .graph import GRAPH
     final: dict = {}
     try:
-        final = GRAPH.invoke({"question": question, "version": version, "quick_id": quick_id, "conversation_id": conversation_id, "make_excel": excel,
+        final = GRAPH.invoke({"question": question, "version": version, "quick_id": quick_id, "conversation_id": conversation_id,
                               "settings": s, "steps": steps, "budget": budget, "flags": state, "resp": None},
                              config={"recursion_limit": 25 + 3 * (s.chat_max_fix + 1)})
     finally:
@@ -159,29 +130,6 @@ def run_chat(question: str, *, version: str | None = None, quick_id: str | None 
         if con is not None:
             con.close()
     return finish(final["resp"], final.get("st"), final.get("vlabel") if final["resp"]["status"] == "ok" else None)
-
-
-def reset_memory(conversation_id: str | None) -> None:
-    memory.reset(conversation_id)
-
-
-def clear_conditions(conversation_id: str | None, keys: list[str]) -> dict:
-    st = memory.clear_keys(conversation_id, keys)
-    return {"chips": memory.chips(st, None), "on": get_settings().chat_memory}
-
-
-def get_file(file_id: str, s: Settings | None = None) -> tuple[Path, str] | None:
-    if not FILE_ID_RE.match(file_id or ""):
-        return None
-    s = s or get_settings()
-    p = db.files_dir(s) / f"{file_id}.xlsx"
-    if not p.exists():
-        return None
-    try:
-        name = json.loads((db.files_dir(s) / f"{file_id}.json").read_text(encoding="utf-8"))["name"]
-    except (OSError, ValueError, KeyError):
-        name = f"chat_{file_id}.xlsx"
-    return p, name
 
 
 # ------------------------------------------------------------------ backend 계약(/v1/nl-query, 명세 12절·RPT-11)
@@ -216,7 +164,7 @@ def nl_query(question: str, base_year: int, base_month: int, *, conversation_id:
     if not row:
         return {"status": "UNKNOWN", "sql": None, "explanation": f"{base_year}년 {base_month}월 데이터가 없습니다.", "clarifyQuestion": None,
                 "clarifyOptions": [], "preview": empty, "rowCount": 0, "truncated": False}
-    r = run_chat(question, version=row["version"], conversation_id=conversation_id, settings=s, excel=False)    # 계약 응답에는 파일이 없다
+    r = run_chat(question, version=row["version"], conversation_id=conversation_id, settings=s)
     status = _NLQ_STATUS.get(r["status"], "UNKNOWN")
     clarify = r.get("clarify") or {}
     columns = list(r.get("columns") or [])

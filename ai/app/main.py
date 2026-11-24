@@ -1,13 +1,17 @@
-"""FastAPI 앱. 실행: (ai/ 에서) uvicorn app.main:app --reload"""
+"""FastAPI 앱(report-ai). 실행: (ai/ 에서) uvicorn app.main:app --reload
+
+backend 만 클러스터 안에서 부른다(명세 12절). 브라우저가 직접 부르지 않으므로 CORS 를 열지 않는다.
+- GET  /health
+- POST /v1/nl-query · /v1/data · /v1/edit · /v1/pdf-jobs · /v1/sql-check  (app/api/contract.py)
+"""
 from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
-from .api import chat, contract, health, pdf_structure, report, report_authoring
+from .api import contract, health
 from .config import get_settings, log_key_source
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -20,17 +24,10 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="AI Report Service", version="0.1.0-draft", lifespan=lifespan,
-                  description="초안 API(백엔드와 합의 전). 핵심 메시지 초안 생성, 파일 업로드 5단계 실행(확인용).")
-    # CORS: 확인용 화면(ai/preview_html/flow.html)이 file:// 에서 열리므로 localhost·127.0.0.1 과 Origin "null" 만 허용한다.
-    # ※ 운영 설정이 아니다. 운영에서는 백엔드가 호출하므로 브라우저 CORS 가 필요 없거나 정해진 도메인만 허용해야 한다.
-    app.add_middleware(CORSMiddleware, allow_origin_regex=r"^(null|https?://(localhost|127\.0\.0\.1)(:\d+)?)$", allow_methods=["GET", "POST", "PUT", "DELETE"], allow_headers=["*"])
+    app = FastAPI(title="report-ai", version="1.0.0", lifespan=lifespan,
+                  description="AI 보고서 계약 API(명세 12절): 자연어 질의, 블록 데이터 채우기, 대화 편집, PDF 틀 추출, SQL 검사.")
     app.include_router(health.router)
-    app.include_router(report.router)
-    app.include_router(chat.router)
     app.include_router(contract.router)
-    app.include_router(pdf_structure.router)
-    app.include_router(report_authoring.router)
     return app
 
 

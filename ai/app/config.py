@@ -76,7 +76,6 @@ class Settings:
     chat_text_max_tokens: int = 300             # 설명 문장 출력 토큰 상한
     chat_memory: bool = True                    # 대화 기억(서버 메모리에만, 최근 6턴·2시간). off 면 이전 대화를 전혀 쓰지 않음
     chat_test_log: bool = False                 # 질문마다 비용 측정 한 줄을 AI_CACHE_DIR/chat/test_log.jsonl 에 남김(질문 원문·키는 남기지 않음)
-    pdf_dev: bool = False                       # PDF 구조 추출 데모 엔드포인트(/v1/dev/pdf-structure). 켜야만 열린다
 
     @property
     def key_present(self) -> bool:
@@ -123,7 +122,6 @@ def get_settings() -> Settings:
         chat_sql_timeout_seconds=float(_read("CHAT_SQL_TIMEOUT_SECONDS", "20")[0]), chat_max_fix=int(_read("CHAT_MAX_FIX", "2")[0]),
         chat_memory=str(_read("CHAT_MEMORY", "true")[0]).strip().lower() not in ("0", "false", "no", "off"),
         chat_test_log=str(_read("CHAT_TEST_LOG", "0")[0]).strip().lower() in ("1", "true", "yes", "on"),
-        pdf_dev=str(_read("AI_PDF_DEV", "0")[0]).strip().lower() in ("1", "true", "yes", "on"),
     )
     return s
 

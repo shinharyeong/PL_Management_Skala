@@ -54,48 +54,8 @@ def months() -> dict:
         con.close()
 
 
-def compare_basis(columns: list[str]) -> list[str]:
-    out = []
-    for c in columns:
-        for key, name in COMPARE_WORDS:
-            if key in c and name not in out:
-                out.append(name)
-    return out
 
 
-def resolve(base: dict, blocks: list[dict]) -> dict:
-    """base={'year','month'} 와 블록별 {id, kind, labels, columns, period, text} → 블록별 기간·범위·비교 기준·상태."""
-    info = months()
-    have = {(m["year"], m["month"]): m for m in info["months"]}
-    metrics = set(info["metrics"])
-    org_names = {o["name"]: o["code"] for o in info["orgs"]} | {o["code"]: o["code"] for o in info["orgs"]}
-    res = []
-    for b in blocks:
-        kind = b.get("kind")
-        labels = [str(x) for x in b.get("labels") or []]
-        row = {"id": b["id"], "kind": kind, "months": [], "scope": "—", "compare": [], "metric_match": None, "state": "—", "reason": None}
-        if kind in ("title", "footnote"):
-            res.append(row)
-            continue
-        p = Period.model_validate(b.get("period") or {"rule": "base"})
-        ms = periods.resolve(p, (base["year"], base["month"]))
-        row["months"] = [{"year": y, "month": m, "state": (have[(y, m)]["state"] if (y, m) in have else "데이터 없음")} for y, m in ms]
-        row["compare"] = compare_basis([str(c) for c in b.get("columns") or []])
-        hit_org = [l for l in labels if match_org(l, info["orgs"])]
-        row["scope"] = f"조직별({len(hit_org)}개 일치)" if hit_org else "전사"
-        found = sorted({m for l in labels for m in metrics if m in l})
-        row["metric_match"] = found
-        if not labels and kind in ("paragraph", "list"):
-            row["state"], row["reason"] = "문장", "숫자 칸이 문장 속에 있어 데이터 선택 대상이 아니라 문장 생성 때 채웁니다"
-        elif not found and not hit_org:
-            row["state"], row["reason"] = "데이터 없음", "행 이름이 지표 사전(" + ", ".join(sorted(metrics)) + ")에 없음"
-        else:
-            sts = [m["state"] for m in row["months"]]
-            row["state"] = "데이터 없음" if "데이터 없음" in sts else ("잠정" if "잠정" in sts else "확정")
-            if row["state"] == "데이터 없음":
-                row["reason"] = "선택한 기간 중 데이터가 없는 월이 있음"
-        res.append(row)
-    return {"base": base, "blocks": res, "provisional": any(r["state"] == "잠정" for r in res)}
 
 
 BASIS_LABEL = {"PLAN": "계획 대비"}
@@ -586,78 +546,10 @@ def _breakdown(con, info, base, metric):
 
 
 # ===================================================================== 5단계: 보고 문장(OpenAI)
-def build_facts(base: dict, assign: dict, gi: int = 0) -> list[dict]:
-    """보고 문장의 재료(사실 목록). 모든 숫자는 조회 DB 에서 코드로 계산한 값이고, AI 는 이 문자열만 쓸 수 있다."""
-    info = months()
-    y, m = base["year"], base["month"]
-    cur = next((v for v in info["months"] if v["year"] == y and v["month"] == m), None)
-    if not info["db_ready"] or cur is None:
-        return []
-    con = _con()
-    facts: list[dict] = []
-    try:
-        names = {"매출": ("매출", "매출"), "영업비용": ("비용", "영업비용"), "영업이익": ("영업이익", "영업이익")}
-        for metric in [k for k in ("매출", "영업비용", "영업이익") if k in info["metrics"]]:
-            bs = _bases(con, info, y, m, METRIC_COL[metric], None)
-            if bs["현재"] is None:
-                continue
-            kind, label = names[metric]
-            parts = []
-            for nm in ("계획", "직전 월", "전년 동월"):
-                if bs[nm] is not None:
-                    parts.append(f"{nm} 대비 {eok(bs['현재'] - bs[nm], diff=True)}억원")
-            facts.append({"kind": kind, "text": f"{y}년 {m}월 전사 {label} 실적은 {eok(bs['현재'])}억원" + ("이며, " + ", ".join(parts) + "입니다." if parts else "입니다.")})
-        g = gaps(y, m)
-        grp = g["groups"][gi] if g["groups"] and 0 <= gi < len(g["groups"]) else None
-        if grp:
-            explained = sorted([c for c in grp["cards"] if c["explained"]], key=lambda c: -abs(c["diff_won"]))[:2]
-            for c in explained:
-                facts.append({"kind": "소명", "text": f"{c['org_name']}의 영업이익 {grp['basis_label']} Gap은 {eok(c['diff_won'], diff=True)}억원이며, 수락된 소명 원문은 \"{c['summary']}\"입니다."})
-            bins = {"1": 0, "3": 0, "4": 0, "5": 0}
-            for c in grp["cards"]:
-                bins[assign.get(c["gap_id"]) if assign.get(c["gap_id"]) in ("1", "3", "4") else "5"] += c["diff_won"]
-            if any(assign.get(c["gap_id"]) in ("1", "3", "4") for c in grp["cards"]):
-                facts.append({"kind": "소명", "text": f"영업이익 {grp['basis_label']} Gap {eok(grp['total_won'], diff=True)}억원은 월정액 추정 {eok(bins['1'], diff=True)}억원, 이연 효과 {eok(bins['3'], diff=True)}억원, "
-                                                      f"일시적 효과 {eok(bins['4'], diff=True)}억원, 기타 과추정 {eok(bins['5'], diff=True)}억원으로 분류했습니다."})
-    finally:
-        con.close()
-    return [{"id": f"F{i}", **f} for i, f in enumerate(facts, 1)]
 
 
-def ai_status_ko(result: dict, limit: int) -> dict:
-    """생성 결과에서 'AI 문장이 쓰였는지, 안 됐다면 이유'를 사람이 읽는 말로. 키 값은 다루지 않는다."""
-    sents = result.get("sentences") or []
-    if any(s.get("source") == "ai" for s in sents):
-        replaced = [s for s in sents if s.get("source") == "template" and s.get("reason") and "FILL" not in s["reason"]]
-        return {"ok": True, "code": "ok", "message": "AI 문장 생성 성공" + (f" (숫자 검증 실패로 기본 문구로 대체된 문장 {len(replaced)}개)" if replaced else "")}
-    reason = (sents[0].get("reason") if sents else None) or ""
-    err = result.get("error") or ""
-    if "NO_API_KEY" in reason:
-        return {"ok": False, "code": "NO_API_KEY", "message": "키 없음 — ai/.env 에 OPENAI_API_KEY 를 넣고 서버를 재시작하세요. 기본 문구로 대체했습니다."}
-    if "DAILY_LIMIT_EXCEEDED" in reason:
-        return {"ok": False, "code": "DAILY_LIMIT", "message": f"오늘 AI 호출 한도({limit}회)에 도달했습니다. 기본 문구로 대체했습니다."}
-    if reason.startswith("AI_CALL_FAILED") or err:
-        e = err or reason.split(":", 1)[-1]
-        if "Connection" in e or "Timeout" in e:
-            return {"ok": False, "code": "NETWORK", "message": f"네트워크 연결 실패({e}). 기본 문구로 대체했습니다."}
-        if "Authentication" in e or "401" in e or "PermissionDenied" in e:
-            return {"ok": False, "code": "AUTH", "message": f"키가 거절되었습니다({e}). 키를 확인하세요. 기본 문구로 대체했습니다."}
-        if "RateLimit" in e or "429" in e:
-            return {"ok": False, "code": "RATE_LIMIT", "message": f"OpenAI 사용 한도/속도 제한({e}). 기본 문구로 대체했습니다."}
-        return {"ok": False, "code": "CALL_FAILED", "message": f"AI 호출 실패({e}). 기본 문구로 대체했습니다."}
-    return {"ok": False, "code": "VALIDATION", "message": f"AI 문장이 숫자·금지어 검증을 통과하지 못해 모두 기본 문구로 대체했습니다({reason or '사유 없음'})."}
 
 
-def generate_sentences(base: dict, assign: dict, gi: int = 0, force: bool = False) -> dict:
-    from ..config import get_settings
-    from ..services import key_messages
-    facts = build_facts(base, assign, gi)
-    if not facts:
-        return {"facts": [], "sentences": [], "usage": {"input_tokens": 0, "output_tokens": 0, "cached": False},
-                "status": {"ok": False, "code": "NO_DATA", "message": "문장을 만들 데이터가 없습니다(기준 월 데이터 없음)."}}
-    cur = next(v for v in months()["months"] if v["year"] == base["year"] and v["month"] == base["month"])
-    r = key_messages.generate(facts, "final" if cur["kind"] in ("master", "close") else "provisional", force=force)
-    return {"facts": facts, "sentences": r["sentences"], "usage": r["usage"], "model": r["model"], "status": ai_status_ko(r, get_settings().ai_daily_call_limit)}
 
 
 def _metric_table(con, info, base, metrics, compare):
