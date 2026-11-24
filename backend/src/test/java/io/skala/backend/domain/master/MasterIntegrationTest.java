@@ -124,6 +124,10 @@ class MasterIntegrationTest extends PostgresIntegrationTest {
         jdbc.update("""
                 INSERT INTO financial_value(line_id, year, month, scenario, amount, source_record_id, source_cell)
                 VALUES (?, ?, 10, 'ACTUAL', 1200, 'r1', 'N3'), (?, ?, 10, 'ACTUAL', 300, 'r2', 'N4')""", line, year, line2, year);
+        // 양식의 전년 실적 열(참고값)은 master 엑셀에 넣지 않는다.
+        jdbc.update("""
+                INSERT INTO financial_value(line_id, year, month, scenario, amount, source_record_id, source_cell)
+                VALUES (?, ?, 10, 'ACTUAL', 777, 'r3', 'B3')""", line, year - 1);
 
         long b = insertSubmission(october, orgB, "APPROVED", 1, 1);
         PublishedMaster master = publish(b).orElseThrow();
@@ -149,6 +153,7 @@ class MasterIntegrationTest extends PostgresIntegrationTest {
             Row row = values.getRow(1);
             assertThat(row.getCell(1).getStringCellValue()).isEqualTo("마스터A");
             assertThat(row.getCell(4).getStringCellValue()).isEqualTo("ACTUAL");
+            assertThat(row.getCell(5).getNumericCellValue()).isEqualTo(year);
             assertThat(row.getCell(7).getNumericCellValue()).isEqualTo(1500d);
             assertThat(workbook.getSheet("출처").getLastRowNum()).isEqualTo(2);
         }

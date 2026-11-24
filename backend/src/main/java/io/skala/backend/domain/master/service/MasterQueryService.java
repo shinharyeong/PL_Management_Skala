@@ -72,7 +72,7 @@ public class MasterQueryService {
 
     /**
      * master 엑셀: '손익' 시트(조직 × 보고 항목 × 시나리오 × 연월 금액 합계)와 '출처' 시트(조직별 승인본).
-     * 금액은 원 단위 그대로, 값이 없는 칸은 만들지 않는다.
+     * 금액은 원 단위 그대로, 값이 없는 칸은 만들지 않는다. 양식의 전년 실적 등 요청 연도가 아닌 참고값은 넣지 않는다.
      */
     @Transactional(readOnly = true)
     public void writeExcel(Long masterId, OutputStream out) throws IOException {
@@ -84,11 +84,14 @@ public class MasterQueryService {
                     SELECT o.code AS org_code, o.name AS org_name, ri.code AS item_code, ri.name AS item_name,
                            v.scenario, v.year, v.month, sum(v.amount) AS amount
                       FROM master_source ms
+                      JOIN master_version m ON m.id = ms.master_id
+                      JOIN submission_request r ON r.id = m.request_id
+                      JOIN annual_plan p ON p.id = r.annual_plan_id
                       JOIN organization o ON o.id = ms.organization_id
                       JOIN financial_line l ON l.submission_id = ms.submission_id
                       JOIN report_item ri ON ri.id = l.report_item_id
                       JOIN financial_value v ON v.line_id = l.id
-                     WHERE ms.master_id = ?
+                     WHERE ms.master_id = ? AND v.year = p.year
                      GROUP BY o.code, o.name, ri.code, ri.name, ri.display_order, v.scenario, v.year, v.month
                      ORDER BY o.code, ri.display_order, ri.code, v.scenario, v.year, v.month""", rs -> {
                 Row r = values.createRow(row[0]++);
