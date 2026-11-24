@@ -20,16 +20,17 @@ jobs:
   # 이미지가 깨질 수 있는 파일(Dockerfile·의존성·빌드 설정)이 바뀌었는지 서비스별로 본다. 바뀐 이미지만 아래 images에서 빌드한다.
   changes:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read     # PR의 바뀐 파일 목록 조회
     outputs:
       services: ${{ steps.filter.outputs.changes }}
     steps:
+      # 바뀐 파일은 GitHub API가 아니라 git으로 비교한다(API가 바쁠 때 "diff temporarily unavailable"로 실패한 적 있음).
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - id: filter
         uses: dorny/paths-filter@v3
         with:
+          token: ""            # 빈 토큰이면 API 대신 git diff를 쓴다
+          base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
           filters: |
             backend:
               - backend/Dockerfile
