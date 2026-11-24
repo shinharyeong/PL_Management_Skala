@@ -86,3 +86,22 @@ def test_missing_token_is_rejected_when_required(monkeypatch):
     monkeypatch.setenv("AI_BACKEND_URL", "http://backend:8080")
     monkeypatch.setattr(contract.httpx, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("보내면 안 됨")))
     assert contract.report_pdf_result("1", {"status": "FAILED"}) is False                 # 토큰 없이 backend 에 보고하지 않는다
+def test_sql_check_uses_the_same_guard_without_running():
+    ok = client.post("/v1/sql-check", json={"sql": "SELECT org_name, op_won FROM v_op WHERE version = :version"}).json()
+    assert ok["ok"] is True and ok["code"] is None
+    bad = client.post("/v1/sql-check", json={"sql": "DELETE FROM fact"}).json()
+    assert bad["ok"] is False and bad["code"] == "NOT_SELECT" and bad["message"]
+    no_version = client.post("/v1/sql-check", json={"sql": "SELECT org_name FROM v_op"}).json()
+    assert no_version["ok"] is False and no_version["code"] == "NO_VERSION_FILTER"
+
+
+def test_data_runs_saved_sql_blocks_with_base_month_parameters():
+    _seed_report_db()
+    sql = ("SELECT org_name, op_won FROM v_op WHERE version = :version AND year = :base_year AND month = :base_month "
+           "AND scenario = :scn ORDER BY op_won DESC")
+    r = client.post("/v1/data", json={"base": {"year": 2034, "month": 7}, "blocks": [
+        {"id": "q1", "kind": "table", "sql": sql},
+        {"id": "q2", "kind": "table", "sql": "SELECT * FROM organization WHERE version = :version"}]}).json()
+    q1, q2 = r["blocks"]
+    assert q1["table"]["columns"] == ["org_name", "op_won"] and q1["table"]["rows"] and q1["missing"] is False
+    assert q2["missing"] is True and q2["table"] is None and "SQL 을 실행할 수 없습니다" in q2["text"]          # 보고서용 뷰가 아닌 표는 막힘
