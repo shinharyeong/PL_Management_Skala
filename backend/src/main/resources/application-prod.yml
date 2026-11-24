@@ -13,6 +13,9 @@ server:
   shutdown: graceful
 
 app:
+  # 운영에서는 report-ai 내부 토큰이 없으면 거부한다(공용 클러스터라 다른 네임스페이스에서도 서비스에 닿을 수 있음).
+  report-ai:
+    require-token: true
   storage:
     # PVC(/data)에 둔다. S3 연결 전까지 파드가 바뀌어도 원본이 남도록
     local-root: /data/storage

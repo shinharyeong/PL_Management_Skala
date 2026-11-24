@@ -259,8 +259,8 @@ HOME-03~06 계산 기준:
 
 | ID | 메서드 | 경로 | 설명 | 주요 요청 | 주요 응답 | 권한 | FR | 관련 테이블 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| RPT-01 | POST | `/report/pdf-jobs` | PDF 업로드 → 저장 → report-ai에 분석 요청(비전 LLM, 12절. 1차 HTTP, 2차 RabbitMQ `pdf.jobs`) | multipart `file`(.pdf), `maskNumbers`(기본 true) | `202` `job{id, status: QUEUED}` | P | RPT-001 | pdf_job, stored_object |
-| RPT-02 | GET | `/report/pdf-jobs/{jobId}` | 분석 상태·추출 블록(구성 확인용). 폴링 | — | `status`, `definition`(AI가 추출한 틀 초안, 확인 필요 블록은 `needs_review`), `pages[{no, maskedImageUrl}]`, `errorCode` · 실패 시 직접 만들기 안내 | P | RPT-001, 010, 011 | pdf_job |
+| RPT-01 | POST | `/report/pdf-jobs` | PDF 업로드 → 저장 → report-ai에 분석 요청(비전 LLM, 12절. 1차 HTTP, 2차 RabbitMQ `pdf.jobs`) | multipart `file`(.pdf), `maskNumbers`(기본 true) | `202` `job{id, status: RUNNING}` · report-ai 전달 실패 시 `503 REPORT_AI_UNAVAILABLE`(작업은 FAILED) | P | RPT-001 | pdf_job, stored_object |
+| RPT-02 | GET | `/report/pdf-jobs/{jobId}` | 분석 상태·추출 블록(구성 확인용). 폴링 | — | `status`, `definition`(AI가 추출한 틀 초안, 확인 필요 블록은 `needs_review`), `pages[{no, maskedImageUrl}]`(`GET /report/pdf-jobs/{jobId}/pages/{no}` PNG, 숫자 가림), `errorCode`, `errorMessage` · 실패 시 직접 만들기 안내 | P | RPT-001, 010, 011 | pdf_job |
 | RPT-03 | GET | `/report/templates` | 틀 목록(경영기획팀 공용, 최신 순) | `cursor`, `limit` | `items[{id, name, latestVersion, createdAt, updatedAt}]`, `nextCursor` | P | RPT-003 | report_template |
 | RPT-04 | POST | `/report/templates` | 틀 저장(새 틀, v1). AI 추출 확정본 또는 직접 만든 틀 | `name`, `definition`(AI 틀 형식, 백엔드는 봉투 `schema_version·name·blocks[].id·kind`만 검사), `sourcePdfJobId?` | `201` `template{id, name, version: 1, latestVersion, definition}` · 오류 `INVALID_TEMPLATE`(422) | P | RPT-002, 010, 011 | report_template, report_template_version |
 | RPT-05 | POST | `/report/templates/{templateId}/versions` | 틀 새 버전 저장(이전 버전 유지) | `definition`, `expectedVersion` | `201` `template{version, latestVersion, definition}` · 오류 `REPORT_REVISION_CHANGED`(409), `INVALID_TEMPLATE`(422) | P | RPT-002, 008 | report_template_version |
@@ -297,7 +297,8 @@ report-ai app은 상태를 저장하지 않는다. 저장·권한·감사는 bac
 | backend → parser-worker | RabbitMQ `parse.jobs` (메시지: `parsingJobId`) | — | — | UP-03 (2차) |
 
 - 틀 형식(`definition`)의 기준은 AI다. backend는 저장 봉투만 검사한다(`backend/src/main/resources/report/template-definition.schema.json`, AI `model.py StoredTemplate`에서 `python ai/tools/export_template_schema.py`로 생성, AI 테스트가 어긋나면 실패).
-- 공통 헤더: backend → report-ai는 `X-Request-Id`, `X-User-Id`(감사·호출 한도용). report-ai → backend `/internal/**`는 Ingress에 열지 않고 `X-Internal-Token`(Secret)으로 확인한다.
+- 공통 헤더: 양방향 모두 `X-Internal-Token`(Secret `REPORT_AI_TOKEN`). 운영(backend `prod` 프로필 `app.report-ai.require-token=true`, report-ai `AI_REQUIRE_INTERNAL_TOKEN=true`)은 토큰이 설정되지 않으면 내부 보고·계약 API를 거부하고 상대를 부르지 않는다. 비어 있어도 통과하는 것은 로컬 개발(기본값 false)뿐이다. backend → report-ai는 `X-Request-Id`, `X-User-Id`(감사·호출 한도용)도 보낸다. backend `/internal/**`는 Ingress에 열지 않는다(Ingress는 `/api`만). 주소: backend `REPORT_AI_URL`(`http://ai:8000`), report-ai `AI_BACKEND_URL`(`http://backend:8080`).
+- report-ai 연결 실패·시간 초과·5xx는 공개 API에서 `503 REPORT_AI_UNAVAILABLE`, report-ai의 4xx는 `400 REPORT_AI_REJECTED`. 결과 보고가 이미 끝난 작업에 다시 오면 바꾸지 않는다. 틀 초안이 저장 봉투에 맞지 않으면 작업을 `FAILED`(`INVALID_TEMPLATE`)로 둔다.
 - report-ai가 키 없음·한도 초과·실패로 AI를 못 쓰면 규칙 기반으로 답하고 응답에 그 사실을 표시한다(`UNAVAILABLE` 등). 숫자는 항상 코드가 보고서용 뷰에서 계산한다.
 
 ## 13. FR 대응 확인
