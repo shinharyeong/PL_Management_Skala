@@ -147,6 +147,23 @@ class Template(_M):
         return self
 
 
+# ---------- 저장 봉투(백엔드 RPT-04·05 검사 기준) ----------
+# 백엔드는 틀을 jsonb 로 보관만 하고 이 봉투만 검사한다. 블록 안의 세부 형식(배치·서식·표 스펙 등)은 AI·화면이 정하므로
+# 여기서는 열어 둔다(extra="allow"). 이 모델에서 뽑은 JSON 스키마가 백엔드 리소스다: python tools/export_template_schema.py
+class StoredBlock(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    id: str = Field(min_length=1, max_length=64)
+    kind: str = Field(min_length=1, max_length=40)
+
+
+class StoredTemplate(BaseModel):
+    """백엔드에 저장하는 자료 틀. schema_version 으로 형식 변경을 구분한다."""
+    model_config = ConfigDict(extra="allow")
+    schema_version: int = Field(ge=1)
+    name: str = Field(min_length=1, max_length=120)
+    blocks: list[StoredBlock] = Field(max_length=500)
+
+
 # ---------- 분류표 ----------
 # 사람이 지정하는 분류는 1·3·4 뿐. 2 는 3+4 자동, 5 는 미지정 자동.
 ASSIGNABLE = (1, 3, 4)

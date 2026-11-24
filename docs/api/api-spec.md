@@ -259,34 +259,46 @@ HOME-03~06 계산 기준:
 
 | ID | 메서드 | 경로 | 설명 | 주요 요청 | 주요 응답 | 권한 | FR | 관련 테이블 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| RPT-01 | POST | `/report/pdf-jobs` | PDF 업로드 → S3 `uploads/pdf/` 저장 → 분석 요청(비전 LLM, RabbitMQ `pdf.jobs`) | multipart `file`(.pdf), `maskNumbers`(기본 true) | `202` `job{id, status: QUEUED}` | P | RPT-001 | pdf_job, stored_object |
-| RPT-02 | GET | `/report/pdf-jobs/{jobId}` | 분석 상태·추출 블록(구성 확인용). 폴링 | — | `status`, `blocks[{id, kind: TABLE·LIST·TEXT·GAP, title, order, period, metricHint, needsCheck}]`, `pages[{no, maskedImageUrl}]` · 실패 시 직접 만들기 안내 | P | RPT-001, 010, 011 | pdf_job |
-| RPT-03 | GET | `/report/templates` | 내 틀 목록 | — | `items[{id, name, latestVersion, updatedAt}]` | P | RPT-003 | report_template |
-| RPT-04 | POST | `/report/templates` | 틀 저장(새 틀, v1). AI 추출 확정본 또는 직접 만든 틀 | `name`, `definition{blocks[], periodRules, sql, styles}`, `sourcePdfJobId?` | `template{id, version: 1}` | P | RPT-002, 010, 011 | report_template, report_template_version |
-| RPT-05 | POST | `/report/templates/{templateId}/versions` | 틀 새 버전 저장(이전 버전 유지) | `definition`, `expectedVersion` | `version` | P | RPT-002, 008 | report_template_version |
+| RPT-01 | POST | `/report/pdf-jobs` | PDF 업로드 → 저장 → report-ai에 분석 요청(비전 LLM, 12절. 1차 HTTP, 2차 RabbitMQ `pdf.jobs`) | multipart `file`(.pdf), `maskNumbers`(기본 true) | `202` `job{id, status: QUEUED}` | P | RPT-001 | pdf_job, stored_object |
+| RPT-02 | GET | `/report/pdf-jobs/{jobId}` | 분석 상태·추출 블록(구성 확인용). 폴링 | — | `status`, `definition`(AI가 추출한 틀 초안, 확인 필요 블록은 `needs_review`), `pages[{no, maskedImageUrl}]`, `errorCode` · 실패 시 직접 만들기 안내 | P | RPT-001, 010, 011 | pdf_job |
+| RPT-03 | GET | `/report/templates` | 틀 목록(경영기획팀 공용, 최신 순) | `cursor`, `limit` | `items[{id, name, latestVersion, createdAt, updatedAt}]`, `nextCursor` | P | RPT-003 | report_template |
+| RPT-04 | POST | `/report/templates` | 틀 저장(새 틀, v1). AI 추출 확정본 또는 직접 만든 틀 | `name`, `definition`(AI 틀 형식, 백엔드는 봉투 `schema_version·name·blocks[].id·kind`만 검사), `sourcePdfJobId?` | `201` `template{id, name, version: 1, latestVersion, definition}` · 오류 `INVALID_TEMPLATE`(422) | P | RPT-002, 010, 011 | report_template, report_template_version |
+| RPT-05 | POST | `/report/templates/{templateId}/versions` | 틀 새 버전 저장(이전 버전 유지) | `definition`, `expectedVersion` | `201` `template{version, latestVersion, definition}` · 오류 `REPORT_REVISION_CHANGED`(409), `INVALID_TEMPLATE`(422) | P | RPT-002, 008 | report_template_version |
 | RPT-06 | GET | `/report/templates/{templateId}` | 틀 불러오기(구성 확인 건너뜀) | `version`(기본 최신) | `template`, `definition` | P | RPT-003 | report_template_version |
-| RPT-07 | GET | `/report/periods` | 기준 월 선택지와 월별 상태 | `year` | `default{year, month}`(최근 확정 월), `months[{month, state: CONFIRMED·PROVISIONAL·NONE, masterId?}]` | P | RPT-004 | master_version, submission |
+| RPT-07 | GET | `/report/periods` | 기준 월 선택지와 월별 상태 | `year`(기본 올해) | `default{year, month}`(최근 확정 월, 없으면 최근 잠정 월), `year`, `months[{month, state: CONFIRMED·PROVISIONAL·NONE, masterId?}]` (보고서용 뷰 `dim_version` 기준) | P | RPT-004 | master_version, submission |
 | RPT-08 | GET | `/report/metrics` | 지표 사전 목록 | `q` | `items[{id, code, name, description}]` | P | RPT-005 | metric |
 | RPT-09 | POST | `/report/metrics` | 자주 쓰는 SQL을 지표 사전으로 등록 | `code`, `name`, `description`, `sqlText` | `metric{id}` · 오류 `SQL_NOT_ALLOWED` | P | RPT-006 | metric |
-| RPT-10 | POST | `/report/data` | 블록 데이터 조회(지표 또는 확정 SQL, AI 미사용) | `metricId` 또는 `sql`, `period{year, month}`, `scope`=COMPANY·ORGANIZATION, `organizationId?`, `comparison` | `columns[]`, `rows[]`, `dataStatus`(잠정이면 표시) | P | RPT-004, 005 | db-mcp 보고서용 뷰 |
-| RPT-11 | POST | `/report/nl-query` | 자연어 질의 → SQL 생성·미리보기(text2SQL, 읽기 전용) | `question`, `baseYear`, `baseMonth` | `sql`, `explanation`, `preview{columns, rows}`, `status: OK·CLARIFY·UNKNOWN` | P | RPT-006 | db-mcp 보고서용 뷰 |
+| RPT-10 | POST | `/report/data` | 블록 데이터 채우기(지표 또는 확정 SQL, AI 문장 없음). report-ai로 위임 | `base{year, month}`, `blocks[]`(틀의 블록 그대로) | `dataStatus`, `blocks[{id, …}]`(AI 형식, 계산할 수 없는 칸은 `missing`) | P | RPT-004, 005 | db-mcp 보고서용 뷰 |
+| RPT-11 | POST | `/report/nl-query` | 자연어 질의 → SQL 생성·미리보기(text2SQL, 읽기 전용) | `question`, `baseYear`, `baseMonth` | `status: OK·CLARIFY·UNKNOWN`, `sql`, `explanation`, `preview{columns, rows}`, `clarifyQuestion`, `clarifyOptions[]` | P | RPT-006 | db-mcp 보고서용 뷰 |
 | RPT-12 | GET | `/report/explanation-categories` | 소명 사유 유형 분류표 | `tableVersion`(기본 최신) | `items[{id, code, name, parentCode, catchAll, assignable}]` (상위 유형 = 하위 합, catchAll = '기타') | P | RPT-007 | explanation_category |
 | RPT-13 | GET | `/report/explanations` | Gap 설명 블록용 승인 소명 카드 + 제안 분류 | `year`, `month`, `comparison` (실적 비교는 기준 월, 추정 비교는 기준 월+1 항목) | `items[{explanationId, organization, item, gapAmount, answer, categoryId, suggestedCategoryId, suggestionSource: RULE·LAST_MONTH}]`, `reviewing[]`, `gapTotal`, `categoryTotals`, `classifiedTotal`, `matchesGapTotal` | P | RPT-007 | review_explanation, explanation_classification, gap_comparison |
 | RPT-14 | PUT | `/report/explanations/{explanationId}/classification` | 소명 카드를 분류함에 배치 | `categoryId`(null이면 빼기), `comparison?` | `explanationId`, `categoryId`, `categoryTotals`, `classifiedTotal`, `gapTotal`, `matchesGapTotal` · 오류 `EXPLANATION_NOT_ACCEPTED`(409), `CATEGORY_NOT_ASSIGNABLE`(400) | P | RPT-007 | explanation_classification |
-| RPT-15 | POST | `/report/ai/edit` | 대화로 자료 편집 → 변경안(블록 추가·삭제·이동·글꼴). 숫자는 바꾸지 않음 | `definition`, `instruction` | `proposals[{op, target, preview}]` | P | RPT-012 | — (저장 안 함) |
+| RPT-15 | POST | `/report/ai/edit` | 대화로 자료 편집 → 변경안(블록 추가·삭제·이동·글꼴). 숫자는 바꾸지 않음 | `definition`, `instruction` | `status: EDIT·CLARIFY·REFUSED·UNAVAILABLE`, `message`, `proposals[{op: add_block·remove_block·move_block·set_style·add_column, target, description, patch}]` | P | RPT-012 | — (저장 안 함) |
 | RPT-16 | POST | `/report/export` | 자료 내보내기(1개씩). 결과는 저장하지 않고 바로 내려줌 | `templateId`, `version`, `period`, `blockId?`, `format`=PDF·PPTX·XLSX·PNG | 파일 스트림 | P | RPT-008, 009 | — |
 
-## 12. backend ↔ report-ai 내부 API (클러스터 내부, 초안)
+## 12. backend ↔ report-ai 내부 API (클러스터 내부)
 
-report-ai app은 DB 접속 정보가 없으므로 상태 저장은 backend가 맡는다.
+report-ai app은 상태를 저장하지 않는다. 저장·권한·감사는 backend가 맡고, 프론트는 report-ai를 직접 부르지 않는다. report-ai가 백엔드를 거치지 않는 것은 보고서용 뷰 읽기(읽기 전용) 하나뿐이다.
 
-| 방향 | 방식 | 경로·큐 | 용도 | FR |
+**전송과 내용을 나눈다.** 아래 요청·응답 본문이 계약이고, 1차·2차는 전송 방식만 다르다. 2차로 바뀌어도 본문은 그대로다.
+
+| 구분 | 1차 배포(현재: 파드 3개, PVC 저장) | 2차(목표: RabbitMQ·S3·db-mcp) |
+| --- | --- | --- |
+| PDF 분석 요청 | backend → report-ai `POST /v1/pdf-jobs` (multipart: `jobId`, `maskNumbers`, `file`) → `202` | RabbitMQ `pdf.jobs` 메시지 `{pdfJobId, objectKey, maskNumbers}`, report-ai가 S3 `uploads/pdf/`에서 읽음 |
+| 보고서용 뷰 조회 | report-ai 앱이 읽기 전용 계정으로 직접(`AI_DATABASE_URL`, `AI_DB_SCHEMA=report`) | db-mcp 사이드카(같은 읽기 전용 역할) |
+| 결과 보고·동기 호출 | 아래 HTTP 그대로 | 그대로 |
+
+| 방향 | 경로 | 요청 | 응답 | 공개 API |
 | --- | --- | --- | --- | --- |
-| backend → report-ai | RabbitMQ | `pdf.jobs` (메시지: `pdfJobId`, `objectKey`, `maskNumbers`) | PDF 분석 작업 전달 | RPT-001 |
-| report-ai → backend | HTTP | `POST /internal/pdf-jobs/{jobId}/result` (`status`, `resultObjectKey`, `error`) | 분석 결과·실패 보고 (`pdf_job` 갱신) | RPT-001 |
-| backend → report-ai | HTTP | `POST /v1/nl-query` | text2SQL. report-ai가 db-mcp(읽기 전용)로 실행 | RPT-006 |
-| backend → report-ai | HTTP | `POST /v1/edit` | 대화 편집 변경안 생성 | RPT-012 |
-| backend → parser-worker | RabbitMQ | `parse.jobs` (메시지: `parsingJobId`) | 엑셀 파싱. 상태 기준은 `parsing_job` | UPLOAD-005 |
+| report-ai → backend | `POST /internal/pdf-jobs/{jobId}/result` | `status: SUCCEEDED·FAILED`, `definition`(틀 초안, `TemplateDefinition`), `pages[{no, width, height, imagePng(base64, 숫자 가림)}]`, `error{code, message}` | `204` | RPT-02 |
+| backend → report-ai | `POST /v1/data` | `base{year, month}`, `blocks[]` | `dataStatus`, `blocks[{id, …}]` | RPT-10 |
+| backend → report-ai | `POST /v1/nl-query` | `question`, `baseYear`, `baseMonth`, `conversationId?` | RPT-11 응답과 같은 모양(`status`, `sql`, `explanation`, `preview`, `clarifyQuestion`, `clarifyOptions`) | RPT-11 |
+| backend → report-ai | `POST /v1/edit` | `definition`, `instruction` | RPT-15 응답과 같은 모양(`status`, `message`, `proposals[]`) | RPT-15 |
+| backend → parser-worker | RabbitMQ `parse.jobs` (메시지: `parsingJobId`) | — | — | UP-03 (2차) |
+
+- 틀 형식(`definition`)의 기준은 AI다. backend는 저장 봉투만 검사한다(`backend/src/main/resources/report/template-definition.schema.json`, AI `model.py StoredTemplate`에서 `python ai/tools/export_template_schema.py`로 생성, AI 테스트가 어긋나면 실패).
+- 공통 헤더: backend → report-ai는 `X-Request-Id`, `X-User-Id`(감사·호출 한도용). report-ai → backend `/internal/**`는 Ingress에 열지 않고 `X-Internal-Token`(Secret)으로 확인한다.
+- report-ai가 키 없음·한도 초과·실패로 AI를 못 쓰면 규칙 기반으로 답하고 응답에 그 사실을 표시한다(`UNAVAILABLE` 등). 숫자는 항상 코드가 보고서용 뷰에서 계산한다.
 
 ## 13. FR 대응 확인
 

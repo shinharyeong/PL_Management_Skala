@@ -1,0 +1,59 @@
+{
+  "$comment": "ai/app/report_template/model.py StoredTemplate 에서 생성. 직접 고치지 말 것: python ai/tools/export_template_schema.py",
+  "$defs": {
+    "StoredBlock": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "title": "StoredBlock",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "백엔드에 저장하는 자료 틀. schema_version 으로 형식 변경을 구분한다.",
+  "properties": {
+    "blocks": {
+      "items": {
+        "$ref": "#/$defs/StoredBlock"
+      },
+      "maxItems": 500,
+      "title": "Blocks",
+      "type": "array"
+    },
+    "name": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "minimum": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "name",
+    "blocks"
+  ],
+  "title": "StoredTemplate",
+  "type": "object"
+}
