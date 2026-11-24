@@ -105,3 +105,13 @@ def test_data_runs_saved_sql_blocks_with_base_month_parameters():
     q1, q2 = r["blocks"]
     assert q1["table"]["columns"] == ["org_name", "op_won"] and q1["table"]["rows"] and q1["missing"] is False
     assert q2["missing"] is True and q2["table"] is None and "SQL 을 실행할 수 없습니다" in q2["text"]          # 보고서용 뷰가 아닌 표는 막힘
+
+
+def test_filled_cells_carry_won_values_for_export():
+    """화면 글자(억원 반올림)와 별도로 원 단위 값(won)을 담는다. 백엔드 XLSX 내보내기(RPT-16)가 값 그대로 쓴다."""
+    _seed_report_db()
+    r = client.post("/v1/data", json={"base": {"year": 2034, "month": 7}, "blocks": [
+        {"id": "m1", "kind": "metric_table", "metrics": ["영업이익"], "compare": ["계획"]}]}).json()
+    row = r["blocks"][0]["rows"][1]
+    assert row[0]["text"] == "영업이익" and row[1]["won"] is not None and float(row[1]["won"]) != 0
+    assert float(row[1]["won"]) / 1e8 == pytest.approx(float(row[1]["text"].replace(",", "")), abs=0.05)   # 글자는 억원 반올림, won 은 원

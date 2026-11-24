@@ -161,6 +161,14 @@ def eok(won, *, diff: bool = False, plain_sign: bool = True) -> str:
     return (f"+{v:,}" if v > 0 else f"△{abs(v):,}")
 
 
+def _won(v) -> str | None:
+    """셀의 원 단위 값(내보내기용). 화면 글자(text)는 반올림·단위 환산된 값이라 따로 둔다. 소수 끝 0 은 지운다."""
+    if v is None:
+        return None
+    d = Decimal(str(v))
+    return format(d.quantize(Decimal(1)) if d == d.to_integral_value() else d.normalize(), "f")
+
+
 def retime(text: str, orig: tuple[int, int] | None, base: dict) -> str:
     """틀에 적힌 원래 월(예: '26.11월 / 11월)을 선택한 기준 월로 바꾼다. 원래 월을 모르면 그대로."""
     if not orig:
@@ -439,7 +447,7 @@ class _Acc:
         for k, c in enumerate(cols):
             if c["t"] in SUMMABLE and rows and not bad and not SCOPE_ORGS.get() and all(len(r) > k and r[k] is not None for r in rows):
                 v = sum((Decimal(str(r[k])) for r in rows), Decimal(0))
-                out.append({"text": eok(v, diff=c["t"] in ("cmp", "gap")), "missing": False, "sum": True})
+                out.append({"text": eok(v, diff=c["t"] in ("cmp", "gap")), "won": _won(v), "missing": False, "sum": True})
             else:
                 out.append({"text": "데이터 없음", "missing": True})
         return out
@@ -552,14 +560,14 @@ def _fill_table(con, info, base, b, metrics, orgs, cause, orig):
             else:
                 txt, miss = "[값]", True
             raws.append(raw)
-            cells.append({"text": txt, "missing": miss})
+            cells.append({"text": txt, "missing": miss, **({"won": _won(raw)} if raw is not None else {})})
             any_missing |= miss
         for x in extra:                                       # AI 편집으로 더한 '○○ 대비' 열: 같은 행의 현재 값과 비교 값의 차이(코드 계산)
             bs = cache.get((metric, org or SCOPE_ORG.get())) if resolved else None
             if resolved and bs is None and metric in METRIC_COL:
                 bs = cache[(metric, org or SCOPE_ORG.get())] = _bases(con, info, base["year"], base["month"], METRIC_COL[metric], org or SCOPE_ORG.get())
             ok = bs is not None and bs["현재"] is not None and bs.get(x) is not None
-            cells.append({"text": eok(bs["현재"] - bs[x], diff=True) if ok else "데이터 없음", "missing": not ok})
+            cells.append({"text": eok(bs["현재"] - bs[x], diff=True) if ok else "데이터 없음", "won": _won(bs["현재"] - bs[x]) if ok else None, "missing": not ok})
             any_missing |= not ok
         if org:
             acc.org(raws)
@@ -580,8 +588,8 @@ def _breakdown(con, info, base, metric):
     rows = con.execute(q, (ver, metric, y, m)).fetchall()
     out = [[{"text": f"{metric} 상세 (억원)"}, {"text": f"{m}월"}, {"text": "계획比"}]]
     for r in rows:
-        out.append([{"text": r["cat1"] or "(분류 없음)"}, {"text": eok(r["a"]), "missing": False},
-                    {"text": eok(r["a"] - r["p"], diff=True) if r["pn"] else "데이터 없음", "missing": not r["pn"]}])
+        out.append([{"text": r["cat1"] or "(분류 없음)"}, {"text": eok(r["a"]), "won": _won(r["a"]), "missing": False},
+                    {"text": eok(r["a"] - r["p"], diff=True) if r["pn"] else "데이터 없음", "won": _won(r["a"] - r["p"]) if r["pn"] else None, "missing": not r["pn"]}])
     return out, not rows
 
 
@@ -670,10 +678,10 @@ def _metric_table(con, info, base, metrics, compare):
         if mt not in METRIC_COL:
             continue
         bs = _bases(con, info, y, m, METRIC_COL[mt], None)
-        row = [{"text": mt}, {"text": eok(bs["현재"]) if bs["현재"] is not None else "데이터 없음", "missing": bs["현재"] is None}]
+        row = [{"text": mt}, {"text": eok(bs["현재"]) if bs["현재"] is not None else "데이터 없음", "won": _won(bs["현재"]), "missing": bs["현재"] is None}]
         for c in comp:
             ok = bs["현재"] is not None and bs.get(c) is not None
-            row.append({"text": eok(bs["현재"] - bs[c], diff=True) if ok else "데이터 없음", "missing": not ok})
+            row.append({"text": eok(bs["현재"] - bs[c], diff=True) if ok else "데이터 없음", "won": _won(bs["현재"] - bs[c]) if ok else None, "missing": not ok})
         miss |= any(c.get("missing") for c in row[1:])
         out.append(row)
     return out, miss
@@ -1076,7 +1084,7 @@ def _explist(gset):
     g = gset["groups"][0]
     rows = [[{"text": "조직"}, {"text": f"Gap(억원, {g['basis_label']})"}, {"text": "소명 요약"}]]
     for c in sorted(g["cards"], key=lambda c: -abs(c["diff_won"])):
-        rows.append([{"text": c["org_name"]}, {"text": eok(c["diff_won"], diff=True)}, {"text": c["summary"] or "소명 검토 중", "missing": not c["explained"]}])
+        rows.append([{"text": c["org_name"]}, {"text": eok(c["diff_won"], diff=True), "won": _won(c["diff_won"])}, {"text": c["summary"] or "소명 검토 중", "missing": not c["explained"]}])
     return rows, False
 
 

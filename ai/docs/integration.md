@@ -51,6 +51,7 @@ python -m pytest -q                    # 모의 호출만 사용(실제 네트�
 ### backend 계약 `POST /v1/data` · `/v1/edit` · `/v1/pdf-jobs` (RPT-10·15·01, 명세 12절)
 - 공통: `REPORT_AI_TOKEN` 이 있으면 요청 헤더 `X-Internal-Token` 이 같아야 한다(다르면 401). 운영(`AI_REQUIRE_INTERNAL_TOKEN=true`, k8s 설정)은 토큰이 설정되지 않았으면 계약 API 를 모두 거부하고 결과 보고도 하지 않는다. 비어 있어도 통과하는 것은 로컬 개발(기본값 false)뿐이다.
 - `POST /v1/data` `{base{year,month}, blocks[{id,kind,…}]}` → `{dataStatus: CONFIRMED|PROVISIONAL|NONE, blocks[{id,…}]}`. `data_select.fill_report` 그대로, AI 문장 없음.
+- 표 셀은 화면 글자 `text`(억원·백만원 반올림)와 별도로 원 단위 값 `won`(십진 문자열)을 담는다. 백엔드 XLSX 내보내기(RPT-16)가 `won` 을 숫자 그대로 쓴다.
 - 블록에 `sql` 이 있으면(지표 사전·자연어 질의로 확정한 SQL) 블록 기준 월의 version 으로 `:version :version_prev :base_year :base_month :scn` 을 넣어 챗봇과 같은 `sqlguard`(보고서용 뷰만·읽기 전용·행/시간 상한)로 실행하고 `table{columns, rows, truncated}` 를 채운다. 막히면 `missing` 과 사유 코드.
 - `POST /v1/sql-check` `{sql}` → `{ok, sql, code, message}`. 지표 사전 등록(RPT-09) 전 검사만 한다(실행 안 함). 백엔드는 `ok=false` 를 `SQL_NOT_ALLOWED` 로 돌려준다.
 - `POST /v1/edit` `{definition, instruction}` → `{status: EDIT|CLARIFY|REFUSED|UNAVAILABLE, message, proposals[{op, target, description, patch}]}`. `chat_edit.interpret`(LLM 의도 → 코드 검증). 숫자 변경 요청은 AI 호출 없이 REFUSED, 조회 요청은 편집이 아니라 REFUSED(자연어 질의 안내).
