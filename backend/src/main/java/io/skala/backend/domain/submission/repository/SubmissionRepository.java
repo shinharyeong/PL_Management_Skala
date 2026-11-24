@@ -87,4 +87,7 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Submission s where s.id = :id")
     Optional<Submission> findByIdForUpdate(@Param("id") Long id);
+
+    List<Submission> findAllByRequestIdAndOrganizationIdAndStatusOrderByApprovedSeqAsc(
+            Long requestId, Long organizationId, SubmissionStatus status);
 }
