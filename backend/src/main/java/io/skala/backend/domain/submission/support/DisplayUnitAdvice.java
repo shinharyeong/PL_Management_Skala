@@ -27,15 +27,19 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
  * `unit` 쿼리(WON·THOUSAND·MILLION·HUNDRED_MILLION)를 주면 금액 필드 옆에 화면 단위 값을 더한다(openapi Unit).
  * 원 단위 값은 그대로 두고, `amount` → `displayAmount`, `plan` → `displayPlan`, `values` → `displayValues`처럼 붙인다.
  * 천원·백만원은 정수, 억원은 소수 첫째 자리(반올림). 값이 없으면 null(0으로 바꾸지 않음). 비율(rate)은 바꾸지 않는다.
- * A 담당 컨트롤러(submission·review)의 JSON 응답에만 적용한다.
+ * 제출·검토(submission·review)와 홈 손익(dashboard) 컨트롤러의 JSON 응답에 적용한다.
+ * 금액 이름의 필드가 객체면(예: 홈 사업부별 손익의 `total`) 그 안을 다시 살핀다.
  */
 @RestControllerAdvice(basePackages = {
         "io.skala.backend.domain.submission.controller",
-        "io.skala.backend.domain.review.controller"})
+        "io.skala.backend.domain.review.controller",
+        "io.skala.backend.domain.dashboard.controller"})
 public class DisplayUnitAdvice implements ResponseBodyAdvice<Object> {
 
     static final Set<String> MONEY_FIELDS = Set.of("amount", "baseline", "previous", "current", "plan", "actual",
-            "diff", "change", "values");
+            "diff", "change", "values",
+            // 홈 손익(HOME-03~06)
+            "vsPlanAmount", "vsPrevEstimateAmount", "revenue", "op", "opDiff", "total");
     private static final Pattern NUMBER = Pattern.compile("^-?[0-9]+(\\.[0-9]+)?$");
     private static final Map<String, Unit> UNITS = Map.of(
             "WON", new Unit(BigDecimal.ONE, 0),
@@ -104,6 +108,8 @@ public class DisplayUnitAdvice implements ResponseBodyAdvice<Object> {
                     object.set(displayName, converted);
                 } else if (value.isNull() || value.isTextual()) {
                     object.set(displayName, convert(value, unit));
+                } else {
+                    addDisplay(value, unit);
                 }
             } else {
                 addDisplay(value, unit);

@@ -158,12 +158,22 @@ API별 업무 오류 코드(`REQUEST_ALREADY_EXISTS`, `PENDING_ALREADY_EXISTS`, 
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | HOME-01 | GET | `/home/status` | 데이터 상태와 마감 진행 막대 | `year`, `month` | `dataStatus`=CONFIRMED·PROVISIONAL·NONE, `master{id,label}`, `masters[]`(이전 master 선택용), `dueAt`, `dDay`, `steps[{key: REQUESTED·SUBMITTED·GAP_REVIEW·EXPLAINED·MASTER, done, total, date}]` | P | HOME-001, 002 | master_version, submission_request, request_target, submission, review_item |
 | HOME-02 | GET | `/home/todos` | 오늘 할 일(연간/월간 탭) | `tab`=ANNUAL·MONTHLY, `year`, `month` | `items[{key, label, count, link}]` (요청 필요·미제출·검토 필요 조직·소명 검토 필요 조직) | P | HOME-003 | submission_request, request_target, submission, review_item |
-| HOME-03 | GET | `/home/pnl` | 핵심 KPI 3개 + 전사 손익 요약표(답안지 행 순서) | 공통 쿼리 | `kpis[{key: REVENUE·COST·OP, actual, vsPlanRate, vsPlanAmount}]`, `rows[{reportItemId, name, level, actual, vsPlanRate, vsPlanAmount, vsPrevEstimateRate, vsPrevEstimateAmount, gapExceeded, explanation?}]` | P | HOME-001, 004, 005, 006 | master_source → financial_line/value, report_item, gap_comparison, review_explanation |
-| HOME-04 | GET | `/home/op-drivers` | 조직별 영업이익 변동 원인 Top 5 (계획 대비) | 공통 쿼리, `limit`=5 | `items[{organization, opDiff, opDiffRate}]`, `total` | P | HOME-007 | master_source, financial_value, annual_master_source |
-| HOME-05 | GET | `/home/divisions` | 사업부별 손익 표(사업부 = 제출 조직 17개) | 공통 쿼리 | `columns[{organization}]` + `total`, `rows`: 매출·영업이익·전사 영업이익 기여도·이익률·계획 대비 | P | HOME-008 | master_source, financial_value |
-| HOME-06 | GET | `/home/waterfall` | 손익 흐름(워터폴) 단계 금액 | 공통 쿼리 | `steps[{key, name, amount, kind: TOTAL·DEDUCTION}]`, 매출총이익 세부 | P | HOME-009 | report_item, financial_value |
+| HOME-03 | GET | `/home/pnl` | 핵심 KPI 3개 + 전사 손익 요약표(답안지 행 순서) | 공통 쿼리 | `dataStatus`, `kpis[{key: REVENUE·COST·OP, actual, vsPlanRate, vsPlanAmount}]`, `rows[{reportItemId, kind: ITEM·OP, name, level, actual, vsPlanRate, vsPlanAmount, vsPrevEstimateRate, vsPrevEstimateAmount, gapExceeded, explanation?}]`, `opMargin{actualRate, planRate, vsPlanPoint, prevEstimateRate, vsPrevEstimatePoint}` | P | HOME-001, 004, 005, 006 | master_source → financial_line/value, report_item, gap_comparison, review_explanation |
+| HOME-04 | GET | `/home/op-drivers` | 조직별 영업이익 변동 원인 Top 5 (계획 대비) | 공통 쿼리, `limit`=5 | `dataStatus`, `items[{organization, opDiff, opDiffRate}]`(차이 절댓값 큰 순), `total` | P | HOME-007 | master_source, financial_value, annual_master_source |
+| HOME-05 | GET | `/home/divisions` | 사업부별 손익 표(사업부 = 제출 조직 17개) | 공통 쿼리 | `dataStatus`, `columns[{organization, revenue, op, opContributionRate, opMarginRate, vsPlanAmount}]`(조직 코드 순), `total{revenue, op, opMarginRate, vsPlanAmount}` | P | HOME-008 | master_source, financial_value |
+| HOME-06 | GET | `/home/waterfall` | 손익 흐름(워터폴) 단계 금액 | 공통 쿼리 | `dataStatus`, `steps[{key: REVENUE·COST·OP, reportItemId, name, amount, kind: TOTAL·DEDUCTION, breakdown[{reportItemId, name, amount}]}]` | P | HOME-009 | report_item, financial_value |
 
 `dataStatus`: 그 달 master가 있으면 CONFIRMED, 아직 모든 조직이 승인되지 않아 master가 없으면 승인된 제출본만으로 계산한 PROVISIONAL, 승인본이 하나도 없으면 NONE. 잠정 값은 저장하지 않는다.
+
+HOME-03~06 계산 기준:
+
+- 실적: 그 달 master(`masterId`가 없으면 최신 master)의 조직별 승인본. master가 없으면 조직별 최신 승인본(잠정)
+- 계획: 월간 요청을 보낼 때 고정한 확정 연간 계획(`request_target.confirmed_plan_submission_id`)의 계획 값. 월간 시트 안의 계획 열은 쓰지 않는다
+- 전월 추정: 전월 요청의 최신 master(없으면 최신 승인본)에 적힌 이번 달 추정 값. 1월과 연간 탭은 없음(null)
+- `period=YEAR`: 1월부터 고른 달까지 누적(고른 달 시트의 실적, 같은 기간 계획). `month`가 없으면 승인본이 있는 가장 최근 달. `period=MONTH`에서 `month`가 없으면 이번 달(KST)
+- 매출 = REVENUE 항목 합, 영업비용 = COST 항목 합, 영업이익 = 매출 − 영업비용. 영업이익률 = 영업이익 / 매출 × 100은 금액이 아니라서 `opMargin`으로 따로 내려준다
+- `gapExceeded`·`explanation`: 승인본 항목 중 Gap 기준을 넘은 실적 항목, 그 항목의 마지막 수락 소명("조직명: 소명", 여러 조직이면 줄바꿈)
+- HOME-06: 답안지에 매출원가·매출총이익·영업외손익이 없어 매출(TOTAL) → 영업비용 중계정(DEDUCTION) → 영업이익(TOTAL) 순으로 내려준다. `breakdown`은 그 단계의 하위 항목
 
 ## 4. 연간 계획 관리 · 월간 시트 요청 (FR-YEAR, FR-MONTH-001~003) — 경영기획팀
 
@@ -174,7 +184,7 @@ API별 업무 오류 코드(`REQUEST_ALREADY_EXISTS`, `PENDING_ALREADY_EXISTS`, 
 | REQ-03 | GET | `/submission-requests` | 요청 목록(진행 중인 요청) | `type`, `year`, `status` | `items[{id, type, year, month, requestedAt, dueAt, status, submittedCount, targetCount}]` | P | YEAR-002, MONTH-002 | submission_request, request_target, submission |
 | REQ-04 | GET | `/submission-requests/{requestId}` | 조직별 진행 현황 표 | — | `request`, `targets[{organization, requestedAt(=요청 발송일), dueAt, displayStatus: SUBMITTED·OVERDUE·WAITING, latestSubmission{id, status, label}}]` | P | YEAR-002, MONTH-002 | request_target, submission |
 | REQ-05 | GET | `/submissions` | 조직 행을 눌렀을 때 회신 이력 카드 | `requestId`, `organizationId` | `items[{id, label, status, submittedBy, submittedAt, replyMessage, file{name, url}, reviewComment, reviewedAt}]` | P | YEAR-003, MONTH-003 | submission |
-| REQ-06 | POST | `/submissions/{submissionId}/decisions` | 회신 수락 또는 재제출 요청(재요청 시 코멘트 필수). 전 조직 수락 시 연간·월간 master 자동 생성 | `decision`=APPROVE·REJECT, `comment`(REJECT 필수), `rejectedReviewItemIds[]`(반려 항목), `expectedStateToken` | `submission{status, approvedLabel}`, `masterPublished{id, label}?` · 오류 `EXPLANATION_NOT_ACCEPTED`, `COMMENT_REQUIRED` | P | YEAR-003, MONTH-003, HIST-004 | submission.reject_reason·approved_seq, review_item.rejected, master_version, annual_master |
+| REQ-06 | POST | `/submissions/{submissionId}/decisions` | 회신 수락 또는 재제출 요청(재요청 시 코멘트 필수). 전 조직 수락 시 연간·월간 master 자동 생성 | `decision`=APPROVE·REJECT, `comment`(REJECT 필수), `rejectedReviewItemIds[]`(반려 항목), `expectedStateToken` | `submission{status, approvedLabel}`, `masterPublished{id, label}?` · 오류 `EXPLANATIONS_NOT_ACCEPTED`, `COMMENT_REQUIRED` | P | YEAR-003, MONTH-003, HIST-004 | submission.reject_reason·approved_seq, review_item.rejected, master_version, annual_master |
 | REQ-07 | GET | `/submissions/{submissionId}/file` | 회신 첨부(제출 엑셀) 다운로드 | — | 파일 스트림 | P·O | YEAR-003, MONTH-003, ARCH-002 | stored_object |
 
 ## 5. 월간 시트 관리 · Gap 검토 (FR-MONTH-004~012) — 경영기획팀
