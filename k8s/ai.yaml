@@ -21,6 +21,9 @@ spec:
             - secretRef: { name: app-secrets, optional: true }  # OPENAI_API_KEY, REPORT_AI_TOKEN
           env:
             - { name: TZ, value: Asia/Seoul }
+            # 챗봇·값 채우기 조회 DB(#64). 팀 DB의 ai 스키마를 쓴다(AI_DB_SCHEMA 기본 ai).
+            - name: AI_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: rds-credentials, key: DATABASE_URL } }
           resources:
             requests: { cpu: 200m, memory: 512Mi }
             limits: { cpu: "1", memory: 1Gi }

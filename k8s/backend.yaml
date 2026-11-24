@@ -14,8 +14,12 @@ metadata: { name: backend-config }
 data:
   SPRING_PROFILES_ACTIVE: prod
   TZ: Asia/Seoul
-  # SMTP가 없을 때 인증코드를 로그로 볼지(true면 로그를 읽을 수 있는 사람이 로그인할 수 있다).
-  APP_AUTH_DEV_LOG_CODE: "false"
+  # 1차 배포: SMTP 없이 인증코드를 로그로 확인한다(kubectl logs deploy/backend | grep 인증코드).
+  # 로그를 읽을 수 있는 사람(팀·반 계정)이 코드를 볼 수 있으므로, SMTP(SPRING_MAIL_*)를 app-secrets에 넣으면 "false"로 바꾼다.
+  APP_AUTH_DEV_LOG_CODE: "true"
+  # 실제 배포 양식은 .xlsb다. 파일은 PVC /data/templates/에 둔다.
+  APP_SUBMISSION_TEMPLATE_FILENAME: 제출양식.xlsb
+  SUBMISSION_TEMPLATE_LOCATION: file:/data/templates/submission-template.xlsb
 ---
 apiVersion: apps/v1
 kind: Deployment
