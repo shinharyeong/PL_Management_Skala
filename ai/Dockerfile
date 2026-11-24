@@ -7,6 +7,8 @@ WORKDIR /srv/ai
 COPY ai/requirements.txt ./requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 COPY ai/app ./app
+# app/pipeline 이 저장소 루트 기준 parser/src(엑셀 파서)를 불러온다.
+COPY parser/src /srv/parser/src
 # 캐시·결과는 컨테이너 임시 폴더에만 둔다(보고서 결과는 저장하지 않는다).
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
