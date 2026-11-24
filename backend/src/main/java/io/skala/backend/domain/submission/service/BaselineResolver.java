@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
  *   <li>같은 요청에서 마지막 제출본이 반려(REJECTED)면 → 반려된 제출본(재제출)</li>
  *   <li>같은 요청에 승인본이 있으면 → 그 승인본</li>
  *   <li>연간 계획 → 기준 없음</li>
+ *   <li>월간 1월 → 확정 연간 계획(request_target.confirmed_plan_submission_id), 없으면 기준 없음</li>
  *   <li>월간 → 전월 승인본. 전월 요청 대상이었는데 승인본이 없으면 COMPARISON_SOURCE_UNAVAILABLE,
  *       전월 요청 자체가 없으면(첫 달) 기준 없음</li>
  * </ol>
@@ -30,6 +31,7 @@ public class BaselineResolver {
 
     private final SubmissionRepository submissionRepository;
     private final FinancialLineRepository financialLineRepository;
+    private final PlanBaselines planBaselines;
 
     public record Baseline(BaselineKind kind, Submission submission) {
 
@@ -52,9 +54,14 @@ public class BaselineResolver {
                 return checked(new Baseline(BaselineKind.PREV_MONTH_APPROVED, last));
             }
         }
-        if (request.getType() == RequestType.ANNUAL_PLAN || request.getMonth() == null || request.getMonth() <= 1) {
-            // TODO(PRD 확인): 1월 월간 시트의 비교 기준을 연간 계획 확정본으로 둘지 결정되면 반영
+        if (request.getType() == RequestType.ANNUAL_PLAN || request.getMonth() == null) {
             return Baseline.NONE;
+        }
+        if (request.getMonth() <= 1) {
+            // 1월은 전월이 없어 확정 연간 계획과 비교한다(팀 결정 2026-11-23). 계획이 없는 조직은 기준 없음.
+            return planBaselines.confirmedPlan(request.getId(), submission.getOrganizationId())
+                    .map(plan -> checked(new Baseline(BaselineKind.ANNUAL_PLAN, plan)))
+                    .orElse(Baseline.NONE);
         }
         Long annualPlanId = request.getAnnualPlan().getId();
         int previousMonth = request.getMonth() - 1;
@@ -81,8 +88,13 @@ public class BaselineResolver {
         if (sameRequest.isPresent()) {
             return new Baseline(BaselineKind.PREV_MONTH_APPROVED, sameRequest.get());
         }
-        if (request.getType() == RequestType.ANNUAL_PLAN || request.getMonth() == null || request.getMonth() <= 1) {
+        if (request.getType() == RequestType.ANNUAL_PLAN || request.getMonth() == null) {
             return Baseline.NONE;
+        }
+        if (request.getMonth() <= 1) {
+            return planBaselines.confirmedPlan(request.getId(), submission.getOrganizationId())
+                    .map(plan -> new Baseline(BaselineKind.ANNUAL_PLAN, plan))
+                    .orElse(Baseline.NONE);
         }
         return submissionRepository.findApprovedInMonth(request.getAnnualPlan().getId(), RequestType.MONTHLY_ACTUAL,
                         request.getMonth() - 1, submission.getOrganizationId(), Limit.of(1)).stream().findFirst()

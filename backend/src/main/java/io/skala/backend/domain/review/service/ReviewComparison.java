@@ -68,9 +68,9 @@ public class ReviewComparison {
         } else {
             previous = submission.getPreviousSubmission();
         }
-        Submission approved = baselineResolver.resolveApproved(submission, request).submission();
-        BaselineKind kind = previous != null ? BaselineKind.REJECTED
-                : approved != null ? BaselineKind.PREV_MONTH_APPROVED : BaselineKind.NONE;
+        Baseline approvedBaseline = baselineResolver.resolveApproved(submission, request);
+        Submission approved = approvedBaseline.submission();
+        BaselineKind kind = previous != null ? BaselineKind.REJECTED : approvedBaseline.kind();
 
         List<FinancialValue> currentCells = financialValueRepository.findAllWithLineBySubmissionId(submission.getId());
         List<FinancialValue> baselineCells = approved == null ? List.of()

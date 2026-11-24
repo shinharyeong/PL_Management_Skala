@@ -52,4 +52,18 @@ public class GapThreshold {
 
     @Column(name = "amount_enabled", nullable = false)
     private Boolean amountEnabled = true;
+
+    public static GapThreshold apply(GapComparisonType comparison, boolean percentEnabled, BigDecimal percent,
+                                     boolean amountEnabled, BigDecimal amount, AppUser appliedBy,
+                                     OffsetDateTime appliedAt) {
+        GapThreshold threshold = new GapThreshold();
+        threshold.comparison = comparison;
+        threshold.percentEnabled = percentEnabled;
+        threshold.percent = percent;
+        threshold.amountEnabled = amountEnabled;
+        threshold.amount = amount;
+        threshold.appliedBy = appliedBy;
+        threshold.appliedAt = appliedAt;
+        return threshold;
+    }
 }

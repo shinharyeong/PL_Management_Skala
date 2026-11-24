@@ -51,7 +51,7 @@ public final class ChangeDetector {
      *
      * @param current  현재 제출본 금액. 값이 없으면 null
      * @param baseline 기준 버전 금액. 기준이 없거나 값이 없으면 null
-     * @param changed  기준 버전이 있고 금액(또는 값 유무)이 다르면 true
+     * @param changed  기준 버전에 같은 구분이 있고 금액(또는 값 유무)이 다르면 true
      */
     public record Detection(Key key, ReportItem reportItem, BigDecimal current, BigDecimal baseline, boolean changed,
                             String sourceFingerprint) {
@@ -80,6 +80,9 @@ public final class ChangeDetector {
      */
     public static List<Detection> detect(Map<Key, Aggregate> current, Map<Key, Aggregate> baseline) {
         Set<Key> keys = new LinkedHashSet<>(current.keySet());
+        // 같은 구분(계획/실적/추정)끼리만 비교한다. 기준에 없는 구분(예: 연간 계획 기준의 실적·추정)은 변경으로 보지 않는다.
+        Set<Scenario> comparable = baseline == null ? Set.of()
+                : baseline.keySet().stream().map(Key::scenario).collect(java.util.stream.Collectors.toSet());
         if (baseline != null) {
             keys.addAll(baseline.keySet());
         }
@@ -89,7 +92,8 @@ public final class ChangeDetector {
             Aggregate before = baseline == null ? null : baseline.get(key);
             BigDecimal currentAmount = now == null ? null : now.total();
             BigDecimal baselineAmount = before == null ? null : before.total();
-            boolean changed = baseline != null && !sameAmount(currentAmount, baselineAmount);
+            boolean changed = baseline != null && comparable.contains(key.scenario())
+                    && !sameAmount(currentAmount, baselineAmount);
             ReportItem reportItem = now != null ? now.reportItem() : before.reportItem();
             String fingerprint = now == null ? sha256("") : now.fingerprint();
             result.add(new Detection(key, reportItem, currentAmount, baselineAmount, changed, fingerprint));

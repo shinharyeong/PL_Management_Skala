@@ -8,6 +8,13 @@ import io.skala.backend.domain.request.entity.SubmissionRequest;
 import io.skala.backend.domain.request.repository.SubmissionRequestRepository;
 import io.skala.backend.domain.review.dto.AttachmentResponse;
 import io.skala.backend.domain.review.dto.ExplanationResponse;
+import io.skala.backend.domain.review.dto.GapSummary;
+import io.skala.backend.domain.review.dto.GapThresholdResponse;
+import io.skala.backend.domain.review.entity.GapComparison;
+import io.skala.backend.domain.review.repository.GapComparisonRepository;
+import io.skala.backend.domain.review.repository.GapThresholdRepository;
+import io.skala.backend.domain.review.value.GapBasis;
+import io.skala.backend.domain.review.value.GapComparisonType;
 import io.skala.backend.domain.review.dto.OrgReviewListResponse;
 import io.skala.backend.domain.review.dto.ReviewItemDetailResponse;
 import io.skala.backend.domain.review.entity.ReviewAttachment;
@@ -59,6 +66,9 @@ public class ReviewItemQueryService {
     private final ReviewAttachmentRepository reviewAttachmentRepository;
     private final SubmissionRequestRepository submissionRequestRepository;
     private final ExplanationTargetService explanationTargetService;
+    private final GapComparisonRepository gapComparisonRepository;
+    private final GapThresholdRepository gapThresholdRepository;
+    private final GapCalculator gapCalculator;
 
     @Transactional(readOnly = true)
     public OrgReviewListResponse listForOrg(Long submissionId, AuthenticatedUser user) {
@@ -125,11 +135,38 @@ public class ReviewItemQueryService {
                 path(item),
                 item.getScenario(),
                 item.getMonth(),
-                null,
+                user.isPlanner() ? gapSummary(item, view) : null,
                 rows(view, key),
                 previousExplanation(view, key, round1),
                 explanations.stream().map(e -> toResponse(e, attachments.getOrDefault(e.getId(), List.of()))).toList(),
                 ReviewItemTokens.of(item, currentExplanation(explanations, item), submission));
+    }
+
+    /** 경영기획팀만: 확정 연간 계획 대비 값과 Gap 기준. 계획 구분 항목이거나 계획이 없으면 값이 비어 있다. */
+    private GapSummary gapSummary(ReviewItem item, View view) {
+        GapComparisonType type = GapRules.typeOf(item.getScenario(), GapBasis.PLAN);
+        if (type == null) {
+            return null;
+        }
+        GapComparison stored = gapComparisonRepository.findAllBySubmissionId(item.getSubmission().getId()).stream()
+                .filter(g -> g.getReviewItem().getId().equals(item.getId()) && g.getBasis() == GapBasis.PLAN)
+                .findFirst().orElse(null);
+        BigDecimal plan;
+        GapThresholdResponse threshold;
+        if (stored != null) {
+            plan = stored.getBaselineAmount();
+            threshold = GapThresholdResponse.of(stored.getThreshold());
+        } else {
+            Aggregate base = gapCalculator.values(gapCalculator.sources(item.getSubmission(), view.request()))
+                    .getOrDefault(GapBasis.PLAN, Map.of())
+                    .get(new Key(item.getReportItem().getId(), item.getYear(), item.getMonth(), GapRules.baselineScenarioOf(type)));
+            plan = base == null ? null : base.total();
+            threshold = gapThresholdRepository.findFirstByComparisonOrderByIdDesc(type)
+                    .map(GapThresholdResponse::of).orElse(null);
+        }
+        BigDecimal actual = item.getCurrentAmount();
+        return new GapSummary(Amounts.money(plan), Amounts.money(actual), Amounts.money(Amounts.diff(actual, plan)),
+                Amounts.rate(actual, plan), threshold);
     }
 
     /** 항목 조회 + 권한(경영기획팀 전체, 조직 담당자는 자기 조직) */

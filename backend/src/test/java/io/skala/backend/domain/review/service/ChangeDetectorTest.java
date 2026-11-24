@@ -78,6 +78,27 @@ class ChangeDetectorTest {
     }
 
     @Test
+    void 기준에_없는_구분은_변경으로_보지_않는다() {
+        // 연간 계획(계획 구분만)과 1월 시트(계획·실적·추정) 비교: 같은 구분끼리만 본다.
+        var current = ChangeDetector.aggregate(List.of(
+                value(sales, "매출", 10, 1, Scenario.PLAN, "100", "C10"),
+                value(sales, "매출", 10, 1, Scenario.ACTUAL, "120", "D10"),
+                value(sales, "매출", 10, 2, Scenario.ESTIMATE, "130", "E10")));
+        var plan = ChangeDetector.aggregate(List.of(
+                value(sales, "매출", 10, 1, Scenario.PLAN, "90", "C10"),
+                value(sales, "매출", 10, 2, Scenario.PLAN, "95", "D10")));
+
+        Map<Key, Detection> byKey = ChangeDetector.detect(current, plan).stream()
+                .collect(java.util.stream.Collectors.toMap(Detection::key, d -> d));
+
+        assertThat(byKey.get(new Key(1L, 2026, 1, Scenario.PLAN)).changed()).isTrue();
+        assertThat(byKey.get(new Key(1L, 2026, 1, Scenario.ACTUAL)).changed()).isFalse();
+        assertThat(byKey.get(new Key(1L, 2026, 2, Scenario.ESTIMATE)).changed()).isFalse();
+        // 2월 계획이 1월 시트에서 빠졌으면(값 없음) 계획 구분 안의 변경
+        assertThat(byKey.get(new Key(1L, 2026, 2, Scenario.PLAN)).changed()).isTrue();
+    }
+
+    @Test
     void 기준금액이_다르면_맥락_지문도_다르다() {
         Key key = new Key(1L, 2026, 11, Scenario.ACTUAL);
         assertThat(ChangeDetector.contextFingerprint("c", key, 7L, new BigDecimal("1.0")))

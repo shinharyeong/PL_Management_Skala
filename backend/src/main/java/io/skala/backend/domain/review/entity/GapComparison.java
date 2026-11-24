@@ -64,4 +64,21 @@ public class GapComparison {
 
     @Column(name = "exceeded", nullable = false)
     private Boolean exceeded;
+
+    public static GapComparison of(ReviewItem item, GapBasis basis, Submission baselineSubmission,
+                                   Scenario baselineScenario, BigDecimal baselineAmount, BigDecimal currentAmount,
+                                   BigDecimal gapRate, GapThreshold threshold, boolean exceeded) {
+        GapComparison comparison = new GapComparison();
+        comparison.reviewItem = item;
+        comparison.basis = basis;
+        comparison.baselineSubmission = baselineSubmission;
+        comparison.baselineScenario = baselineScenario;
+        comparison.baselineAmount = baselineAmount;
+        comparison.currentAmount = currentAmount;
+        comparison.gapAmount = currentAmount.subtract(baselineAmount);
+        comparison.gapRate = gapRate;
+        comparison.threshold = threshold;
+        comparison.exceeded = exceeded;
+        return comparison;
+    }
 }
