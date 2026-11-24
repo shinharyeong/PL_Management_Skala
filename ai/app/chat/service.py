@@ -124,7 +124,8 @@ def _test_log(s: Settings, entry: dict) -> None:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def run_chat(question: str, *, version: str | None = None, quick_id: str | None = None, conversation_id: str | None = None, settings: Settings | None = None) -> dict:
+def run_chat(question: str, *, version: str | None = None, quick_id: str | None = None, conversation_id: str | None = None, settings: Settings | None = None,
+             excel: bool = True) -> dict:
     s = settings or get_settings()
     steps, budget = Steps(), nl2sql.Budget()
     t_all = time.perf_counter()
@@ -150,7 +151,7 @@ def run_chat(question: str, *, version: str | None = None, quick_id: str | None 
     from .graph import GRAPH
     final: dict = {}
     try:
-        final = GRAPH.invoke({"question": question, "version": version, "quick_id": quick_id, "conversation_id": conversation_id,
+        final = GRAPH.invoke({"question": question, "version": version, "quick_id": quick_id, "conversation_id": conversation_id, "make_excel": excel,
                               "settings": s, "steps": steps, "budget": budget, "flags": state, "resp": None},
                              config={"recursion_limit": 25 + 3 * (s.chat_max_fix + 1)})
     finally:
@@ -215,7 +216,7 @@ def nl_query(question: str, base_year: int, base_month: int, *, conversation_id:
     if not row:
         return {"status": "UNKNOWN", "sql": None, "explanation": f"{base_year}년 {base_month}월 데이터가 없습니다.", "clarifyQuestion": None,
                 "clarifyOptions": [], "preview": empty, "rowCount": 0, "truncated": False}
-    r = run_chat(question, version=row["version"], conversation_id=conversation_id, settings=s)
+    r = run_chat(question, version=row["version"], conversation_id=conversation_id, settings=s, excel=False)    # 계약 응답에는 파일이 없다
     status = _NLQ_STATUS.get(r["status"], "UNKNOWN")
     clarify = r.get("clarify") or {}
     columns = list(r.get("columns") or [])

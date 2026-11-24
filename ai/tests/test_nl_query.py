@@ -1,6 +1,7 @@
 """backend 계약 /v1/nl-query(명세 12절, RPT-11 모양). 흐름은 /v1/chat 과 같은 LangGraph 그래프다. 실제 OpenAI 호출 없음."""
 from fastapi.testclient import TestClient
 
+from app.chat import db
 from app.chat.graph import GRAPH
 from app.main import app
 from test_chat import GOOD_SQL, ai, seed  # noqa: F401 — ai 는 pytest fixture
@@ -23,6 +24,8 @@ def test_ok_returns_sql_explanation_and_typed_preview(ai):
     assert [c["type"] for c in body["preview"]["columns"]] == ["TEXT", "MONEY", "MONEY", "MONEY"]
     assert body["preview"]["rows"][0] == {"org_name": "사업부18", "revenue_won": 945_640_000, "cost_won": 509_970_000, "op_won": 435_670_000}
     assert body["clarifyQuestion"] is None and body["clarifyOptions"] == []
+    files = db.files_dir()
+    assert not files.exists() or not list(files.glob("*.xlsx"))                       # 계약 호출은 엑셀을 만들지 않는다(파일이 쌓이지 않게)
 
 
 def test_clarify_unknown_blocked_and_missing_month(isolated):

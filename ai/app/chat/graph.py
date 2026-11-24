@@ -33,6 +33,7 @@ class ChatState(TypedDict, total=False):
     version: str | None
     quick_id: str | None
     conversation_id: str | None
+    make_excel: bool    # False 면 엑셀 파일을 만들지 않는다(backend 계약 /v1/nl-query: 내려받을 곳이 없어 파일만 쌓임)
     settings: Any
     steps: Any          # service.Steps
     budget: Any         # nl2sql.Budget
@@ -333,7 +334,7 @@ def excel(state: ChatState) -> dict:
     s, res, it, steps = state["settings"], state["res"], state["it"], state["steps"]
     ev = _evidence(it.version, state["basis"], res.columns, res.rows)
     file = None
-    if res.row_count > 0:
+    if res.row_count > 0 and state.get("make_excel", True):
         t4 = time.perf_counter()
         fid = uuid.uuid4().hex[:16]
         name = f"chat_{it.version}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
