@@ -1,0 +1,78 @@
+# Spring Boot API. 엑셀 파서를 자식 프로세스로 실행한다(이미지에 parser/src 포함).
+# 업로드 원본·제출 양식은 PVC(/data)에 둔다 — 볼륨이 한 파드에만 붙으므로 Recreate로 교체한다.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: backend-data }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 5Gi }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: backend-config }
+data:
+  SPRING_PROFILES_ACTIVE: prod
+  TZ: Asia/Seoul
+  # 1차 배포: SMTP 없이 인증코드를 로그로 확인한다(kubectl logs deploy/backend | grep 인증코드).
+  # 로그를 읽을 수 있는 사람(팀·반 계정)이 코드를 볼 수 있으므로, SMTP(SPRING_MAIL_*)를 app-secrets에 넣으면 "false"로 바꾼다.
+  APP_AUTH_DEV_LOG_CODE: "true"
+  # 실제 배포 양식은 .xlsb다. 파일은 PVC /data/templates/에 둔다.
+  APP_SUBMISSION_TEMPLATE_FILENAME: 제출양식.xlsb
+  SUBMISSION_TEMPLATE_LOCATION: file:/data/templates/submission-template.xlsb
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: backend, labels: { app: backend } }
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: backend } }
+  template:
+    metadata: { labels: { app: backend } }
+    spec:
+      serviceAccountName: s3-access
+      imagePullSecrets: [{ name: harbor-cred }]
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: backend
+          image: skala-registry.skala-ai.com/p1-2/backend
+          ports: [{ name: http, containerPort: 8080 }]
+          envFrom:
+            - secretRef: { name: rds-credentials }          # SPRING_DATASOURCE_URL, PG* (USERNAME·PASSWORD는 아래 env로)
+            - configMapRef: { name: s3-config }              # S3_BUCKET, AWS_REGION
+            - configMapRef: { name: backend-config }
+            - secretRef: { name: app-secrets, optional: true }  # SPRING_MAIL_* 등
+          env:
+            - { name: JAVA_TOOL_OPTIONS, value: "-XX:MaxRAMPercentage=75" }
+            # rds-credentials에는 SPRING_DATASOURCE_URL만 있고 USERNAME·PASSWORD 키가 없다(PG*로 들어 있다).
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom: { secretKeyRef: { name: rds-credentials, key: PGUSER } }
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom: { secretKeyRef: { name: rds-credentials, key: PGPASSWORD } }
+          resources:
+            requests: { cpu: 500m, memory: 1536Mi }
+            limits: { cpu: 1500m, memory: 2Gi }
+          volumeMounts: [{ name: data, mountPath: /data }]
+          startupProbe:
+            httpGet: { path: /actuator/health, port: http }
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 20
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: backend-data }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: backend }
+spec:
+  selector: { app: backend }
+  ports: [{ name: http, port: 8080, targetPort: http }]

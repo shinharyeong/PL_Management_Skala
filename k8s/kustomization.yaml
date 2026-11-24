@@ -1,0 +1,18 @@
+# 배포: 캠퍼스 네트워크에서 scripts/deploy.sh (또는 kubectl apply -k k8s/)
+# 플랫폼이 미리 만들어 둔 것: Secret rds-credentials·harbor-cred·team-tls, ConfigMap s3-config, ServiceAccount s3-access
+# 팀이 kubectl로 직접 만드는 것(Git에 넣지 않음): Secret app-secrets
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: p1-2
+labels:
+  - pairs: { app.kubernetes.io/part-of: pl-management }
+resources:
+  - backend.yaml
+  - ai.yaml
+  - frontend.yaml
+  - ingress.yaml
+images:
+  # scripts/deploy.sh가 newTag를 이번에 올린 이미지 태그(커밋 해시)로 바꾼다.
+  - { name: skala-registry.skala-ai.com/p1-2/backend, newTag: "ef6ad7525b1f" }
+  - { name: skala-registry.skala-ai.com/p1-2/ai, newTag: "ef6ad7525b1f" }
+  - { name: skala-registry.skala-ai.com/p1-2/frontend, newTag: "ef6ad7525b1f" }

@@ -1,0 +1,43 @@
+# 보고서 AI(FastAPI). 클러스터 안에서만 부른다(http://ai:8000) — Ingress로 밖에 열지 않는다.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: ai, labels: { app: ai } }
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector: { matchLabels: { app: ai } }
+  template:
+    metadata: { labels: { app: ai } }
+    spec:
+      serviceAccountName: s3-access
+      imagePullSecrets: [{ name: harbor-cred }]
+      securityContext: { runAsNonRoot: true, runAsUser: 10001 }
+      containers:
+        - name: ai
+          image: skala-registry.skala-ai.com/p1-2/ai
+          ports: [{ name: http, containerPort: 8000 }]
+          envFrom:
+            - configMapRef: { name: s3-config }
+            - secretRef: { name: app-secrets, optional: true }  # OPENAI_API_KEY, REPORT_AI_TOKEN
+          env:
+            - { name: TZ, value: Asia/Seoul }
+            # 챗봇·값 채우기 조회 DB(#64). 팀 DB의 ai 스키마를 쓴다(AI_DB_SCHEMA 기본 ai).
+            - name: AI_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: rds-credentials, key: DATABASE_URL } }
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata: { name: ai }
+spec:
+  selector: { app: ai }
+  ports: [{ name: http, port: 8000, targetPort: http }]

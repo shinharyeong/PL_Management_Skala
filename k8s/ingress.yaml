@@ -1,0 +1,16 @@
+# 팀 도메인 하나를 경로로 나눈다: /api → backend, / → frontend. 캠퍼스 네트워크에서만 열린다(플랫폼 필수 주석).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    nginx.ingress.kubernetes.io/whitelist-source-range: "211.45.60.1/32,211.45.60.2/32,211.45.60.3/32,211.45.60.4/32,211.45.60.5/32"
+spec:
+  ingressClassName: public-nginx
+  tls: [{ hosts: [p1-2.skala-ai.com], secretName: team-tls }]
+  rules:
+    - host: p1-2.skala-ai.com
+      http:
+        paths:
+          - { path: /api, pathType: Prefix, backend: { service: { name: backend, port: { name: http } } } }
+          - { path: /, pathType: Prefix, backend: { service: { name: frontend, port: { name: http } } } }
