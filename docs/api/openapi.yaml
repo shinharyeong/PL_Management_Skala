@@ -4860,6 +4860,17 @@ paths:
                           type: integer
                         name:
                           type: string
+                        parentCode:
+                          type:
+                          - integer
+                          - 'null'
+                          description: 하위 유형이면 상위 유형 코드. 상위 유형 합계는 하위 유형 합(예 2 = 3 + 4)
+                        catchAll:
+                          type: boolean
+                          description: 분류하지 않은 소명이 자동으로 가는 '기타'
+                        assignable:
+                          type: boolean
+                          description: 카드를 직접 넣을 수 있는지(상위 유형은 false)
               example:
                 tableVersion: 3
                 items:
@@ -4888,7 +4899,11 @@ paths:
       tags:
       - AI 보고서
       summary: RPT-13 Gap 설명 블록용 승인 소명 카드 + 제안 분류
-      description: 금액은 소명이 달린 검토 항목의 Gap 금액을 코드가 계산. 같은 조직·항목 소명은 지난달 분류로 미리 채움.
+      description: |-
+        블록 = 기준 월(year, month) × 비교 종류. 그 달 version(확정 master, 없으면 조직별 최신 승인본 — 보고서용 뷰와 같은 규칙)의 제출본에서 임계값을 넘은 검토 항목이다. 실적 비교(ACTUAL_VS_PLAN)는 기준 월 항목, 추정 비교는 기준 월+1 항목(12월 기준 추정은 없음).
+        금액은 소명이 달린 검토 항목의 Gap 금액(gap_comparison). 수락된 소명만 카드(items), 수락 전은 reviewing.
+        후보: 지난달 같은 조직·항목 분류(LAST_MONTH) 우선, 없으면 답변에 유형 단어가 하나만 맞을 때(RULE).
+        분류하지 않은 카드는 '기타'(catchAll) 합계에 들어가고, 상위 유형 합계는 하위 합. gapTotal은 수락 전 소명까지 포함해 classifiedTotal과 비교한다.
       x-fr:
       - FR-RPT-007
       x-tables:
@@ -4946,6 +4961,15 @@ paths:
                           - RULE
                           - LAST_MONTH
                           - null
+                  categoryTotals:
+                    type: object
+                    description: 유형 id → 합계(원). 미분류는 '기타', 상위 유형은 하위 합
+                    additionalProperties:
+                      $ref: '#/components/schemas/Money'
+                  classifiedTotal:
+                    $ref: '#/components/schemas/Money'
+                  matchesGapTotal:
+                    type: boolean
                   reviewing:
                     type: array
                     description: 아직 승인 전이라 분류할 수 없는 소명
@@ -4968,6 +4992,7 @@ paths:
       tags:
       - AI 보고서
       summary: RPT-14 소명 카드를 분류함에 배치(빼려면 categoryId null)
+      description: 응답 합계는 그 소명이 속한 블록 기준. comparison을 생략하면 그 항목이 넘은 첫 비교(ACTUAL_VS_PLAN → ESTIMATE_VS_PREVIOUS → ESTIMATE_VS_PLAN). 상위 유형에는 넣을 수 없다(400 CATEGORY_NOT_ASSIGNABLE).
       x-fr:
       - FR-RPT-007
       x-tables:
@@ -4978,6 +5003,11 @@ paths:
         required: true
         schema:
           $ref: '#/components/schemas/Id'
+      - name: comparison
+        in: query
+        description: 합계를 돌려줄 블록의 비교 종류(생략 가능)
+        schema:
+          $ref: '#/components/schemas/Comparison'
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
@@ -5000,6 +5030,12 @@ paths:
               schema:
                 type: object
                 properties:
+                  explanationId:
+                    $ref: '#/components/schemas/Id'
+                  categoryId:
+                    oneOf:
+                    - $ref: '#/components/schemas/Id'
+                    - type: 'null'
                   categoryTotals:
                     type: object
                     additionalProperties:
