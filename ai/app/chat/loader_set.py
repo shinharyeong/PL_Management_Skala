@@ -226,7 +226,6 @@ def load_dataset(root: Path, settings, *, workers: int | None = None) -> dict:
     con = db.open_writer(settings)
     ts = datetime.now().isoformat(timespec="seconds")
     try:
-        con.execute("PRAGMA synchronous=OFF")
         with con:
             def put(ver, kind, label, y, m, rows):
                 rows = [(ver, *r[1:]) for r in rows]
@@ -241,7 +240,7 @@ def load_dataset(root: Path, settings, *, workers: int | None = None) -> dict:
                 if rows:
                     put(f"close-{cy - 1}-{mm:02d}", "close", f"{cy - 1}년 {mm}월 실적(업로드 파일의 전년 블록)", cy - 1, mm, rows)
             for org in sorted({r[1] for r in by["cur"]}):
-                con.execute("INSERT OR REPLACE INTO dim_org(org_code, org_name) VALUES(?,?)", (org, names.get(org, org)))
+                db.upsert_org(con, org, names.get(org, org))
             linked = defaultdict(list)
             for h in hist:
                 linked[h["gap"]["gap_id"]].append(h)
@@ -276,12 +275,10 @@ def _carry(g: dict, gaps: list[dict]) -> bool:
 
 def verify_against(root: Path, settings) -> dict:
     """정답 JSON(검증 전용)과 현재 조회 DB 를 대조한다. 적재 로직은 이 파일들을 읽지 않는다."""
-    import sqlite3
     out = {"financial": None, "review": None}
     fin = next(iter(sorted(root.rglob("expected_financial_values.json"))), None)
     rev = next(iter(sorted(root.rglob("expected_review_items.json"))), None)
-    con = sqlite3.connect(db.db_path(settings))
-    con.row_factory = sqlite3.Row
+    con = db.open_readonly(settings)
     try:
         vers = {r["version"]: (r["year"], r["month"]) for r in con.execute("SELECT version, year, month FROM dim_version")}
         cur = max((v for v in vers if v.startswith("master-")), key=lambda v: vers[v])

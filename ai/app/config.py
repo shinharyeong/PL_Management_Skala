@@ -60,6 +60,7 @@ class Settings:
     ai_timeout_seconds: float = 30.0
     ai_max_retries: int = 0
     ai_daily_call_limit: int = 30
+    ai_review_max_rounds: int = 2               # PDF 박스 확인 루프의 재질문 상한(0 이면 루프를 끈다)
     ai_cache_dir: Path = REPO_ROOT / "ai" / ".cache"
     output_dir: Path = REPO_ROOT / "ai" / "output"
     # 파이프라인(배치) 입력. 기본값은 비어 있고, 파이프라인을 돌릴 때 없으면 오류로 안내한다.
@@ -75,7 +76,8 @@ class Settings:
     upload_max_total_mb: int = 400              # 요청 전체 크기 상한(MB, 압축 해제 후 포함)
     parse_workers: int = 0                      # 엑셀 파싱 동시 프로세스 수(0=자동: CPU 수, 최대 8)
     # 챗봇(AI 작업실)
-    chat_db_path: Path | None = None            # 조회용 SQLite 파일(비우면 AI_CACHE_DIR/chat/chat.db)
+    chat_database_url: str | None = None        # 조회용 PostgreSQL 접속 주소(AI_DATABASE_URL). 비우면 챗봇·값 채우기는 'DB 없음'으로 답한다
+    chat_schema: str = "ai"                     # 조회 테이블이 든 스키마(AI_DB_SCHEMA). 연결의 search_path 가 이 스키마로 고정된다
     chat_row_limit: int = 1000                  # 조회 결과 행 상한
     chat_sql_timeout_seconds: float = 20.0      # SQL 실행 시간 상한
     chat_max_fix: int = 2                       # SQL 자기 수정 최대 횟수
@@ -144,6 +146,7 @@ def get_settings() -> Settings:
         ai_timeout_seconds=float(_read("AI_TIMEOUT_SECONDS", "30")[0]),
         ai_max_retries=int(_read("AI_MAX_RETRIES", "0")[0]),
         ai_daily_call_limit=int(_read("AI_DAILY_CALL_LIMIT", "30")[0]),
+        ai_review_max_rounds=max(0, min(5, int(_read("AI_REVIEW_MAX_ROUNDS", "2")[0]))),
         ai_cache_dir=_path(_read("AI_CACHE_DIR", "ai/.cache")[0]),
         output_dir=_path(_read("OUTPUT_DIR", "ai/output")[0]),
         input_dir=_path(_read("INPUT_DIR")[0]), explanations_path=_path(_read("EXPLANATIONS_PATH")[0]),
@@ -153,7 +156,7 @@ def get_settings() -> Settings:
         upload_max_files=int(_read("AI_UPLOAD_MAX_FILES", "150")[0]), upload_max_file_mb=int(_read("AI_UPLOAD_MAX_FILE_MB", "30")[0]),
         upload_max_total_mb=int(_read("AI_UPLOAD_MAX_TOTAL_MB", "400")[0]),
         parse_workers=int(_read("AI_PARSE_WORKERS", "0")[0]),
-        chat_db_path=_path(_read("CHAT_DB_PATH")[0]), chat_row_limit=int(_read("CHAT_ROW_LIMIT", "1000")[0]),
+        chat_database_url=_read("AI_DATABASE_URL")[0], chat_schema=_read("AI_DB_SCHEMA", "ai")[0], chat_row_limit=int(_read("CHAT_ROW_LIMIT", "1000")[0]),
         chat_sql_timeout_seconds=float(_read("CHAT_SQL_TIMEOUT_SECONDS", "20")[0]), chat_max_fix=int(_read("CHAT_MAX_FIX", "2")[0]),
         chat_memory=str(_read("CHAT_MEMORY", "true")[0]).strip().lower() not in ("0", "false", "no", "off"),
         chat_test_log=str(_read("CHAT_TEST_LOG", "0")[0]).strip().lower() in ("1", "true", "yes", "on"),

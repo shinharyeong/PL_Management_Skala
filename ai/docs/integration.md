@@ -44,12 +44,12 @@ python -m pytest -q                    # 모의 호출만 사용(실제 네트�
 
 
 ### AI 작업실(챗봇) `POST /v1/chat` (초안)
-- **흐름:** 질문 → 코드가 조직·월·버전(시점)을 먼저 해석(모르면 `unknown`, 모호하면 `clarify` 로 되묻기) → AI 가 SQL 작성(같은 질문은 저장된 SQL 재사용) → SQL 검사기 → 최대 2번 자기 수정 → **읽기 전용** SQLite 조회 → 설명 문장(AI, 숫자 검증 실패 시 기본문구) → 엑셀(요약/결과/근거). AI 키가 없거나 상한 초과·실패면 빠른 질문 5개의 고정 SQL 로 대신 답한다("AI 없이 기본 질의").
+- **흐름:** 질문 → 코드가 조직·월·버전(시점)을 먼저 해석(모르면 `unknown`, 모호하면 `clarify` 로 되묻기) → AI 가 SQL 작성(같은 질문은 저장된 SQL 재사용) → SQL 검사기 → 최대 2번 자기 수정 → **읽기 전용** PostgreSQL 조회 → 설명 문장(AI, 숫자 검증 실패 시 기본문구) → 엑셀(요약/결과/근거). AI 키가 없거나 상한 초과·실패면 빠른 질문 5개의 고정 SQL 로 대신 답한다("AI 없이 기본 질의").
 - **원칙:** AI 는 SQL 과 설명 문장만 쓰고 숫자는 전부 DB 조회 결과에서 나온다. 데이터 값은 SQL 생성 AI 에 보내지 않는다. 기존 하루 호출 상한(`AI_DAILY_CALL_LIMIT`)과 호출 기록(`ai_call_log.json`, task=chat_sql/chat_text)을 그대로 쓴다.
 - **엔드포인트:** `GET /v1/chat/status`(DB 범위·남은 AI 호출), `POST /v1/chat/load`(최신 업로드 실행 결과를 조회 DB 에 적재), `GET /v1/chat/files/{id}`(엑셀). 업로드 실행이 끝나면 조회 DB 에 자동 적재된다.
-- **조회 DB:** `AI_CACHE_DIR/chat/chat.db`(`CHAT_DB_PATH` 로 변경). 테이블 fact(가장 작은 항목만)·gap·explanation(수락된 원문만)·dim_version·dim_org, 뷰 v_op. **버전이 곧 시점**(확정 master / 잠정 / 월마감 close-<연도>-<월>), 기본은 최신 버전.
+- **조회 DB:** PostgreSQL(`AI_DATABASE_URL`, 스키마 `AI_DB_SCHEMA` 기본 `ai`). 연결의 `search_path` 가 그 스키마로 고정된다. 테이블 fact(가장 작은 항목만)·gap·explanation(수락된 원문만)·dim_version·dim_org, 뷰 v_op. **버전이 곧 시점**(확정 master / 잠정 / 월마감 close-<연도>-<월>), 기본은 최신 버전.
 - **적재:** (a) 업로드 실행 결과 → `python3 -m app.chat.loader run [--run-id ID]`, (b) 조직별 월마감 엑셀 상세 시트 → `python3 -m app.chat.loader excel --dir <폴더> --version close-<연도>-<월> --year <연도> --month <월>`(여러 프로세스 읽기, 일괄 insert, 인덱스·ANALYZE).
-- **SQL 검사:** SELECT/WITH 한 문장, 세미콜론·주석·변경 키워드 금지, 허용 테이블·함수만(authorizer), version = :version 조건 필수, 행 1000·시간 20초 상한.
+- **SQL 검사:** SELECT/WITH 한 문장, 세미콜론·주석·변경 키워드 금지, 허용 테이블·함수만(문자열 허용 목록 + `pg_*`·`information_schema`·스키마 접두 금지)·읽기 전용 연결·`statement_timeout`, version = :version 조건 필수, 행 1000·시간 20초 상한.
 
 ### 업로드 실행 `POST /v1/pipeline/run` (초안)
 - **입력:** 엑셀 63개(계획 `annual_plan`·baseline `baseline_2026_10`·제출 `submission_2026_11`·재제출 `revisions`), `explanations.json`, `approval_snapshots.json`. gap_key(REV030 등)를 셀로 풀기 위한 시나리오 JSON(`02_scenarios/NN_*.json`)은 선택이며, 없으면 소명 연결이 제한된다는 경고가 나온다.

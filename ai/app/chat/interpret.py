@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass, field
 
 # 데이터 입도에 없는 주제(fact 는 월 단위까지만 있다)
@@ -46,7 +45,7 @@ class Interp:
                 "scope": "전사 합산(조직 필터 없음)" if self.scope_all else "지정한 조직", "flags": self.flags}
 
 
-def _orgs(con: sqlite3.Connection) -> list[tuple[str, str]]:
+def _orgs(con: db.Conn) -> list[tuple[str, str]]:
     return [(r["org_code"], r["org_name"]) for r in con.execute("SELECT org_code, org_name FROM dim_org ORDER BY org_code")]
 
 
@@ -83,7 +82,7 @@ def blocked_reason(q: str) -> str | None:
     return None
 
 
-def interpret(con: sqlite3.Connection, question: str, *, version: str | None = None) -> Interp:
+def interpret(con: db.Conn, question: str, *, version: str | None = None) -> Interp:
     q = (question or "").strip()
     it = Interp(question=q)
     br = blocked_reason(q)
@@ -209,7 +208,7 @@ def interpret(con: sqlite3.Connection, question: str, *, version: str | None = N
     return it
 
 
-def base_params(con: sqlite3.Connection, it: Interp) -> dict:
+def base_params(con: db.Conn, it: Interp) -> dict:
     """SQL 에 바인딩할 인자(:version :version_prev :base_year :base_month :scn). 연·월은 질문 또는 DB(dim_version)에서만 읽는다."""
     from . import db
     v = next((dict(r) for r in con.execute("SELECT version, year, month FROM dim_version WHERE version=?", (it.version,))), None)

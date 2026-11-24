@@ -45,6 +45,10 @@ class _Line:
         self.src = ln                                     # 원본 줄(글자 목록 포함): 세로 여백 기준 쪼개기에 쓴다
         self.grp = None                                   # 나란한 카드 덩어리 표시(같은 값이면 한 블록으로 묶는다)
         self.edges = ()                                   # 쪽의 도형(사각형) 바깥 경계 목록: (x, top, bottom). 칸 쪼개기의 단서
+        self.cuts: list[dict] = []                        # 자를 위치 후보(mark_cuts 가 채움). x 는 코드만 쓰고 AI 에는 번호·앞부분 글자만 보낸다
+        self.name: str | None = None                      # 쪼갠 조각의 이름('7a'). 쪼개지 않은 줄은 None(이름 = lid)
+        self.shapes: list[dict] = []                      # 쪽의 도형 목록(read_shapes). 블록 정리(block_tidy)가 쓴다
+        self.shapes_truncated = False
         chars = [c for c in ln["chars"] if c["text"].strip()]
         self.page = page
         self.top, self.bottom, self.x0, self.x1 = ln["top"], ln["bottom"], ln["x0"], ln["x1"]
@@ -73,6 +77,68 @@ class _Line:
             real = [c for c in cs if c["text"].strip()]
             out.append({"x0": real[0]["x0"], "x1": real[-1]["x1"], "text": _clean("".join(c["text"] for c in cs))})
         return out
+
+
+def mask_all(text: str) -> str:
+    """AI 로 보내는 글자용: mask() 에 더해 '1,234' 처럼 단위 없는 숫자 낱말도 {수치} 로 가린다(그림에서 검게 칠하는 기준 NUM_CELL 과 같다)."""
+    return " ".join("{수치}" if NUM_CELL.match(w) else w for w in mask(text)[0].split(" "))
+
+
+# ---------------- 자를 위치 후보 ----------------
+# 한 줄 안의 글자 사이 빈 간격이 '그 줄 글자 크기의 1.5배'보다 넓으면 자를 위치 후보다.
+# 근거: 단어 사이 간격은 0.25~0.4배, 같은 덩어리 안의 열 간격(표)은 대개 2배 이상, 줄의 칸(_cells)은 0.9배부터 나뉜다. 1.5배는 단어 간격과 확실히 구분되고 칸 나눔보다 엄격하다.
+# 문서·글꼴마다 다르게 쓰지 않는다(상수 하나).
+CUT_GAP_EM = 1.5
+CUT_MAX_PER_LINE = 8                 # 한 줄의 후보 상한(AI 입력 토큰 보호)
+CUT_VERT_MIN_LINES = 3               # 같은 자리에 세로로 이어진 후보가 이 줄 수 이상이면 '세로로 이어짐' 표시(경계일 가능성의 단서일 뿐, 자동으로 자르지 않는다)
+CUT_VERT_OVERLAP_PT = 6.0            # 위아래 줄의 후보 간격이 이만큼 이상 겹쳐야 같은 자리
+
+
+def _line_cuts(l: _Line) -> list[dict]:
+    out = []
+    for j in range(len(l.cells) - 1):
+        a, b = l.cells[j]["x1"], l.cells[j + 1]["x0"]
+        if b - a > CUT_GAP_EM * l.size:
+            out.append({"a": a, "b": b, "x": (a + b) / 2, "left": l.cells[j]["text"], "right": l.cells[j + 1]["text"], "vert": False})
+    out = out[:CUT_MAX_PER_LINE]
+    for n, c in enumerate(out, 1):
+        c["cut"] = n
+    return out
+
+
+def mark_cuts(ls: list[_Line]) -> None:
+    """줄마다 자를 위치 후보(번호는 왼쪽부터 1)를 만들고, 위아래 줄에서 같은 자리에 이어지는 후보에는 vert=True 를 붙인다."""
+    for l in ls:
+        l.cuts = _line_cuts(l)
+
+    def run(i: int, step: int, a: float, b: float) -> int:
+        n, k = 0, i + step
+        while 0 <= k < len(ls) and ls[k].page == ls[i].page and abs(ls[k].top - ls[k - step].top) < 3 * max(ls[k].size, ls[k - step].size) + 1:
+            hit = next(((max(a, c["a"]), min(b, c["b"])) for c in ls[k].cuts if min(b, c["b"]) - max(a, c["a"]) >= CUT_VERT_OVERLAP_PT), None)
+            if hit is None:
+                break
+            a, b = hit
+            n += 1
+            k += step
+        return n
+    for i, l in enumerate(ls):
+        for c in l.cuts:
+            c["vert"] = 1 + run(i, 1, c["a"], c["b"]) + run(i, -1, c["a"], c["b"]) >= CUT_VERT_MIN_LINES
+
+
+def split_line(l: _Line, cut_numbers: list[int]) -> list[_Line]:
+    """줄을 고른 후보 번호 위치에서 조각으로 나눈다(왼쪽부터 a, b, c…). 조각은 줄 번호(lid)를 그대로 갖고 name('7a')으로 구분한다. 조각 좌표는 그 조각의 글자에서 계산한다. 나눌 수 없으면 [줄 그대로]."""
+    xs = sorted(c["x"] for c in l.cuts if c["cut"] in set(cut_numbers))
+    if not xs:
+        return [l]
+    segs = _segment(l, xs, l.page)
+    if len(segs) < 2:
+        return [l]
+    out = []
+    for k, (_, seg) in enumerate(sorted(segs, key=lambda t: t[0])):
+        seg.lid, seg.grp, seg.name = l.lid, l.grp, f"{l.lid}{chr(97 + k)}"
+        out.append(seg)
+    return out
 
 
 # ---------------- 나란히 놓인 덩어리(칸) 쪼개기 ----------------
@@ -248,6 +314,49 @@ def _split_columns(ls: list[_Line], W: float, H: float, page: int) -> list[_Line
     return out
 
 
+# ---------------- 도형 읽기 ----------------
+# 채움 사각형(막대·카드·표 머리 배경)과 선(축·구분선)을 읽는다. 색 이름은 저장하지 않고 채움 여부만 둔다.
+SHAPE_MIN_AREA_FRAC = 0.00005         # 쪽 넓이의 0.005% 미만(점·장식 조각)은 버린다. 막대 하나(쪽의 0.1% 안팎)보다 훨씬 작다
+SHAPE_MAX_AREA_FRAC = 0.9             # 쪽 넓이의 90% 초과(쪽 배경)는 버린다
+SHAPE_MIN_LINE_FRAC = 0.04            # 쪽 큰 변의 4% 미만 길이의 선(글자 밑줄·눈금 조각)은 버린다
+SHAPES_MAX = 400                      # 도형 개수 상한(넘으면 큰 것부터 남기고 shapes_truncated)
+
+
+def read_shapes(page, ls: list) -> tuple[list[dict], bool]:
+    W, H = float(page.width), float(page.height)
+    area = W * H
+    out: list[dict] = []
+
+    def underline(o) -> bool:                                          # 글자 줄 바로 밑에서 그 줄 폭만큼 그어진 가는 선
+        w = o["x1"] - o["x0"]
+        return (o["bottom"] - o["top"]) <= 1.5 and any(abs(o["top"] - l.bottom) <= 2.5 and min(o["x1"], l.x1) - max(o["x0"], l.x0) >= 0.6 * w and w <= 1.2 * (l.x1 - l.x0) + 4 for l in ls)
+
+    def add(kind, o, filled, stroke):
+        w, h = o["x1"] - o["x0"], o["bottom"] - o["top"]
+        if kind == "line":
+            if max(w, h) < SHAPE_MIN_LINE_FRAC * max(W, H) or underline(o):
+                return
+        elif not (SHAPE_MIN_AREA_FRAC * area <= w * h <= SHAPE_MAX_AREA_FRAC * area):
+            return
+        out.append({"kind": kind, "bbox": [round(o["x0"], 1), round(o["top"], 1), round(o["x1"], 1), round(o["bottom"], 1)], "filled": bool(filled), "stroke": bool(stroke)})
+
+    for r in page.rects:
+        add("rect", r, r.get("fill"), r.get("stroke"))
+    for r in page.curves:
+        add("curve", r, r.get("fill"), r.get("stroke"))
+    for r in page.lines:
+        add("line", r, False, True)
+    for r in page.images:
+        add("image", r, False, False)
+    trunc = len(out) > SHAPES_MAX
+    if trunc:
+        out = sorted(out, key=lambda s: -(s["bbox"][2] - s["bbox"][0]) * (s["bbox"][3] - s["bbox"][1]))[:SHAPES_MAX]
+    out.sort(key=lambda s: (s["bbox"][1], s["bbox"][0]))
+    for i, sh in enumerate(out):
+        sh["id"] = i
+    return out, trunc
+
+
 def _rect_like(c: dict) -> bool:
     """닫힌 경로의 점들이 모두 바깥 사각형의 네 변 위에 있으면 사각형."""
     pts = c.get("pts") or []
@@ -362,6 +471,13 @@ def read_pdf(pdf_bytes: bytes, *, with_images: bool = False, resolution: int = 1
             for ln in ls:
                 ln.lid = lid
                 lid += 1
+            mark_cuts(ls)                                                            # 자를 위치 후보(AI 가 줄을 쪼갤 때 고른다)
+            try:
+                sh, trunc = read_shapes(page, ls)
+            except Exception:  # noqa: BLE001  (도형을 못 읽어도 글자 처리는 계속한다)
+                sh, trunc = [], False
+            for ln in ls:
+                ln.shapes, ln.shapes_truncated = sh, trunc
             all_lines.append(ls)
             for l in ls:
                 sizes[l.size] += l.chars_n
@@ -407,7 +523,11 @@ def extract_structure(pdf_bytes: bytes, *, with_images: bool = False, resolution
         pages, all_lines, body, images = read_pdf(pdf_bytes, with_images=with_images, resolution=resolution)
     for pi, ls in enumerate(all_lines, 1):
         page_h = pages[pi - 1]["height"]
-        blocks += _page_blocks(ls, pi, body, page_h, first_page=(pi == 1))
+        pb = _page_blocks(ls, pi, body, page_h, first_page=(pi == 1))
+        if ls:                                                          # 블록 정리(코드만): 너무 잘게 쪼개진 것은 합치고 잘못 합쳐진 것은 쪼갠다
+            from .block_tidy import tidy_blocks
+            pb, _ = tidy_blocks(pb, ls, ls[0].shapes, (pages[pi - 1]["width"], page_h))
+        blocks += pb
     for i, b in enumerate(blocks, 1):
         b["id"] = f"b{i}"
     _link(blocks, body)

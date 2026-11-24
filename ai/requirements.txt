@@ -7,3 +7,4 @@ httpx  # 테스트(FastAPI TestClient)에 필요
 python-multipart  # 파일 업로드(multipart)
 pdfplumber  # PDF 구조 추출 데모(글자·위치)
 PyMuPDF  # 보고 PDF를 메모리에서 검사하고 숫자 없는 구조로 재구성
+psycopg[binary]>=3.2  # 챗봇·값 채우기 조회 DB(PostgreSQL)

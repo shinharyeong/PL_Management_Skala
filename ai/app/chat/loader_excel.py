@@ -106,7 +106,6 @@ def load_excel(files: list[Path], version: str, close_year: int, close_month: in
     T["workers"] = w
     con = db.open_writer(s)
     try:
-        con.execute("PRAGMA synchronous=OFF")
         t1 = time.perf_counter()
         total = 0
         with con:
@@ -119,7 +118,7 @@ def load_excel(files: list[Path], version: str, close_year: int, close_month: in
                     con.executemany("INSERT INTO fact VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows[i:i + insert_batch])
                 total += len(rows)
                 if rows:
-                    con.execute("INSERT OR REPLACE INTO dim_org(org_code, org_name) VALUES(?,?)", (p["org_code"], rows[0][2]))
+                    db.upsert_org(con, p["org_code"], rows[0][2])
             con.execute("INSERT INTO dim_version(version, kind, label, year, month, loaded_at, source, row_count, is_latest) VALUES(?,?,?,?,?,?,?,?,0)",
                         (version, kind, label or f"{close_month}월 마감", close_year, close_month, datetime.now().isoformat(timespec="seconds"), f"excel:{len(files)}files", total))
         T["insert_seconds"] = round(time.perf_counter() - t1, 2)
@@ -130,6 +129,7 @@ def load_excel(files: list[Path], version: str, close_year: int, close_month: in
         with con:
             db.mark_latest(con)
         con.execute("ANALYZE")
+        con.commit()
         T["analyze_seconds"] = round(time.perf_counter() - t3, 2)
     finally:
         con.close()

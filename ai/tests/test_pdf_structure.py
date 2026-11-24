@@ -555,6 +555,7 @@ def test_vlm_text_cross_check_flags_text_not_in_pdf():
 
 
 def test_vlm_engine_end_to_end_with_fake_client_and_rule_fallback(monkeypatch):
+    monkeypatch.setenv("AI_REVIEW_MAX_ROUNDS", "0")                   # 이 테스트의 주제는 박스 확인 루프가 아니다(호출 수를 센다)
     pdf = make_pdf()
     c = _AiClient(VLM_ANSWER)
     monkeypatch.setattr(openai_client, "make_client", lambda s: c)
@@ -805,11 +806,13 @@ def test_sample_pdfs_mock_vlm_with_line_ids_and_garbage_bbox_cover_all_text_bloc
             if not [x for x in rules if x["page"] == pi]:
                 continue                                                  # 글자 없는 스캔 쪽은 규칙 블록이 없다
             for b in [x for x in rules if x["page"] == pi]:
-                g = {"kind": b["kind"], "lines": b["line_ids"], "bbox": [0, 900, 1000, 1000]}          # 위치는 엉망
+                g = {"kind": b["kind"], "lines": sorted({int(str(i).rstrip("abcdefgh")) for i in b["line_ids"]}), "bbox": [0, 900, 1000, 1000]}          # 위치는 엉망(블록 정리가 만든 조각 이름은 줄 번호로)
                 if b["kind"] in ("title", "paragraph", "footnote"):
                     g.update(text=b["text"], level=b.get("level"))
                 elif b["kind"] == "table":
                     g["rows"] = [[c.get("text") if c["type"] == "text" else None for c in r] for r in b["table"]["rows"]]
+                elif b["kind"] == "chart":
+                    g.update(chart_type="bar", categories=b["categories"])
                 else:
                     g["items"] = [{"marker": i["marker"], "text": i["text"], "level": 0} for i in b["items"]]
                 groups.append(g)
@@ -893,12 +896,12 @@ def test_vlm_line_ids_of_split_cards_give_separate_exact_boxes():
     assert all(b["bbox"] == _bbox([by[i] for i in b["line_ids"]]) and len(b["line_ids"]) == 3 for b in bl)
 
 
-def test_line_list_sent_to_vlm_has_right_edge_and_prompt_v5():
+def test_line_list_sent_to_vlm_has_right_edge_and_prompt_v6():
     from app.pdf_structure import vlm as V
     from app.pdf_structure.ai_extract import _line_rows
     from app.pdf_structure.extract import read_pdf
     _, lines, _, _ = read_pdf(_cards_pdf())
-    assert all({"id", "x", "x1", "top"} <= set(r) for r in _line_rows(lines[0])) and V.PROMPT_VERSION == "pdf-vlm-v5" and "x1(오른쪽 끝)" in V.SYSTEM
+    assert all({"id", "x", "x1", "top"} <= set(r) for r in _line_rows(lines[0])) and V.PROMPT_VERSION == "pdf-vlm-v6" and "x1(오른쪽 끝)" in V.SYSTEM
 
 
 def test_block_with_non_adjacent_lines_is_flagged_because_its_box_is_wide():

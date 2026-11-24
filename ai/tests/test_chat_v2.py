@@ -93,7 +93,7 @@ def test_clarify_only_for_unknown_reference_missing_comparison_target_and_duplic
     assert r["status"] == "clarify" and r["clarify"]["slot"] == "compare" and "영업이익" in r["clarify"]["options"]
     assert ask("11월 영업이익은?", None, quick_id="org_op")["status"] == "ok"             # 조직이 없어도 되묻지 않는다
     memory.forget_all()
-    db.db_path().unlink()
+    db.drop_schema()                                                                       # 조회 DB 를 통째로 지우고 다시 적재
     seed(dup=True)                                                                         # (c) 같은 이름이 둘 이상
     d = ask("사업부1 영업이익")
     assert d["status"] == "clarify" and d["clarify"]["slot"] == "dup" and len(d["clarify"]["options"]) == 2 and all("(" in o for o in d["clarify"]["options"])
