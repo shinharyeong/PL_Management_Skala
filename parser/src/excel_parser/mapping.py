@@ -149,6 +149,24 @@ def _year(label: str) -> int | None:
     return int(full.group(1)) if full else 2000 + int(short.group(1)) if short else None
 
 
+_RATIO_ITEM_NAME = re.compile(r"(?:률|율)\s*(?:\(%\))?$|비율|%")
+
+
+def _ratio_item_name(name: str | None) -> bool:
+    """항목명이 비율 지표를 뜻하는지 본다(예: 영업이익률, 당기순이익율, 비율, (%)).
+
+    Args:
+        name: 행의 항목명. 없으면 None.
+    Returns:
+        이름 끝이 률·율이거나 비율·%를 포함하면 True.
+    Raises:
+        없음.
+    Side Effects:
+        없음.
+    """
+    return bool(name) and _RATIO_ITEM_NAME.search(name.strip()) is not None
+
+
 def _period(cells: list[dict], *, annual: bool = False) -> dict:
     """근거 헤더에서 대상 연월과 기간 집계 방식을 해석한다.
 
@@ -1353,10 +1371,19 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
                 ratio_formats[number_format] = inspect_number_format(number_format)[
                     "percent_display"
                 ]
-            if financial and ratio_formats[number_format]:
+            # 비율 근거: % 표시 서식이면 확정. 서식은 아니지만 항목명이 비율이면 비율로 보되
+            # 저장값 5.0이 5%인지 500%인지 알 수 없으므로 값을 확정하지 않는다(금액 배율도 곱하지 않음).
+            ratio_name_only = (
+                financial
+                and not ratio_formats[number_format]
+                and _ratio_item_name(context["item"].get("name"))
+            )
+            if financial and (ratio_formats[number_format] or ratio_name_only):
                 value_kind, source_unit = "ratio", None
                 if context["role"] != "inactive_template":
                     context["role"] = "ratio"
+            if ratio_name_only:
+                rules.append("RATIO_ITEM_NAME_FORMAT_UNCONFIRMED")
             normalization_locale, format_confirmed = _normalization_locale(
                 cell, source_unit, metadata.get("locale")
             )
@@ -1376,6 +1403,9 @@ def map_workbook(workbook: dict, metadata: dict | None = None) -> dict:
                 normalization["normalized_value"] = None
                 normalization["status"] = "unresolved"
                 rules.append("FORMULA_CACHE_UNAVAILABLE")
+            if ratio_name_only and normalization["status"] == "confirmed":
+                normalization["normalized_value"] = None
+                normalization["status"] = "unresolved"
             reasons = []
             if not financial:
                 reasons.append("재무 값 영역 또는 지표 의미 미확정")
