@@ -172,7 +172,8 @@ def upsert_orgs(con: Conn, pairs) -> None:
 
 
 def versions(con: Conn) -> list[dict]:
-    rows = con.execute("SELECT version, kind, label, year, month, loaded_at, source, row_count, is_latest FROM dim_version ORDER BY year, month, "
+    # 연간 확정 계획(annual-YYYY, month 없음)은 월 단위 기준 시점이 아니라 기준 선택·이전 시점 계산에서 뺀다(조회는 version 으로 가능)
+    rows = con.execute("SELECT version, kind, label, year, month, loaded_at, source, row_count, is_latest FROM dim_version WHERE month IS NOT NULL ORDER BY year, month, "
                        "CASE kind WHEN 'close' THEN 0 WHEN 'provisional' THEN 1 ELSE 2 END, loaded_at").fetchall()
     return [dict(r) for r in rows]
 

@@ -94,7 +94,7 @@ def interpret(con: db.Conn, question: str, *, version: str | None = None) -> Int
     for c, n in orgs:
         by_name.setdefault(n, []).append(c)
     by_code = {c: n for c, n in orgs}
-    vs = sorted((dict(r) for r in con.execute("SELECT version, kind, year, month, is_latest FROM dim_version")), key=lambda v: (v["year"], v["month"]))
+    vs = sorted((dict(r) for r in con.execute("SELECT version, kind, year, month, is_latest FROM dim_version WHERE month IS NOT NULL")), key=lambda v: (v["year"], v["month"]))
     by_ver = {v["version"]: v for v in vs}
 
     # 1) 데이터 입도에 없는 주제
