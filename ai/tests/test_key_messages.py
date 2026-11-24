@@ -163,8 +163,3 @@ def test_env_file_has_priority_and_logs_source_only(tmp_path, monkeypatch, caplo
     assert "key-from-dotenv-file" not in repr(s)
 
 
-def test_pipeline_inputs_missing_gives_helpful_error():
-    from app.config import ConfigError
-    with pytest.raises(ConfigError) as e:
-        get_settings().require_pipeline_inputs()
-    assert "INPUT_DIR" in str(e.value) and "EXPLANATIONS_PATH" in str(e.value) and "APPROVALS_PATH" in str(e.value)

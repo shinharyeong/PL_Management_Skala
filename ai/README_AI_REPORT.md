@@ -17,7 +17,7 @@ AI_PDF_DEV=1 AI_VLM_MODEL=gpt-4o AI_TIMEOUT_SECONDS=120 AI_DAILY_CALL_LIMIT=1000
 - 화면: `ai/demo/ai_report_studio.html`을 브라우저로 열기(서버 주소 기본 `http://127.0.0.1:8000`).
 - `.env` 항목 이름: `OPENAI_API_KEY`(필수), 선택 `AI_VLM_MODEL`, `AI_TIMEOUT_SECONDS`, `AI_DAILY_CALL_LIMIT`.
 - 엔드포인트는 `AI_PDF_DEV=1`일 때만 열립니다(`/v1/dev/...`, 아니면 404).
-- 데이터 묶음 만들기: `app.chat.datasets.build("set17", <폴더>)` → `ai/.cache/chat/sets/`. 데모 상단 "데이터 묶음"에서 전환합니다.
+- 조회 데이터: 백엔드 보고서용 뷰(`AI_DB_SCHEMA=report`). 데이터 묶음·적재기는 #62 에서 삭제했습니다(아래 8차).
 - 테스트: `cd ai && python -m pytest tests -q` (실제 폴더 대조까지: `AI_DATASET_DIR=<데이터 폴더>`).
 
 ## 5단계 흐름
@@ -99,3 +99,9 @@ AI_PDF_DEV=1 AI_VLM_MODEL=gpt-4o AI_TIMEOUT_SECONDS=120 AI_DAILY_CALL_LIMIT=1000
 - **확정(2026-11-24, 가이드 결정 1~4)**: ① Gap 은 백엔드 정의 하나(항목 단위 `ITEM_GAP`). 조직 영업이익 Gap(`OP_GAP`)·이월은 만들지 않는다 → `data_select.gaps()` 의 'Gap 카드'(OP_GAP 기준)는 `ITEM_GAP` 으로 바꿔야 한다(#62 '남기되 고침'). ② version·잠정은 홈과 같은 규칙 + 연간 확정 계획 `annual-YYYY`. ③ 뷰 마이그레이션은 백엔드 A. ④ 백엔드 API 계약은 #61 에서 정한다(`pdf.jobs`, `/v1/nl-query`, `/v1/edit`, 틀 JSON 스키마, 제안 분류 주체).
 - **아직 안 한 것**: #62 삭제(적재기·업로드 파이프라인·데모 화면의 데이터 올리기 API) — 가이드대로 뷰와 틀 API 가 동작을 확인한 뒤. 홈·Gap 화면 숫자와의 실데이터 대조(백엔드 실데이터 필요). 뷰 성능(지금은 일반 뷰라 질문마다 계산한다. 느리면 머티리얼라이즈드 뷰). `status` 는 `ReviewTabs`(+`isAnswered()`: 답이 비어 있지 않음)를 SQL 로 옮긴 것이라 백엔드 규칙이 바뀌면 같이 고쳐야 한다.
 
+
+
+## 8차: 백엔드와 겹치는 파이프라인 정리 (#62 1단계)
+- **삭제:** 업로드 → 파싱 → Gap → 소명 → master 파이프라인(`app/pipeline/`, `services/pipeline_run`·`uploads`·`report_view`), 두 번째 엑셀 파서(`app/generic/`), 적재기·데이터 묶음(`chat/loader*`, `chat/datasets`), 틀 파일 저장소(`report_template/store`, `/v1/templates`, 백엔드 RPT-03~06 으로 대체), 옛 화면(`api/ui`, `web/`), 경로 `/v1/pipeline/*`·`/v1/report/latest`·`/v1/chat/load`·`/v1/dev/report-data/{datasets,dataset,upload}`, 파이프라인 전용 설정.
+- **남김(2단계에서 정리):** 데모 화면(`demo/ai_report_studio.html`)과 데모가 쓰는 `/v1/dev/pdf-structure`·`/v1/dev/report-data/*`. Vue 프론트(`frontend/`)에 보고서 화면을 옮긴 뒤 지운다. `/v1/chat`(그래프 개발 입구), `/v1/report/key-messages`, `report_authoring`(옛 내부 경로, 프론트 #63 정리 때).
+- 위 1~7차 기록의 적재기·데이터 묶음 설명은 당시 기록이다.

@@ -13,7 +13,6 @@ ai/
 │  ├─ api/               라우터 (health.py, report.py)
 │  ├─ schemas/           요청·응답 스키마
 │  ├─ services/          핵심 메시지 서비스(검증·캐시·일일 상한·토큰 로그), LLM 호출(llm.py, LangChain)
-│  └─ pipeline/          배치 파이프라인(파싱→Gap→소명→master→07 자료→사실 목록) — README 참고
 ├─ tests/                pytest (OpenAI 는 모의, 실제 호출 없음)
 ├─ output/               파이프라인 결과 JSON(OUTPUT_DIR), ai_call_log.json
 ├─ .cache/               AI 응답 캐시(AI_CACHE_DIR)
@@ -31,8 +30,6 @@ ai/
 | AI_DAILY_CALL_LIMIT | 30 | 하루 실제 호출 상한. 넘으면 호출 없이 템플릿 문장 |
 | AI_CACHE_DIR | ai/.cache | (모델+프롬프트 버전+사실 목록 해시) 캐시 |
 | OUTPUT_DIR | ai/output | 결과·호출 로그 폴더 |
-| INPUT_DIR, EXPLANATIONS_PATH, APPROVALS_PATH | (비움) | 파이프라인 입력(업로드된 파일 경로). 없으면 설정 안내 오류 |
-| SCENARIO_DIR, SCENARIO_CSV_PATH | (비움) | 파이프라인의 gap_key 해석·시나리오 대조용(검증 데이터) |
 
 우선순위는 **ai/.env → 셸 환경변수 → 기본값**입니다. 상대 경로는 저장소 루트 기준입니다.
 
@@ -59,5 +56,5 @@ cd ai && cp .env.example .env && python3 -m venv .venv && source .venv/bin/activ
 uvicorn app.main:app --reload && python -m pytest -q
 ```
 자연어 질문 챗봇(AI 작업실, `POST /v1/chat`)은 `report.html` 오른쪽 패널에서 씁니다(조회 DB 는 업로드 실행 후 자동 적재). 자세한 내용은 integration.md.
-확인용 흐름 화면(`ai/preview_html/flow.html`, 저장소 제외)은 `POST /v1/pipeline/run` 을 부릅니다. 서버 실행 후 파일을 더블클릭해 여세요(자세한 내용은 integration.md).
+업로드·파싱·Gap·소명·master 는 백엔드가 맡고, AI 는 백엔드 보고서용 뷰를 읽기만 합니다(백엔드와의 계약은 docs/integration.md).
 `ai/.gitignore` 가 `.env`, `.venv/`, `.cache/`, `_backup_before_rename/`, `preview_html/` 을 저장소에서 제외합니다.
