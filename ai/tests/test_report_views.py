@@ -9,7 +9,8 @@ from pathlib import Path
 import psycopg
 import pytest
 
-from app.chat import db, sqlguard
+from tests import db_support as db
+from app.chat import sqlguard
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "backend/src/main/resources/db/migration"
@@ -97,6 +98,17 @@ def _rpt():
 
 
 def test_views_follow_the_home_rules_on_the_real_backend_schema():
+    """변경된 조회·저장 경계의 회귀 동작을 검증한다.
+
+    Args:
+        없음.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
     c = _setup(os.environ.get("AI_DB_SCHEMA", "x") + "_rpt")
     _seed(c)
     s = _rpt()
@@ -123,7 +135,7 @@ def test_views_follow_the_home_rules_on_the_real_backend_schema():
     assert q("SELECT gap_key, gap_id, link_type, status, answer FROM explanation WHERE version='master-2030-05' ORDER BY gap_key") == [
         ("RI-1", "RI-1-PLAN", "GAP", "수락", "수락된 원문입니다"), ("RI-2", "RI-2-PLAN", "GAP", "검토중", None), ("RI-3", "RI-3-PLAN", "GAP", "검토중", None)]
     ai_schema = os.environ["AI_DB_SCHEMA"] + "_ai"
-    db.open_writer(schema_override=ai_schema).close()                           # AI 가 지금 쓰는 표(chat/schema.py)를 따로 만들어 컬럼 이름·순서를 그대로 비교한다
+    db.open_writer(schema_override=ai_schema).close()                           # 테스트 자료용 스키마(db_support.py)와 보고서 뷰의 컬럼 이름·순서를 비교한다
     cols = lambda sc, t: [tuple(r) for r in con.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position", (sc, t)).fetchall()]
     for t in ("fact", "v_op", "gap", "explanation", "dim_version", "dim_org"):
         assert cols(s.chat_schema, t) == cols(ai_schema, t) and cols(ai_schema, t), t

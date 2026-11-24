@@ -16,11 +16,20 @@ def test_backend_schema_matches_ai_model():
         "틀 모델이 바뀌었습니다. python ai/tools/export_template_schema.py 로 백엔드 스키마를 다시 만드세요"
 
 
-def test_demo_saved_template_and_strict_model_fit_the_stored_envelope():
-    """데모 화면이 저장하는 모양(추가 칸·numbercard)과 엄격한 Template 모델 결과가 모두 백엔드 봉투를 통과한다."""
-    from app.report_template.model import StoredTemplate, Template
+def test_demo_saved_template_fits_the_stored_envelope():
+    """현재 데모의 추가 필드와 숫자 카드가 백엔드 저장 봉투를 통과함을 검증한다.
+
+    Args:
+        없음.
+    Returns:
+        없음.
+    Raises:
+        AssertionError: 저장 봉투가 실제 데모 블록을 허용하지 않는 경우.
+        pydantic.ValidationError: 저장 봉투 필수 필드가 잘못된 경우.
+    Side Effects:
+        합성 딕셔너리만 검증하며 파일·DB를 만들지 않는다.
+    """
+    from app.report_template.model import StoredTemplate
     demo = {"schema_version": 1, "name": "월 보고", "order": ["b1", "c1"], "layout": {"c1": {"w": 50}},
             "blocks": [{"id": "b1", "kind": "title", "text": "제목"}, {"id": "c1", "kind": "numbercard", "metric": "영업이익"}]}
     assert StoredTemplate.model_validate(demo).model_dump()["layout"] == {"c1": {"w": 50}}
-    strict = Template(name="월 보고", blocks=[{"id": "t1", "kind": "title", "text": "제목"}]).model_dump()
-    StoredTemplate.model_validate(strict)

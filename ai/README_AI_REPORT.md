@@ -1,4 +1,6 @@
-# AI 보고서 만들기 (ai_report 브랜치)
+# AI 보고서 개발 데모 기록
+
+현재 운영 계약과 저장 경계는 [통합 문서](docs/integration.md)를 따릅니다. 아래 1~8차 내용은 개발 당시 기록입니다. #62 보완으로 ITEM_GAP·gap_key 조회, backend 기본 월, 메모리 캐시·stdout 로그, backend XLSX 내보내기로 전환했습니다. 기존 분류함은 개발용 UI로 남아 있으며 `assign`으로 원인 금액을 배분하지 않습니다. AI의 DDL·DB 쓰기 도우미는 운영 코드에서 제거했습니다. 추가 호출관계 감사로 구 report-authoring API, 행·블록 추측, 미연결 narratives, 구 Template·Mapping 모델도 제거했습니다. 현재 유지되는 기능은 [변경 명세](docs/development/ai-issue-contract.md)의 추가 정리 표를 기준으로 확인하세요.
 
 PDF/PNG/JPG 보고서 한 장을 올리면 구성을 읽어 **보고서 틀**로 만들고, 조회 DB 값으로 채워 편집·내보내기까지 하는 **개발용 데모**입니다.
 이 브랜치는 `ai/` 폴더만 바꿨습니다(다른 폴더는 develop 그대로). 서버 저장 API는 없고, 틀은 브라우저 localStorage에만 저장합니다.
@@ -96,7 +98,7 @@ AI_PDF_DEV=1 AI_VLM_MODEL=gpt-4o AI_TIMEOUT_SECONDS=120 AI_DAILY_CALL_LIMIT=1000
 - **검증**: 백엔드 `ReportViewsIntegrationTest` 가 홈 API(HOME-03)와 같은 숫자인지 대조하고, `tests/test_report_views.py` 가 백엔드 마이그레이션 전부(외래키만 제외)를 올려 손으로 계산한 시나리오와 컬럼 이름·순서(AI 표와 동일), AI 조회·SQL 가드가 뷰를 그대로 읽는지 본다.
 - **전환 방법**: `AI_DATABASE_URL` 을 읽기 전용 계정으로, `AI_DB_SCHEMA=report`. 읽기 전용 계정은 뷰 6개에만 SELECT(예시는 마이그레이션 파일 끝, 계정 생성은 운영 몫). AI 코드는 쓰기 권한이 없어도 동작한다(데이터 묶음 목록은 빈 목록).
 - **AI 쪽 고침**: 스키마 설명·규칙(`chat/schema.py`)을 뷰 기준으로(금액에 소수 가능, 행 없음≠0, gap_type `ITEM_GAP`, 상태 값, version 규칙, team·manager 비어 있음), SQL 프롬프트 `chat-sql-v4`. 화면 상단의 "임시 데모"·데이터 묶음 선택·데이터 올리기를 없앴다(데이터는 백엔드 RDS 한 곳).
-- **확정(2026-11-24, 가이드 결정 1~4)**: ① Gap 은 백엔드 정의 하나(항목 단위 `ITEM_GAP`). 조직 영업이익 Gap(`OP_GAP`)·이월은 만들지 않는다 → `data_select.gaps()` 의 'Gap 카드'(OP_GAP 기준)는 `ITEM_GAP` 으로 바꿔야 한다(#62 '남기되 고침'). ② version·잠정은 홈과 같은 규칙 + 연간 확정 계획 `annual-YYYY`. ③ 뷰 마이그레이션은 백엔드 A. ④ 백엔드 API 계약은 #61 에서 정한다(`pdf.jobs`, `/v1/nl-query`, `/v1/edit`, 틀 JSON 스키마, 제안 분류 주체).
+- **확정(2026-11-24, 가이드 결정 1~4)**: ① Gap 은 백엔드 정의 하나(항목 단위 `ITEM_GAP`). 조직 영업이익 Gap(`OP_GAP`)·이월은 만들지 않는다 → `data_select.gaps()`는 현재 `ITEM_GAP`·`gap_key` 기준으로 전환 완료. ② version·잠정은 홈과 같은 규칙 + 연간 확정 계획 `annual-YYYY`. ③ 뷰 마이그레이션은 백엔드 A. ④ 백엔드 API 계약은 #61 에서 정한다(`pdf.jobs`, `/v1/nl-query`, `/v1/edit`, 틀 JSON 스키마, 제안 분류 주체).
 - **아직 안 한 것**: #62 삭제(적재기·업로드 파이프라인·데모 화면의 데이터 올리기 API) — 가이드대로 뷰와 틀 API 가 동작을 확인한 뒤. 홈·Gap 화면 숫자와의 실데이터 대조(백엔드 실데이터 필요). 뷰 성능(지금은 일반 뷰라 질문마다 계산한다. 느리면 머티리얼라이즈드 뷰). `status` 는 `ReviewTabs`(+`isAnswered()`: 답이 비어 있지 않음)를 SQL 로 옮긴 것이라 백엔드 규칙이 바뀌면 같이 고쳐야 한다.
 
 

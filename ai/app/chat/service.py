@@ -1,4 +1,4 @@
-"""POST /v1/chat 처리 순서: 차단 확인 → 해석 → (후속 질문 규칙) → 되묻기 → SQL 생성(AI, 캐시) → 검사 → 자기 수정 → 읽기 전용 실행 → 설명 문장 → 엑셀.
+"""POST /v1/chat 처리 순서: 차단 확인 → 해석 → (후속 질문 규칙) → 되묻기 → SQL 생성(AI, 캐시) → 검사 → 자기 수정 → 읽기 전용 실행 → 설명 문장 → 근거 응답. 내보내기는 백엔드 RPT-16이 맡는다.
 - 조직이 없으면 전사 합산으로 답한다("전사 기준"). 되묻기는 (a) 누구인지 모르는 지칭 (b) 비교 대상 없음 (c) 같은 이름이 둘 이상일 때만 한다.
 - 대화 기억(CHAT_MEMORY)이 켜져 있으면 짧은 후속 질문은 AI 없이 규칙으로 이전 조건에 덮어쓴다(memory.py: 서버 메모리에만, 질문 원문·결과 값은 저장하지 않음).
 - AI 를 못 쓰면(키 없음·상한 초과·실패) 예시 질문의 고정 SQL 로 대신 답한다. steps 에는 실제로 거친 단계만 기록한다."""
@@ -6,17 +6,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
+from decimal import Decimal
+import logging
 import time
-import uuid
 from datetime import datetime
-from pathlib import Path
 
 from ..config import Settings, get_settings
 from ..services.call_log import CallLog
-from . import db, excel_out, followup, interpret, memory, nl2sql, quick, sqlguard
+from ..services.numeric import amount_precision, exact_json_value
+from . import db, interpret, memory, nl2sql, quick
 
-FILE_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 BLOCK_TEXT = {"write": "조회만 가능합니다. 데이터를 지우거나 바꾸는 요청은 처리하지 않아요. 조회하고 싶은 내용을 알려 주세요.",
               "sql": "조회만 가능합니다. 데이터를 바꾸거나 지우는 SQL 은 실행하지 않았어요(SELECT 조회만 허용). 조회하고 싶은 내용을 알려 주세요."}
 
@@ -29,8 +28,19 @@ class Steps:
         self.items.append({"step": name, "status": status, "detail": detail, "ms": round((time.perf_counter() - t0) * 1000) if t0 else None, **extra})
 
 
-def _jsonable(v):
-    return v if isinstance(v, (int, float, str, type(None))) else str(v)
+def _jsonable(v: object) -> object:
+    """질의 미리보기 값을 JSON에 안전한 숫자·문자열로 바꾼다.
+
+    Args:
+        v: DB 결과 셀 값.
+    Returns:
+        소수·큰 정수는 정확한 문자열, 나머지 값은 JSON 호환 값.
+    Raises:
+        없음.
+    Side Effects:
+        없음. 입력이나 저장소를 변경하지 않는다.
+    """
+    return exact_json_value(v) if isinstance(v, (int, float, Decimal, str, type(None))) else str(v)
 
 
 def _stamp(con) -> str:
@@ -115,17 +125,42 @@ def _conditions(it, base: dict | None = None) -> dict:
 
 
 def _test_log(s: Settings, entry: dict) -> None:
-    """CHAT_TEST_LOG=1 일 때만 질문마다 한 줄을 남긴다. 질문 원문·키·결과 값은 남기지 않는다."""
-    if not s.chat_test_log:
-        return
-    p = s.ai_cache_dir / "chat" / "test_log.jsonl"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    """선택된 질의 사용량 지표를 표준 로그로 보낸다.
+
+    Args:
+        s: CHAT_TEST_LOG 활성 여부를 가진 설정.
+        entry: 질문 원문·키·결과 값을 포함하지 않는 호출 지표.
+    Returns:
+        없음.
+    Raises:
+        없음.
+    Side Effects:
+        활성화된 경우 logging 이벤트를 내보낸다. 파일을 생성하지 않는다.
+    """
+    if s.chat_test_log:
+        logging.getLogger("ai.chat.metrics").info("chat_metrics %s", json.dumps(entry, ensure_ascii=False))
 
 
+@amount_precision()
 def run_chat(question: str, *, version: str | None = None, quick_id: str | None = None, conversation_id: str | None = None, settings: Settings | None = None,
-             excel: bool = True) -> dict:
+             excel: bool = False) -> dict:
+    """자연어 질의를 읽기 전용 그래프로 처리한다.
+
+    Args:
+        question: 사용자 질문.
+        version: 조회 기준 버전. 없으면 보고서용 뷰의 기본 버전.
+        quick_id: 고정 예시 질의 식별자.
+        conversation_id: 메모리 대화 문맥 식별자.
+        settings: 요청별 설정. 없으면 공통 설정.
+        excel: 이전 호출부 호환용 인자. 값과 무관하게 파일을 만들지 않는다.
+    Returns:
+        조회 결과·설명·근거·비용 지표. file은 항상 None.
+    Raises:
+        RuntimeError: 내부 그래프 실행 실패.
+    Side Effects:
+        읽기 전용 DB 조회와 설정된 모델 호출을 수행한다. 대화 문맥·응답 캐시만
+        메모리에 보존하고 파일은 저장하지 않는다. 내보내기는 backend RPT-16을 사용한다.
+    """
     s = settings or get_settings()
     steps, budget = Steps(), nl2sql.Budget()
     t_all = time.perf_counter()
@@ -151,7 +186,7 @@ def run_chat(question: str, *, version: str | None = None, quick_id: str | None 
     from .graph import GRAPH
     final: dict = {}
     try:
-        final = GRAPH.invoke({"question": question, "version": version, "quick_id": quick_id, "conversation_id": conversation_id, "make_excel": excel,
+        final = GRAPH.invoke({"question": question, "version": version, "quick_id": quick_id, "conversation_id": conversation_id,
                               "settings": s, "steps": steps, "budget": budget, "flags": state, "resp": None},
                              config={"recursion_limit": 25 + 3 * (s.chat_max_fix + 1)})
     finally:
@@ -168,20 +203,6 @@ def reset_memory(conversation_id: str | None) -> None:
 def clear_conditions(conversation_id: str | None, keys: list[str]) -> dict:
     st = memory.clear_keys(conversation_id, keys)
     return {"chips": memory.chips(st, None), "on": get_settings().chat_memory}
-
-
-def get_file(file_id: str, s: Settings | None = None) -> tuple[Path, str] | None:
-    if not FILE_ID_RE.match(file_id or ""):
-        return None
-    s = s or get_settings()
-    p = db.files_dir(s) / f"{file_id}.xlsx"
-    if not p.exists():
-        return None
-    try:
-        name = json.loads((db.files_dir(s) / f"{file_id}.json").read_text(encoding="utf-8"))["name"]
-    except (OSError, ValueError, KeyError):
-        name = f"chat_{file_id}.xlsx"
-    return p, name
 
 
 # ------------------------------------------------------------------ backend 계약(/v1/nl-query, 명세 12절·RPT-11)

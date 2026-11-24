@@ -12,7 +12,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import re
 
 from ..config import get_settings
 from ..services import llm

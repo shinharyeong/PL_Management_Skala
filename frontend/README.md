@@ -2,6 +2,10 @@
 
 Vue 3 · Vite · Vue Router · Pinia 기반의 실제 API 연결 화면입니다. `/`와 `/prototype.html` 모두 동일한 연결본을 엽니다. 원래 데모 구성은 `src/prototype/HomePanel.vue`, `ManagementPanels.vue`, `OrgPanel.vue`, `store.js`에 남아 있습니다.
 
+`src/main.js`도 같은 연결본을 사용합니다. 과거 `src/App.vue`·`src/router/`·`src/views/`는
+별도 지원 앱이 아니며 현재 진입점에서 실행하지 않습니다. 과거 컴포넌트를 연결하기 전에는
+[현재 API 계약과 함수 명세](../docs/development/frontend-issue-contract.md)를 확인하세요.
+
 ## 실행
 
 ```bash

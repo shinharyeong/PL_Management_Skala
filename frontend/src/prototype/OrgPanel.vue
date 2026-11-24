@@ -61,12 +61,16 @@ function removeFile() {
   if (fileInput.value) fileInput.value.value = ''
   uploadMessage.value = '선택한 파일을 제거했습니다.'
 }
+/** 비활성 데모의 파일 선택도 현재 제출 형식·크기 안내와 맞춘다.
+ * Args: files 선택 파일 목록. Returns: 없음. Raises: 없음(화면 안내).
+ * Side Effects: 메모리 선택·안내 갱신. 파일 업로드·변환은 하지 않는다.
+ */
 function selectFiles(files) {
   uploadMessage.value = ''
   if (!files?.length) return
   file.value = null
   if (files.length !== 1) { uploadMessage.value = '요청당 엑셀 파일 1개를 선택해 주세요.'; return }
-  if (!/\.xlsx$/i.test(files[0].name)) { uploadMessage.value = '.xlsx 파일을 선택해 주세요.'; return }
+  if (!/\.(xlsx|xlsb)$/i.test(files[0].name)) { uploadMessage.value = '.xlsx 또는 .xlsb 파일을 선택해 주세요.'; return }
   if (files[0].size === 0) { uploadMessage.value = '빈 파일은 선택할 수 없습니다. 파일 내용을 확인해 주세요.'; return }
   if (files[0].size > 20 * 1024 * 1024) { uploadMessage.value = '20MB 이하의 엑셀 파일을 선택해 주세요.'; return }
   file.value = files[0]
@@ -155,8 +159,8 @@ function date(value) {
         <div class="org-template"><div><strong>제출 양식</strong><p class="muted">{{ activeRequest?.type === 'annual' ? 'D100_2027_연간계획.xlsx' : 'D100_2026-11.xlsx' }}</p></div><button class="btn" disabled title="양식 다운로드는 서버 연결 후 제공됩니다.">양식 다운로드</button></div>
         <div class="org-dropzone" :class="{ dragging: dragOver }" @dragover.prevent="dragOver = true" @dragleave.prevent="dragOver = false" @drop.prevent="dropFile">
           <strong>{{ file ? file.name : '엑셀 파일을 여기에 끌어다 놓으세요' }}</strong>
-          <span class="muted">.xlsx · 요청당 파일 1개 · 최대 20MB</span>
-          <input ref="fileInput" class="org-file-input" type="file" accept=".xlsx" aria-label="제출할 엑셀 파일" @change="chooseFile" />
+          <span class="muted">.xlsx / .xlsb · 요청당 파일 1개 · 최대 20MB</span>
+          <input ref="fileInput" class="org-file-input" type="file" accept=".xlsx,.xlsb" aria-label="제출할 엑셀 파일" @change="chooseFile" />
           <div class="actions"><button class="btn" @click="fileInput?.click()">{{ file ? '파일 다시 선택' : '파일 선택' }}</button><button v-if="file" class="btn danger" @click="removeFile">선택한 파일 제거</button></div>
         </div>
         <p class="org-upload-notice muted">선택한 파일은 서버에 업로드되지 않습니다. 실제 검증에는 파서 연결이 필요합니다.</p>

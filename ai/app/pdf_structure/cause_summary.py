@@ -8,10 +8,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import time
 
 from ..config import get_settings
-from ..services import llm
+from ..services import llm, response_cache
 from ..services.call_log import CallLog
 
 PROMPT_VERSION = "cause-summary-v1"
@@ -40,6 +39,17 @@ def valid(orig: str, short: str) -> tuple[bool, str]:
 
 
 def summarize(texts: list[str]) -> dict:
+    """수락된 긴 원인 문장을 원문 검증을 거쳐 짧게 표시한다.
+
+    Args:
+        texts: 요약할 원문 목록.
+    Returns:
+        원문·검증된 요약·사용량·상태.
+    Raises:
+        없음. 모델 실패는 상태와 원문 유지로 반환한다.
+    Side Effects:
+        필요하면 LLM을 호출하고 메모리 캐시·stdout 사용량 지표를 갱신한다. 파일은 쓰지 않는다.
+    """
     s = get_settings()
     uniq = list(dict.fromkeys(t.strip() for t in texts if isinstance(t, str) and len(t.strip()) > MAX_LEN))[:MAX_ITEMS]
     res = {"items": [], "usage": {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cached": False}, "status": {"ok": True, "message": ""}}
@@ -47,17 +57,11 @@ def summarize(texts: list[str]) -> dict:
         res["status"]["message"] = "줄일 만큼 긴 원인이 없습니다."
         return res
     key = hashlib.sha256((f"{s.openai_model}|{PROMPT_VERSION}|" + json.dumps(uniq, ensure_ascii=False)).encode("utf-8")).hexdigest()
-    cdir = (s.output_dir / "cache" / "cause_summary") if getattr(s, "output_dir", None) else None
-    cp = cdir / f"{key}.json" if cdir else None
+    cache_key = (str(s.output_dir), "cause_summary", key)
     log = CallLog(s.log_dir or s.output_dir)
     meta = {"task": "cause_summary", "status": "-", "model": s.openai_model, "prompt_version": PROMPT_VERSION, "facts_hash": key[:12]}
-    raw = None
-    try:
-        if cp and cp.exists():
-            raw = json.loads(cp.read_text(encoding="utf-8"))
-            res["usage"]["cached"] = True
-    except (OSError, ValueError):
-        raw = None
+    raw = response_cache.get(cache_key)
+    res["usage"]["cached"] = raw is not None
     if raw is None:
         if not s.key_present:
             res["status"] = {"ok": False, "message": "키 없음 — 원문을 그대로 둡니다."}
@@ -69,10 +73,9 @@ def summarize(texts: list[str]) -> dict:
                 out, tin, tout = reply.data, reply.input_tokens, reply.output_tokens
                 raw = out.get("summaries") if isinstance(out, dict) else None
                 res["usage"].update({"calls": 1, "input_tokens": tin, "output_tokens": tout})
-                log.append({**meta, "outcome": "ok", "input_tokens": tin, "output_tokens": tout})
-                if isinstance(raw, list) and len(raw) == len(uniq) and cp:
-                    cdir.mkdir(parents=True, exist_ok=True)
-                    cp.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+                log.append({**meta, "outcome": "success", "input_tokens": tin, "output_tokens": tout})
+                if isinstance(raw, list) and len(raw) == len(uniq):
+                    response_cache.put(cache_key, raw)
             except Exception as e:  # noqa: BLE001 — 어떤 오류든 원문을 그대로 둔다
                 log.append({**meta, "outcome": "error", "input_tokens": 0, "output_tokens": 0})
                 res["status"] = {"ok": False, "message": f"AI 호출 실패({type(e).__name__}) — 원문을 그대로 둡니다."}

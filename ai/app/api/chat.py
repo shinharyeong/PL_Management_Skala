@@ -1,11 +1,9 @@
 """챗봇(AI 작업실) API — 초안(백엔드와 합의 전).
 
-POST /v1/chat            질문 → 해석·(되묻기)·SQL 생성(AI)·검사·읽기 전용 조회·설명 문장·엑셀
-GET  /v1/chat/files/{id} 만든 엑셀 내려받기
+POST /v1/chat            질문 → 해석·(되묻기)·SQL 생성(AI)·검사·읽기 전용 조회·설명 문장·근거
 GET  /v1/chat/status     DB 범위(버전·조직·월)와 오늘 남은 AI 호출 수
 """
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -44,14 +42,5 @@ def chat_memory(req: MemoryRequest):
 @router.get("/status")
 def chat_status():
     return service.status()
-
-
-@router.get("/files/{file_id}")
-def chat_file(file_id: str):
-    r = service.get_file(file_id)
-    if r is None:
-        raise HTTPException(status_code=404, detail="파일이 없습니다.")
-    path, name = r
-    return FileResponse(path, filename=name, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 

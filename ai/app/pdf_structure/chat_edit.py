@@ -15,7 +15,7 @@ import re
 import time
 
 from ..config import get_settings
-from ..services import llm
+from ..services import llm, response_cache
 from ..services.call_log import CallLog
 from . import data_select as D
 
@@ -75,24 +75,29 @@ def _norm(t: str) -> str:
     return re.sub(r"\s+", " ", t.strip().lower())
 
 
-def _cache_path(s, key: str):
-    return s.ai_cache_dir / "report_edit" / f"{key}.json"
-
-
 def _call_ai(s, request: str, context: dict) -> tuple[dict, dict]:
-    """(AI 출력, 사용량). 캐시 → 키·한도 확인 → OpenAI 1회(재시도 없음)."""
+    """보고 편집 의도를 메모리 캐시 또는 단일 LLM 호출로 구한다.
+
+    Args:
+        s: 모델·한도 설정.
+        request: 사용자 편집 요청.
+        context: 실제 보고서 블록·지표·조직 문맥.
+    Returns:
+        의도 JSON과 호출 사용량.
+    Raises:
+        AiUnavailable: 키·한도·모델 호출 문제.
+    Side Effects:
+        선택적 LLM 호출·메모리 캐시·stdout 사용량 지표를 갱신한다. 파일은 쓰지 않는다.
+    """
     user = json.dumps({"request": request, "context": context}, ensure_ascii=False)
     key = hashlib.sha256(f"{s.openai_model}|{PROMPT_VERSION}|{_norm(request)}|{json.dumps(context, ensure_ascii=False, sort_keys=True)}".encode("utf-8")).hexdigest()
-    cp = _cache_path(s, key)
+    cache_key = (str(s.ai_cache_dir), "report_edit", key)
     log = CallLog(s.log_dir or s.output_dir)
     meta = {"task": "report_edit", "status": "-", "model": s.openai_model, "prompt_version": PROMPT_VERSION, "facts_hash": key[:12]}
-    try:
-        if cp.exists():
-            out = json.loads(cp.read_text(encoding="utf-8"))
-            log.append({**meta, "outcome": "cache_hit", "input_tokens": 0, "output_tokens": 0})
-            return out, {"calls": 0, "input_tokens": 0, "output_tokens": 0, "seconds": 0.0, "cached": True}
-    except (OSError, ValueError):
-        pass
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        log.append({**meta, "outcome": "cache_hit", "input_tokens": 0, "output_tokens": 0})
+        return cached, {"calls": 0, "input_tokens": 0, "output_tokens": 0, "seconds": 0.0, "cached": True}
     if not s.key_present:
         log.append({**meta, "outcome": "skipped_no_key", "input_tokens": 0, "output_tokens": 0})
         raise AiUnavailable("NO_API_KEY", "키 없음 — ai/.env 에 OPENAI_API_KEY 를 넣고 서버를 재시작하세요.")
@@ -115,11 +120,7 @@ def _call_ai(s, request: str, context: dict) -> tuple[dict, dict]:
         raise AiUnavailable("CALL_FAILED", f"AI 호출 실패({kind}).") from e
     dt = time.perf_counter() - t0
     log.append({**meta, "outcome": "success", "input_tokens": tin, "output_tokens": tout})
-    try:
-        cp.parent.mkdir(parents=True, exist_ok=True)
-        cp.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
-    except OSError:
-        pass
+    response_cache.put(cache_key, out)
     return out, {"calls": 1, "input_tokens": tin, "output_tokens": tout, "seconds": round(dt, 2), "cached": False}
 
 
