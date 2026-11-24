@@ -160,11 +160,9 @@ def _scan_sheet(archive: ZipFile, part: str, strings: list[str]) -> dict[str, An
         "content_count": 0,
         "default_hidden": False,
     }
-    row_attributes: dict[str, str] = {}
     with archive.open(part) as stream:
         for event, element in ET.iterparse(stream, events=("start", "end")):
             if event == "start" and element.tag == f"{_NS}row":
-                row_attributes = dict(element.attrib)
                 result["rows"].append(dict(element.attrib))
             elif event == "start" and element.tag == f"{_NS}sheetFormatPr":
                 result["default_hidden"] = element.get("zeroHeight") in {"1", "true"}
@@ -175,22 +173,8 @@ def _scan_sheet(archive: ZipFile, part: str, strings: list[str]) -> dict[str, An
             elif event == "end" and element.tag == f"{_NS}c":
                 address = element.attrib["r"]
                 result["addresses"].add(address)
+                # c@s가 없으면 OOXML 기본값 0(_decode_cell). 행·열 서식으로 대체하지 않는다.
                 decoded = _decode_cell(element, strings)
-                if "s" not in element.attrib:
-                    column = 0
-                    for character in re.match(r"[A-Z]+", address).group():
-                        column = column * 26 + ord(character) - 64
-                    column_attributes = next(
-                        (
-                            entry
-                            for entry in result["columns"]
-                            if int(entry["min"]) <= column <= int(entry["max"])
-                        ),
-                        {},
-                    )
-                    decoded["style_id"] = row_attributes.get(
-                        "s", column_attributes.get("style", "0")
-                    )
                 if decoded["has_payload"]:
                     result["cells"][address] = decoded
                 result["formula_count"] += decoded["has_formula"]
