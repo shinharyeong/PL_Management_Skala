@@ -15,7 +15,7 @@ import re
 import time
 
 from ..config import get_settings
-from ..services import openai_client
+from ..services import llm
 from ..services.call_log import CallLog
 from . import data_select as D
 
@@ -101,13 +101,10 @@ def _call_ai(s, request: str, context: dict) -> tuple[dict, dict]:
         raise AiUnavailable("DAILY_LIMIT", f"오늘 AI 호출 한도({s.ai_daily_call_limit}회)에 도달했습니다.")
     t0 = time.perf_counter()
     try:
-        client = openai_client.make_client(s)
-        resp = client.chat.completions.create(model=s.openai_model, temperature=0, max_tokens=700, response_format={"type": "json_object"},
-                                              messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}])
-        out = json.loads(resp.choices[0].message.content)
+        reply = llm.ask_json(s, SYSTEM, user, max_tokens=700, temperature=0)
+        out, tin, tout = reply.data, reply.input_tokens, reply.output_tokens
         if not isinstance(out, dict):
             raise ValueError("JSON object expected")
-        tin, tout = int(getattr(resp.usage, "prompt_tokens", 0) or 0), int(getattr(resp.usage, "completion_tokens", 0) or 0)
     except Exception as e:  # noqa: BLE001 — 오류 종류만 기록(키·응답 원문 없음)
         kind = type(e).__name__ + (f" HTTP {e.status_code}" if getattr(e, "status_code", None) else "")
         log.append({**meta, "outcome": "error", "input_tokens": 0, "output_tokens": 0, "error": kind})

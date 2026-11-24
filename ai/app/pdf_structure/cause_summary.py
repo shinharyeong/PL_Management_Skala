@@ -11,7 +11,7 @@ import re
 import time
 
 from ..config import get_settings
-from ..services import openai_client
+from ..services import llm
 from ..services.call_log import CallLog
 
 PROMPT_VERSION = "cause-summary-v1"
@@ -65,12 +65,9 @@ def summarize(texts: list[str]) -> dict:
             res["status"] = {"ok": False, "message": f"오늘 AI 호출 한도({s.ai_daily_call_limit}회)에 도달해 원문을 그대로 둡니다."}
         else:
             try:
-                client = openai_client.make_client(s)
-                resp = client.chat.completions.create(model=s.openai_model, temperature=0, max_tokens=1500, response_format={"type": "json_object"},
-                                                      messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps({"texts": uniq}, ensure_ascii=False)}])
-                out = json.loads(resp.choices[0].message.content)
+                reply = llm.ask_json(s, SYSTEM, json.dumps({"texts": uniq}, ensure_ascii=False), max_tokens=1500, temperature=0)
+                out, tin, tout = reply.data, reply.input_tokens, reply.output_tokens
                 raw = out.get("summaries") if isinstance(out, dict) else None
-                tin, tout = int(getattr(resp.usage, "prompt_tokens", 0) or 0), int(getattr(resp.usage, "completion_tokens", 0) or 0)
                 res["usage"].update({"calls": 1, "input_tokens": tin, "output_tokens": tout})
                 log.append({**meta, "outcome": "ok", "input_tokens": tin, "output_tokens": tout})
                 if isinstance(raw, list) and len(raw) == len(uniq) and cp:

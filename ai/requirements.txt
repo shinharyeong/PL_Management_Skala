@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 openai
+langchain-core>=0.3  # LLM 호출 인터페이스(app/services/llm.py), LangGraph 노드가 같은 모델을 씀
 python-dotenv
 pytest
 httpx  # 테스트(FastAPI TestClient)에 필요

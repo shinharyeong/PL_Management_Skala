@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 from ..config import Settings, get_settings, log_key_source
-from . import openai_client
+from . import llm
 from .call_log import CallLog
 
 logger = logging.getLogger("ai.key_messages")
@@ -96,17 +96,14 @@ def _read_cache(path: Path):
 
 
 def _call_openai(settings: Settings, facts: list[dict], system_prompt: str | None = None):
-    client = openai_client.make_client(settings)
-    resp = client.chat.completions.create(
-        model=settings.openai_model, temperature=settings.ai_temperature, max_tokens=settings.ai_max_output_tokens,
-        response_format={"type": "json_object"},  # 추론(reasoning) 설정은 보내지 않는다
-        messages=[{"role": "system", "content": system_prompt or SYSTEM_PROMPT},
-                  {"role": "user", "content": json.dumps({"facts": [{"id": f["id"], "kind": f["kind"], "text": f["text"]} for f in facts]}, ensure_ascii=False)}])
-    sentences = json.loads(resp.choices[0].message.content)["sentences"]
+    # 추론(reasoning) 설정은 보내지 않는다
+    reply = llm.ask_json(settings, system_prompt or SYSTEM_PROMPT,
+                         json.dumps({"facts": [{"id": f["id"], "kind": f["kind"], "text": f["text"]} for f in facts]}, ensure_ascii=False),
+                         max_tokens=settings.ai_max_output_tokens)
+    sentences = reply.data["sentences"]
     if not isinstance(sentences, list):
         raise ValueError("sentences is not a list")
-    usage = {"input_tokens": int(getattr(resp.usage, "prompt_tokens", 0) or 0), "output_tokens": int(getattr(resp.usage, "completion_tokens", 0) or 0)}
-    return sentences, usage
+    return sentences, {"input_tokens": reply.input_tokens, "output_tokens": reply.output_tokens}
 
 
 def generate(facts: list[dict], status: str, *, templates: list[dict] | None = None, force: bool = False, allow_call: bool = True,
