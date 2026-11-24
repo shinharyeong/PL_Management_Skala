@@ -110,8 +110,8 @@ public class VersionComparisonService {
             throw new BusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_COMPARISON_SELECTION",
                     "같은 조직의 다른 버전을 골라 주세요.");
         }
-        Map<Key, Aggregate> baseValues = ChangeDetector.aggregate(financialValueRepository.findAllWithLineBySubmissionId(base.getId()));
-        Map<Key, Aggregate> targetValues = ChangeDetector.aggregate(financialValueRepository.findAllWithLineBySubmissionId(target.getId()));
+        Map<Key, Aggregate> baseValues = ChangeDetector.aggregate(financialValueRepository.findRequestYearValuesBySubmissionId(base.getId()));
+        Map<Key, Aggregate> targetValues = ChangeDetector.aggregate(financialValueRepository.findRequestYearValuesBySubmissionId(target.getId()));
         if (baseValues.isEmpty() || targetValues.isEmpty()) {
             throw new BusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "COMPARISON_SOURCE_UNAVAILABLE",
                     "비교할 데이터가 없습니다.");

@@ -72,11 +72,11 @@ public class ReviewComparison {
         Submission approved = approvedBaseline.submission();
         BaselineKind kind = previous != null ? BaselineKind.REJECTED : approvedBaseline.kind();
 
-        List<FinancialValue> currentCells = financialValueRepository.findAllWithLineBySubmissionId(submission.getId());
+        List<FinancialValue> currentCells = financialValueRepository.findRequestYearValuesBySubmissionId(submission.getId());
         List<FinancialValue> baselineCells = approved == null ? List.of()
-                : financialValueRepository.findAllWithLineBySubmissionId(approved.getId());
+                : financialValueRepository.findRequestYearValuesBySubmissionId(approved.getId());
         List<FinancialValue> previousCells = previous == null ? List.of()
-                : financialValueRepository.findAllWithLineBySubmissionId(previous.getId());
+                : financialValueRepository.findRequestYearValuesBySubmissionId(previous.getId());
         return new View(submission, request, kind, approved, previous, ChangeDetector.aggregate(currentCells),
                 ChangeDetector.aggregate(baselineCells), ChangeDetector.aggregate(previousCells), currentCells,
                 baselineCells, previousCells);
