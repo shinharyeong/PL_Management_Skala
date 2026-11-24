@@ -7,15 +7,13 @@
 from __future__ import annotations
 
 import argparse
-import io
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PIL import Image, ImageDraw  # noqa: E402
-
 from app.pdf_structure import extract_structure  # noqa: E402
+from app.pdf_structure.box_draw import draw_boxes  # noqa: E402
 
 
 def render(pdf_path: Path, out_dir: Path, use_ai: bool = False) -> list[Path]:
@@ -24,18 +22,9 @@ def render(pdf_path: Path, out_dir: Path, use_ai: bool = False) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = []
     for p, png in zip(r["pages"], r["_images"]):
-        im = Image.open(io.BytesIO(png)).convert("RGB")
-        k = im.width / p["width"]
-        d = ImageDraw.Draw(im, "RGBA")
-        for n, b in enumerate([b for b in r["blocks"] if b["page"] == p["page"]], 1):
-            x0, y0, x1, y1 = [v * k for v in b["bbox"]]
-            warn = bool(b["needs_review"])
-            col = (214, 150, 0, 255) if warn else (47, 91, 216, 255)
-            d.rectangle([x0, y0, x1, y1], outline=col, width=2, fill=(255, 214, 0, 40) if warn else (47, 91, 216, 14))
-            d.rectangle([x0, y0 - 13, x0 + 8 + 7 * len(str(n)), y0], fill=col)
-            d.text((x0 + 3, y0 - 12), str(n), fill=(255, 255, 255, 255))
+        data = draw_boxes(png, p["width"], [b for b in r["blocks"] if b["page"] == p["page"]])
         path = out_dir / f"{pdf_path.stem}_p{p['page']}{'_vlm' if use_ai else '_rules'}.png"
-        im.save(path)
+        path.write_bytes(data)
         paths.append(path)
     kinds = {}
     for b in r["blocks"]:

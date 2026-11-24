@@ -15,13 +15,16 @@ from . import extract as X
 from . import table_header as TH
 
 VLM_KINDS = ("title", "paragraph", "table", "list", "footnote", "chart", "numbercard")
-PROMPT_VERSION = "pdf-vlm-v5"
+PROMPT_VERSION = "pdf-vlm-v6"
 MAX_LINES_PER_PAGE = 200                                            # 이보다 줄이 많은 쪽은 줄 목록을 보내지 않는다(입력 토큰 폭증 방지)
 MEANINGS = ("base_month", "yoy", "vs_estimate", "vs_plan", "vs_prev_month", "trend_n", "other")
 
 SYSTEM = """당신은 보고서 그림(페이지 한 장)의 구성을 읽는 도우미다. 페이지 그림과, 있으면 코드가 뽑은 "줄 목록"을 받는다. 금액·비율 같은 숫자는 검게 가려져 있다(줄 목록에서는 {수치}).
-줄 목록의 각 줄: id, text(글자), cells(간격이 큰 덩어리 수), size(글자 크기), bold, x(왼쪽 위치), x1(오른쪽 끝), top(위쪽 위치).
+줄 목록의 각 줄: id, text(글자), cells(간격이 큰 덩어리 수), size(글자 크기), bold, x(왼쪽 위치), x1(오른쪽 끝), top(위쪽 위치), cuts(있으면: 자를 위치 후보).
 같은 높이에 있는 줄들이 서로 다른 칸(x 위치가 다름)이면 서로 다른 블록일 수 있다. 줄 id 로만 묶는다.
+cuts 의 각 후보: n(후보 번호), l(후보 왼쪽 글자 앞부분), r(오른쪽 글자 앞부분), v=1(위아래 여러 줄에서 같은 자리에 이어진 후보: 경계일 가능성이 크다는 단서일 뿐 자동으로 자르지 않는다).
+한 줄에 서로 다른 구역(나란한 칸·카드·제목)의 글자가 섞여 있을 때만 최상위 splits=[{"line":"L7","cuts":[1]}] 로 그 줄을 자른다. 자른 줄은 조각 L7a, L7b(왼쪽부터)가 되고, blocks 의 lines 에는 조각 이름을 쓴다(자르지 않은 줄은 숫자 id 그대로).
+표의 열 간격도 후보로 나오지만 표 한 줄은 자르지 않는다. 의미를 보고 정한다. 후보 번호가 없는 줄은 자를 수 없다.
 그림 속 내용을 위에서 아래(왼쪽에서 오른쪽) 순서의 블록으로 나눠 JSON 으로 돌려준다. 종류(kind):
  title(제목·소제목), paragraph(문장), table(표), list(번호·불릿·계층 목록), footnote(※·*·1) 2) 각주), chart(그래프: 막대·선·도넛·워터폴), numbercard(큰 숫자 한 개와 이름이 있는 카드).
 공통: lines=이 블록이 차지하는 줄 id 목록(읽는 순서, id 숫자만), uncertain(true/false: 종류나 경계가 애매하면 true), uncertain_reason(짧게).
@@ -38,7 +41,7 @@ SYSTEM = """당신은 보고서 그림(페이지 한 장)의 구성을 읽는 �
 - chart: chart_type(bar|line|donut|waterfall|other), title(있으면), categories(축 글자 목록), series(범례 글자 목록). 값은 적지 않는다. 축 글자·제목 줄이 줄 목록에 있으면 그 id 를 lines 에 넣는다.
 - numbercard: cards=[{"label":"카드 이름","unit":"단위 글자(억원 등)","delta_label":"전년比 같은 보조 글자 또는 null"}]. 숫자는 적지 않는다. 카드 이름 줄이 줄 목록에 있으면 그 id 를 lines 에 넣는다.
 글자 속 금액·비율·건수 같은 숫자는 적지 말고 그 자리에 {수치} 라고 쓴다. 날짜(연·월·차)는 그대로 쓴다. 장식·로고·페이지 번호는 블록으로 만들지 않는다.
-JSON 하나만: {"blocks":[{"kind":"title","lines":[0],"text":"...","level":1},...],"ignored_lines":[]}"""
+JSON 하나만: {"blocks":[{"kind":"title","lines":[0],"text":"...","level":1},...],"splits":[],"ignored_lines":[]}"""
 
 
 def _norm(t: str) -> str:
@@ -223,13 +226,14 @@ def _best_rule_box(b: dict, rule_blocks: list[dict] | None) -> list | None:
     return list(best["bbox"]) if best is not None and bj >= 0.3 else None
 
 
-def fill_missing_lines(missing: dict[int, list[int]], page_lines: dict[int, list], rule_blocks: list[dict]) -> list[dict]:
+def fill_missing_lines(missing: dict[int, list], page_lines: dict[int, list], rule_blocks: list[dict], pieces: dict[int, dict] | None = None) -> list[dict]:
     """VLM 이 어느 블록에도 넣지 않은 줄을 코드 규칙 블록으로 채우고 노란 표시(vlm_missed)를 붙인다.
     규칙 블록의 줄이 전부 빠진 줄이면 그 블록을, 규칙 블록과 맞지 않는 줄은 이어진 것끼리 문장 블록으로 만든다."""
     added: list[dict] = []
     for pg, ids in missing.items():
         left = set(ids)
         lines = {l.lid: l for l in page_lines.get(pg, [])}
+        lines.update((pieces or {}).get(pg) or {})                    # 쪼갠 조각(이름 '7a')도 줄처럼 찾는다
         for r in rule_blocks:
             if r["page"] != pg or not r.get("line_ids") or not set(r["line_ids"]) <= left:
                 continue
@@ -239,8 +243,8 @@ def fill_missing_lines(missing: dict[int, list[int]], page_lines: dict[int, list
             added.append(nb)
             left -= set(r["line_ids"])
         run: list[int] = []
-        for i in sorted(left) + [None]:                                # 이어진 줄 번호끼리 한 문장 블록
-            if i is not None and (not run or i == run[-1] + 1):
+        for i in sorted(left, key=_key) + [None]:                      # 이어진 줄 번호끼리 한 문장 블록(조각은 따로)
+            if i is not None and isinstance(i, int) and (not run or (isinstance(run[-1], int) and i == run[-1] + 1)):
                 run.append(i)
                 continue
             if run:
@@ -375,6 +379,66 @@ def _vlm_bbox(g: dict, W: float, H: float) -> list[float] | None:
     return None
 
 
+_LN = re.compile(r"^L?(\d+)([a-z]?)$")
+
+
+def _lid(name) -> int:
+    return name if isinstance(name, int) else int(name[:-1])
+
+
+def _key(name) -> tuple:
+    return (name, "") if isinstance(name, int) else (int(name[:-1]), name[-1])
+
+
+def _parse_name(v):
+    """int / 'L7' / '7' / 'L7a' → (줄 번호, 조각 글자). 알아볼 수 없으면 None."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v, ""
+    m = _LN.match(v.strip()) if isinstance(v, str) else None
+    return (int(m.group(1)), m.group(2)) if m else None
+
+
+def _make_pieces(splits, by_id: dict) -> tuple[dict, list]:
+    """AI 의 splits 를 검사해 조각을 만든다. 없는 줄·없는 후보 번호는 버리고 invalid 로 알린다. 반환: ({줄번호: [조각]}, 잘못된 요청의 줄 번호 목록(알 수 없으면 -1))."""
+    pieces, invalid = {}, []
+    if splits in (None, []):
+        return pieces, invalid
+    if not isinstance(splits, list):
+        return pieces, [-1]
+    for sp in splits:
+        pn = _parse_name(sp.get("line")) if isinstance(sp, dict) else None
+        if pn is None or pn[1] or pn[0] not in by_id or not isinstance(sp.get("cuts"), list):
+            invalid.append(pn[0] if pn and pn[0] in by_id else -1)
+            continue
+        l = by_id[pn[0]]
+        have = {c["cut"] for c in l.cuts}
+        good = sorted({c for c in sp["cuts"] if isinstance(c, int) and not isinstance(c, bool) and c in have})
+        if len(good) != len(sp["cuts"]):
+            invalid.append(l.lid)
+        if not good or l.lid in pieces:
+            continue
+        ps = X.split_line(l, good)
+        if len(ps) > 1:
+            pieces[l.lid] = ps
+    return pieces, invalid
+
+
+def _expand(v, by_id: dict, pieces: dict, by_name: dict, invalid: list) -> list:
+    """블록의 lines 항목 하나 → 줄(또는 조각) 이름 목록. 쪼갠 줄을 통째로 쓰면 모든 조각, 쪼개지 않은 줄의 조각 이름을 쓰면 줄 전체(+무효 표시)."""
+    pn = _parse_name(v)
+    if pn is None or pn[0] not in by_id:
+        return []
+    lid, ch = pn
+    if not ch:
+        return [p.name for p in pieces[lid]] if lid in pieces else [lid]
+    if f"{lid}{ch}" in by_name:
+        return [f"{lid}{ch}"]
+    invalid.append(lid)
+    return [p.name for p in pieces[lid]] if lid in pieces else [lid]
+
+
 def build_blocks(out: dict, page: dict, lines: list | None = None, report: dict | None = None) -> list[dict]:
     """VLM JSON 한 쪽 → 블록. 형식이 어긋나면 ValueError(그 쪽은 코드 규칙으로 대체).
     박스는 VLM 이 알려 준 줄 id 들의 실제 PDF 좌표 합집합으로 만든다(VLM 좌표는 글자 줄이 없는 블록에만 쓴다).
@@ -384,8 +448,11 @@ def build_blocks(out: dict, page: dict, lines: list | None = None, report: dict 
         raise ValueError("blocks 가 없음")
     W, H = page["width"], page["height"]
     by_id = {l.lid: l for l in (lines or [])}
-    owner: dict[int, int] = {}                                         # 줄 id → 먼저 배정한 블록 순번
-    overlap: list[int] = []
+    pieces, invalid = _make_pieces(out.get("splits"), by_id)           # 줄 번호 → 조각 목록(쪼갠 줄만)
+    by_name: dict = {i: l for i, l in by_id.items() if i not in pieces}
+    by_name.update({p.name: p for ps in pieces.values() for p in ps})
+    owner: dict = {}                                                   # 줄(또는 조각) 이름 → 먼저 배정한 블록 순번
+    overlap: list = []
     res = []
     for gi, g in enumerate(groups):
         if not isinstance(g, dict) or g.get("kind") not in VLM_KINDS:
@@ -393,20 +460,21 @@ def build_blocks(out: dict, page: dict, lines: list | None = None, report: dict 
         k = g["kind"]
         ids, dup = [], []
         for v in (g.get("lines") or []) if isinstance(g.get("lines"), list) else []:
-            if isinstance(v, bool) or not isinstance(v, int) or v not in by_id or v in ids:
-                continue
-            if v in owner:
-                dup.append(v)                                          # 먼저 배정된 블록이 갖는다
-            else:
-                ids.append(v)
+            for nm in _expand(v, by_id, pieces, by_name, invalid):
+                if nm in ids:
+                    continue
+                if nm in owner:
+                    dup.append(nm)                                     # 먼저 배정된 블록이 갖는다
+                else:
+                    ids.append(nm)
         for v in ids:
             owner[v] = gi
         overlap += dup
         if ids:
-            bbox = X._bbox([by_id[i] for i in ids])
+            bbox = X._bbox([by_name[i] for i in ids])
         else:
             bbox = _vlm_bbox(g, W, H) or [0.0, 0.0, W, H]
-        b = {"kind": k, "page": page["page"], "bbox": bbox, "needs_review": [], "line_ids": ids, "from_ai": True, "from_vlm": True}
+        b = {"kind": k, "page": page["page"], "bbox": bbox, "needs_review": [], "line_ids": ids, "from_ai": True, "from_vlm": True, "_g": [gi]}      # _g: 이 블록이 나온 AI 묶음 번호(블록 정리가 합쳐도 이어진다. 확인 루프가 쓰고 마지막에 지운다)
         if dup:
             b["needs_review"].append(X._flag("kind_ambiguous", "한 줄이 두 블록에 걸쳐 있습니다"))
         if not ids and (not by_id or k not in _SNAPPABLE):             # 글자 줄이 없는 쪽·차트 등은 VLM 좌표 그대로라 위치를 보증할 수 없다(글자 블록은 뒤의 snap 이 맞추거나 표시)
@@ -478,18 +546,177 @@ def build_blocks(out: dict, page: dict, lines: list | None = None, report: dict 
                 raise ValueError("카드 없음")
             b["cards"] = cards
         res.append(b)
+    lid_owner: dict[int, set] = {}                                     # 줄 번호 → 그 줄(또는 조각)을 가진 블록들(조각은 서로 다른 블록에 갈 수 있다)
+    for nm, gi in owner.items():
+        lid_owner.setdefault(_lid(nm), set()).add(gi)
     for gi, b in enumerate(res):                                       # 줄이 떨어져 있으면(사이에 다른 블록의 줄이 끼어 있음) 박스가 넓어진다 → 확인 요청
-        ids = b["line_ids"]
-        if len(ids) >= 2 and any(owner.get(i) not in (None, gi) for i in range(min(ids), max(ids) + 1)):
+        ls_ = sorted({_lid(n) for n in b["line_ids"]})
+        if len(ls_) >= 2 and any(gi not in lid_owner.get(i, {gi}) and lid_owner.get(i) for i in range(ls_[0], ls_[-1] + 1)):
             b["needs_review"].append(X._flag("kind_ambiguous", "이 블록의 줄 사이에 다른 블록의 줄이 있어 박스가 넓습니다. 묶음을 확인하세요"))
+    if invalid:
+        bad = set(invalid)
+        hit = [b for b in res if any(_lid(n) in bad for n in b["line_ids"])] or res[:1]
+        for b in hit:
+            b["needs_review"].append(X._flag("split_invalid", "AI 의 줄 쪼개기 요청 중 없는 줄·없는 후보 번호가 있어 무시했습니다"))
     if report is not None:
         ignored = {v for v in (out.get("ignored_lines") or []) if isinstance(v, int) and v in by_id and _ignorable(by_id[v].raw)} if isinstance(out.get("ignored_lines"), list) else set()      # 쪽 번호·숫자뿐인 줄(차트 눈금·데이터 라벨)만 무시 허용. 글자가 있는 머리말·꼬리말은 놓친 줄로 보고 채워 표시한다
-        report["missing"] = [l.lid for l in (lines or []) if l.lid not in owner and l.lid not in ignored]
-        report["overlap"] = sorted(set(overlap))
+        report["missing"] = sorted((nm for nm in by_name if nm not in owner and _lid(nm) not in ignored), key=_key)
+        report["overlap"] = sorted(set(overlap), key=_key)
+        report["split_invalid"] = sorted(set(invalid))
+        report["pieces"] = {p.name: p for ps in pieces.values() for p in ps}
     return res
 
 
-def extract_pages(s, pages: list[dict], all_lines: list[list], images: list[bytes], rule_blocks: list[dict], *, call, allow_raw_image: bool, max_pages: int, ready) -> tuple[list[dict], dict]:
+# ---------------- 박스 확인 루프 ----------------
+# 박스를 만든 뒤 박스 그림을 AI 가 보고 점검하고, 문제가 있는 블록(과 주변 블록)만 줄 목록·후보로 다시 묻는다. 좌표·숫자는 주고받지 않는다. 박스는 매번 코드가 줄 좌표로 다시 만든다.
+REVIEW_TYPES = ("merge_columns", "split_needed", "wrong_kind", "missing_lines", "should_merge")
+REVIEW_PAD_PT = 10.0                                               # 문제 블록의 '주변'으로 보는 거리(pt): 박스를 이만큼 넓혀 겹치는 블록
+
+REVIEW_SYSTEM = """당신은 보고서 페이지의 블록 박스를 점검하는 도우미다. 페이지 그림에는 박스(파랑=문제 표시 없음, 노랑=확인 필요)와 박스 왼쪽 위의 블록 번호가 그려져 있다(숫자는 검게 가려져 있다). 블록 목록(번호, 종류, 줄 이름, 글자 앞부분)도 받는다.
+박스가 알맞은지 보고 문제만 적는다. type:
+ merge_columns(나란한 서로 다른 칸·카드·단이 한 박스에 합쳐졌다), split_needed(한 줄 안에 서로 다른 구역의 글자가 섞여 줄을 쪼개야 한다), should_merge(한 덩어리가 박스 둘 이상으로 갈라졌다), wrong_kind(종류가 그림과 다르다), missing_lines(박스에 들어가지 않은 글자가 있다).
+좌표·숫자·글자를 적지 않는다. block 은 그림에 적힌 블록 번호, reason 은 짧게.
+JSON 하나만: {"issues":[{"block":3,"type":"merge_columns","reason":"..."}]}. 문제가 없으면 {"issues":[]}."""
+
+
+def _label(nm) -> str:
+    return f"L{nm}"
+
+
+def _block_rows(built: list[dict], by_name: dict) -> str:
+    rows = []
+    for n, b in enumerate(built, 1):
+        ids = b["line_ids"]
+        head = X.mask_all(by_name[ids[0]].raw)[:20] if ids and ids[0] in by_name else ""
+        rows.append({"n": n, "kind": b["kind"], "lines": [_label(i) for i in ids[:12]] + (["…"] if len(ids) > 12 else []), "head": head, "yellow": bool(b["needs_review"])})
+    import json
+    return json.dumps(rows, ensure_ascii=False)
+
+
+def _flag_count(built: list[dict], rep: dict) -> int:
+    """'나쁨'의 기준: 검증 플래그 수(블록의 노란 표시 + 놓친 줄 + 겹친 줄 + 잘못된 쪼개기 요청)."""
+    return sum(len(b["needs_review"]) for b in built) + len(rep.get("missing") or []) + len(rep.get("overlap") or []) + len(rep.get("split_invalid") or [])
+
+
+def _issues(resp: dict, n_blocks: int) -> list[dict]:
+    out = []
+    for it in (resp.get("issues") if isinstance(resp, dict) and isinstance(resp.get("issues"), list) else []):
+        if isinstance(it, dict) and isinstance(it.get("block"), int) and not isinstance(it.get("block"), bool) and 1 <= it["block"] <= n_blocks and it.get("type") in REVIEW_TYPES:
+            out.append({"block": it["block"], "type": it["type"], "reason": X.mask_all(str(it.get("reason") or ""))[:60]})
+    return out
+
+
+def _near(built: list[dict], idx: set[int]) -> set[int]:
+    """문제 블록 + 읽는 순서로 앞뒤 블록 + 박스를 REVIEW_PAD_PT 만큼 넓혔을 때 겹치는 블록(줄이 있는 블록만)."""
+    keep = set(idx)
+    for i in idx:
+        keep |= {i - 1, i + 1}
+        x0, y0, x1, y1 = built[i]["bbox"]
+        for j, b in enumerate(built):
+            a0, b0, a1, b1 = b["bbox"]
+            if a0 <= x1 + REVIEW_PAD_PT and a1 >= x0 - REVIEW_PAD_PT and b0 <= y1 + REVIEW_PAD_PT and b1 >= y0 - REVIEW_PAD_PT:
+                keep.add(j)
+    return {i for i in keep if 0 <= i < len(built) and built[i]["line_ids"]}
+
+
+def _merge(out: dict, affected: set[int], aff_lids: set[int], new: dict) -> dict:
+    """다시 받은 답으로 해당 블록들만 갈아 끼운다. 새 답이 영향 범위 밖의 줄을 쓰면 그 줄은 버린다(다른 블록을 건드리지 않는다)."""
+    groups = out["blocks"]
+    fresh = []
+    for g in (new.get("blocks") if isinstance(new.get("blocks"), list) else []):
+        if not isinstance(g, dict):
+            continue
+        ls = [v for v in (g.get("lines") if isinstance(g.get("lines"), list) else []) if (pn := _parse_name(v)) and pn[0] in aff_lids]
+        if ls:
+            fresh.append({**g, "lines": ls})
+    at = sum(1 for i in range(min(affected)) if i not in affected)
+    kept = [g for i, g in enumerate(groups) if i not in affected]
+    sp_old = [x for x in (out.get("splits") if isinstance(out.get("splits"), list) else []) if isinstance(x, dict) and (pn := _parse_name(x.get("line"))) and pn[0] not in aff_lids]
+    sp_new = [x for x in (new.get("splits") if isinstance(new.get("splits"), list) else []) if isinstance(x, dict) and (pn := _parse_name(x.get("line"))) and pn[0] in aff_lids]
+    return {**out, "blocks": kept[:at] + fresh + kept[at:], "splits": sp_old + sp_new}
+
+
+def review_loop(page: dict, lines: list, out: dict, built: list[dict], rep: dict, png: bytes, *, review, reask, max_rounds: int, ready) -> tuple[list[dict], dict, dict]:
+    """박스 확인 루프. 문제가 없거나 재질문이 max_rounds 회에 이르면 멈춘다(0 이면 호출하지 않는다).
+    review(png, text)->(json,tin,tout), reask(png, lines, note)->(json,tin,tout). ready() 는 키·하루 한도를 확인하고 막히면 예외 → 루프 없이 지금 결과로 끝낸다.
+    재질문 결과가 이전보다 나쁘면(플래그 수 증가) 이전 결과를 유지한다. 끝까지 남은 문제는 블록에 review_unresolved 를 단다.
+    반환: (블록 목록, 줄 검증 결과 rep, 루프 정보 info)."""
+    from .box_draw import draw_boxes
+    info = {"rounds": 0, "review_calls": 0, "reask_calls": 0, "input_tokens": 0, "output_tokens": 0, "issues_found": 0, "unresolved": 0, "reverted": 0, "stopped": ""}
+    if max_rounds <= 0 or review is None or reask is None or not lines:
+        return built, rep, info
+    issues: list[dict] = []
+    for rnd in range(max_rounds + 1):
+        by_name = {l.lid: l for l in lines}
+        by_name.update(rep.get("pieces") or {})
+        try:
+            ready()
+            text = "블록 목록:\n" + _block_rows(built, {**by_name}) + "\n그림의 박스를 점검해 주세요."
+            resp, tin, tout = review(draw_boxes(png, page["width"], built), text)
+        except Exception as e:  # noqa: BLE001  (한도·키·호출 실패: 루프 없이 지금 결과로 끝낸다)
+            info["stopped"] = str(e)[:80] or type(e).__name__
+            break
+        info["review_calls"] += 1
+        info["input_tokens"] += tin
+        info["output_tokens"] += tout
+        issues = _issues(resp, len(built))
+        info["issues_found"] += len(issues)
+        if not issues or rnd == max_rounds:
+            break
+        idx = _near(built, {it["block"] - 1 for it in issues})
+        aff_lids = {_lid(n) for i in idx for n in built[i]["line_ids"]} | {_lid(n) for n in rep.get("missing") or [] if any(it["type"] == "missing_lines" for it in issues)}
+        affected = {g for i in idx for g in built[i].get("_g", [])}
+        for _ in range(len(out["blocks"])):                              # 영향 범위의 줄을 가진 AI 묶음은 통째로 다시 받는다(닫힐 때까지)
+            more = {gi for gi, g in enumerate(out["blocks"]) if isinstance(g, dict) and any((pn := _parse_name(v)) and pn[0] in aff_lids for v in (g.get("lines") if isinstance(g.get("lines"), list) else []))} - affected
+            if not more:
+                break
+            affected |= more
+            aff_lids |= {pn[0] for gi in more for v in (out["blocks"][gi].get("lines") if isinstance(out["blocks"][gi].get("lines"), list) else []) if (pn := _parse_name(v))}
+        if not affected:
+            info["stopped"] = "다시 물을 AI 묶음을 찾지 못함"
+            break
+        sub = [l for l in lines if l.lid in aff_lids]
+        why = "; ".join(f"{_label(built[it['block'] - 1]['line_ids'][0]) if built[it['block'] - 1]['line_ids'] else '블록' + str(it['block'])}: {it['type']} {it['reason']}" for it in issues)
+        try:
+            ready()
+            new, tin, tout = reask(png, sub, "점검에서 나온 문제: " + why + "\n이 목록의 줄만 다시 블록으로 묶어 주세요(형식은 처음과 같다: blocks, splits). 목록에 없는 줄 id 는 쓰지 않는다.")
+        except Exception as e:  # noqa: BLE001
+            info["stopped"] = str(e)[:80] or type(e).__name__
+            break
+        info["reask_calls"] += 1
+        info["input_tokens"] += tin
+        info["output_tokens"] += tout
+        try:
+            merged = _merge(out, affected, aff_lids, new)
+            rep2: dict = {}
+            built2 = build_tidy(merged, page, lines, rep2)
+        except (ValueError, KeyError, TypeError):
+            info["reverted"] += 1
+            break
+        if _flag_count(built2, rep2) > _flag_count(built, rep):         # 나빠졌으면 이전 결과를 유지하고 멈춘다
+            info["reverted"] += 1
+            break
+        out, built, rep = merged, built2, rep2
+        info["rounds"] += 1
+        issues = []                                                    # 방금 고친 결과는 아직 점검 전이다(다음 점검에서 다시 채워진다)
+    for it in issues:
+        b = built[it["block"] - 1]
+        b["needs_review"].append(X._flag("review_unresolved", f"박스 점검에서 문제가 남았습니다({it['type']}): {it['reason'] or '이유 없음'} — 재질문 {info['rounds']}회 후"))
+    info["unresolved"] = len(issues)
+    return built, rep, info
+
+
+def build_tidy(out: dict, page: dict, lines: list | None, report: dict | None = None) -> list[dict]:
+    """build_blocks + 블록 정리(block_tidy). 글자 줄이 없는 쪽은 정리하지 않는다. 쪼갠 조각은 report["pieces"] 에 같이 등록된다."""
+    from .block_tidy import tidy_blocks
+    rep = report if report is not None else {}
+    built = build_blocks(out, page, lines, rep)
+    if lines:
+        built, _ = tidy_blocks(built, lines, lines[0].shapes, (page["width"], page["height"]), rep.setdefault("pieces", {}))
+    return built
+
+
+def extract_pages(s, pages: list[dict], all_lines: list[list], images: list[bytes], rule_blocks: list[dict], *, call, allow_raw_image: bool, max_pages: int, ready, review=None, reask=None, max_rounds: int = 0) -> tuple[list[dict], dict]:
     """쪽마다 VLM 을 부르고, 실패한 쪽은 코드 규칙 블록으로 채운다. call(png, lines)->(json,tin,tout). lines 는 그 쪽 줄 목록(너무 많거나 글자가 없으면 빈 목록)"""
     info = {"used": False, "mode": "rules", "note": "", "calls": 0, "input_tokens": 0, "output_tokens": 0, "model": s.openai_model, "engine": "vlm", "prompt_version": PROMPT_VERSION, "pages_vlm": 0, "pages_rules": 0}
     out_blocks: list[dict] = []
@@ -512,9 +739,19 @@ def extract_pages(s, pages: list[dict], all_lines: list[list], images: list[byte
                 info["note"] += f"{pi}쪽: 줄이 {len(lines)}개로 많아 줄 목록 없이 그림만 보냈습니다(박스는 글자 대조로 맞춤). "
             out, tin, tout = call(images[pi - 1], sent)
             rep: dict = {}
-            built = build_blocks(out, pages[pi - 1], sent, rep)
+            built = build_tidy(out, pages[pi - 1], sent, rep)
+            if sent and max_rounds > 0 and review is not None:                    # 박스 확인 루프(0 이면 끔)
+                built, rep, rv = review_loop(pages[pi - 1], sent, out, built, rep, images[pi - 1], review=review, reask=reask, max_rounds=max_rounds, ready=ready)
+                tin += rv["input_tokens"]
+                tout += rv["output_tokens"]
+                tot = info.setdefault("review", {"max_rounds": max_rounds, "pages": {}, "rounds": 0, "review_calls": 0, "reask_calls": 0, "unresolved": 0, "reverted": 0})
+                tot["pages"][pi] = {k: rv[k] for k in ("rounds", "review_calls", "reask_calls", "issues_found", "unresolved", "reverted", "stopped")}
+                for k in ("rounds", "review_calls", "reask_calls", "unresolved", "reverted"):
+                    tot[k] += rv[k]
             if rep.get("missing"):
                 info.setdefault("missing_lines", {})[pi] = rep["missing"]
+            if rep.get("pieces"):
+                info.setdefault("pieces", {})[pi] = rep["pieces"]
         except Exception as e:  # noqa: BLE001  (AiUnavailable·ValueError·KeyError 모두 그 쪽만 규칙으로 대체)
             out_blocks += page_rules
             info["pages_rules"] += 1
@@ -583,7 +820,7 @@ def add_missed(vlm_blocks: list[dict], rule_blocks: list[dict], page_dims: dict[
     pnorm = {p: _norm(t) for p, t in by_page.items()}
     zones = [(b["page"], b["bbox"]) for b in vlm_blocks if b["kind"] in ("chart", "numbercard")]
     added = []
-    owned = {(b["page"], i) for b in vlm_blocks for i in (b.get("line_ids") or [])}
+    owned = {(b["page"], i) for b in vlm_blocks for i in (b.get("line_ids") or [])} | {(b["page"], _lid(i)) for b in vlm_blocks for i in (b.get("line_ids") or []) if isinstance(i, str)}      # 쪼갠 줄은 조각 중 하나라도 블록에 있으면 그 줄은 처리된 것
     for r in rule_blocks:
         if r["kind"] not in ("title", "paragraph", "footnote"):          # 표·목록은 쪼개 읽는 방식이 달라 중복이 생기므로 채우지 않는다
             continue

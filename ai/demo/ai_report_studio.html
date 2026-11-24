@@ -336,9 +336,14 @@ const REASON_HELP = {
   date_semantics: '‘전월’·‘26.11월’ 같은 날짜·비교 표현이 기준 월 기준으로 무엇을 뜻하는지 확정하지 못했습니다.',
   header_ambiguous: '표 머리가 여러 줄(병합 칸)인데 어느 칸이 병합됐는지 알 수 없어 열 이름을 확정하지 못했습니다. 이 열들은 값을 추측해 채우지 않고 ‘데이터 없음’으로 남습니다.',
   box_unresolved: '모델이 그린 박스를 PDF 글자 위치와 맞추지 못했습니다(글자 내용·읽는 순서로 줄을 찾지 못함, 또는 글자가 없는 PDF). 박스가 실제 글자와 어긋날 수 있으니 원본에서 확인하세요.',
+  tidy_uncertain: '코드가 블록을 합치거나 쪼갤지 정리하려다 기준값 근처라 확실하지 않아 그대로 두었습니다(위 이유). 직접 확인해 주세요.',
+  split_invalid: 'AI 가 줄을 쪼개 달라고 했지만 없는 줄이거나 없는 후보 번호였습니다. 그 요청은 무시했고 줄은 그대로 두었습니다. 이 줄이 두 구역으로 나뉘어야 하는지 확인하세요.',
+  review_unresolved: '박스를 만든 뒤 AI 가 그림으로 다시 점검했는데(최대 2회 재질문) 문제가 남았습니다. 위 이유(예: 나란한 칸이 한 박스에 합쳐짐·박스에 안 든 글자)를 보고 종류·묶음을 직접 확인하세요.',
   vlm_missed: '모델 결과에는 없는데 PDF 글자 규칙으로는 뽑힌 제목·문장·각주를 코드가 채워 넣었습니다. 모델이 건너뛴 글자일 수 있어 실제로 필요한 블록인지 확인하세요.',
   table_shape: '같은 페이지에서 모델이 읽은 표와 PDF 글자로 규칙이 뽑은 표를 칸 글자가 겹치는 정도로 짝지은 뒤 행·열 개수를 비교했습니다. 개수가 다르면 줄이 빠진 쪽을 의심합니다(모델이 줄을 빠뜨렸으면 규칙 표를 쓰고, 반대면 모델 표를 두고 확인을 요청).'};
-const REASON = {kind_ambiguous: '종류 애매', table_alignment: '표 열 정렬 불확실', footnote_link: '각주 연결 불명', ai_rule_mismatch: 'AI·규칙 판단 다름', vlm_uncertain: '모델이 애매하다고 함', text_mismatch: 'PDF 글자와 대조 실패', metric_unknown: '지표 사전에 없음', scope_unknown: '범위가 조직에 없음', date_semantics: '날짜 해석', vlm_missed: 'VLM 이 놓쳐 규칙으로 채움', table_shape: '표 모양이 PDF 글자와 다름', box_unresolved: '박스 위치 확인 필요', header_ambiguous: '표 머리 병합 확인'};
+const REASON = {kind_ambiguous: '종류 애매', table_alignment: '표 열 정렬 불확실', footnote_link: '각주 연결 불명', ai_rule_mismatch: 'AI·규칙 판단 다름', vlm_uncertain: '모델이 애매하다고 함', text_mismatch: 'PDF 글자와 대조 실패', metric_unknown: '지표 사전에 없음', scope_unknown: '범위가 조직에 없음', date_semantics: '날짜 해석', vlm_missed: 'VLM 이 놓쳐 규칙으로 채움', table_shape: '표 모양이 PDF 글자와 다름', box_unresolved: '박스 위치 확인 필요', header_ambiguous: '표 머리 병합 확인', split_invalid: '줄 쪼개기 요청 무시', review_unresolved: '박스 점검 후에도 문제 남음', tidy_uncertain: '정리 경계라 그대로 둠'}
+const TIDY = {'tidy:chart': '막대·막대 이름·축 숫자를 한 차트로 묶음', 'tidy:cards': '나란한 카드를 카드별로 쪼갬', 'tidy:table_header': '표 머리 줄을 표에 포함', 'tidy:headings': '나란한 제목을 제목별로 쪼갬', 'tidy:hierarchy': '소제목과 그 아래 항목을 한 목록으로 묶음', 'tidy:footnote': '쪽 하단 각주를 따로 뗌', 'tidy:labels': '표·차트 옆 잔 라벨을 흡수'};
+const tidyNotes = b => (b.tidy || []).map(t => TIDY[t] || t);;
 const MISS = [['guess', 'AI 가 추측', '표가 무엇인지 AI 가 DB 지표에 맞춰 추측합니다(추측은 보고서에서 ⓘ 로 표시)'], ['drop', '빼기', '보고서에서 이 블록을 뺍니다']];
 const mk = t => String(t || '').replace(/\{수치\}/g, '███');
 let R = null, B = [], SEL = null, FILE = null;
@@ -378,7 +383,8 @@ function load(j) {
   const first = B.find(b => !b.resolved); if (first) select(first.id, true);
   const v = j.vlm || {}, cv = v.coverage;
   $('vlm').textContent = `읽은 방식: ${v.mode === 'vlm' ? `VLM(그림 읽기${v.model ? ' · ' + v.model : ''}) 주역 + 코드 대조` : v.mode === 'ai' ? 'AI(줄 묶기) + 코드 검사' : '코드 규칙'} — ${v.note || ''}` +
-    (cv ? ` · 블록 수 VLM ${cv.vlm} / 규칙 ${cv.rules} · 규칙이 찾았는데 VLM이 놓친 것 ${cv.rules_not_in_vlm} · VLM만 찾은 것 ${cv.vlm_not_in_rules}${v.added_from_rules ? ` · 놓친 글자 블록 ${v.added_from_rules}개는 규칙으로 채움(노란색)` : ''}` : '');
+    (cv ? ` · 블록 수 VLM ${cv.vlm} / 규칙 ${cv.rules} · 규칙이 찾았는데 VLM이 놓친 것 ${cv.rules_not_in_vlm} · VLM만 찾은 것 ${cv.vlm_not_in_rules}${v.added_from_rules ? ` · 놓친 글자 블록 ${v.added_from_rules}개는 규칙으로 채움(노란색)` : ''}` : '') +
+    (v.review ? ` · 박스 점검 루프: 재질문 ${v.review.rounds}회(점검 ${v.review.review_calls}회·재질문 호출 ${v.review.reask_calls}회, 상한 ${v.review.max_rounds}회), 남은 문제 ${v.review.unresolved}개${v.review.reverted ? `, 나빠져서 이전 결과로 되돌린 쪽 ${v.review.reverted}개` : ''}` : '');
 }
 const pending = () => B.filter(b => !b.resolved).length;
 const circ = i => CIRC[i] || String(i + 1);
@@ -465,8 +471,8 @@ function renderEdit() {
   if (!b) { p.replaceChildren(h('div', {class: 'cap'}, '왼쪽에서 블록을 고르세요.')); return; }
   const yellow = b.needs_review.length > 0;
   const parts = [h('div', {class: 't'}, h('b', null, '이 블록 고치기'), h('span', null, title(b)))];
-  parts.push(yellow ? h('div', {class: 'reason'}, ...b.needs_review.map(f => h('div', null, '· ' + (REASON[f.code] || f.code) + ': ' + f.reason, REASON_HELP[f.code] ? infoIcon([REASON_HELP[f.code]], null, false) : null)))
-                    : h('div', {class: 'okbox'}, '노란 표시 없음 — 확인할 것이 없습니다.'));
+  parts.push(yellow ? h('div', {class: 'reason'}, ...b.needs_review.map(f => h('div', null, '· ' + (REASON[f.code] || f.code) + ': ' + f.reason, REASON_HELP[f.code] ? infoIcon([REASON_HELP[f.code]], null, false) : null)), ...tidyNotes(b).map(t => h('div', null, '· 코드 정리: ' + t)))
+                    : h('div', {class: 'okbox'}, '노란 표시 없음 — 확인할 것이 없습니다.' + (b.tidy && b.tidy.length ? ' (코드 정리: ' + tidyNotes(b).join(' · ') + ')' : '')));
   parts.push(h('div', null, h('label', {class: 'l'}, '종류'), h('select', {onchange: e => { b.kind_now = e.target.value; render(); }}, ...Object.entries(KIND_LABEL).map(([k, v]) => h('option', {value: k, selected: k === b.kind_now}, v)))));
   if (b.kind === 'footnote') {
     const opts = [h('option', {value: ''}, '연결 없음'), ...B.filter(x => x.id !== b.id && x.page === b.page).map(x => h('option', {value: x.id, selected: x.id === b.link_now}, title(x)))];
