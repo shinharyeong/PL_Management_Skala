@@ -84,9 +84,11 @@ public class SubmissionSubmitService {
                 : submissionRepository.findMaxSeq(submission.getRequestId(), submission.getOrganizationId()) + 1;
         String expectedLabel = SubmissionLabels.of(nextSeq, request);
         BaselineResponse baseline = null;
+        Baseline resolved = null;
         if (submission.getStatus() == SubmissionStatus.DRAFT) {
             try {
-                baseline = toResponse(baselineResolver.resolve(submission, request));
+                resolved = baselineResolver.resolve(submission, request);
+                baseline = toResponse(resolved);
             } catch (BusinessException e) {
                 // 기준을 고를 수 없는 상태(검토 대기 중 등)는 제출하기에서 오류로 알린다.
             }
@@ -104,7 +106,8 @@ public class SubmissionSubmitService {
                         round1.get(i.getId()).isAnswered()))
                 .toList();
         boolean canSubmit = submission.getStatus() == SubmissionStatus.DRAFT && job != null && job.passed()
-                && explanationTargetService.prepared(submissionId) && items.stream().allMatch(SubmitPreviewResponse.Item::answered);
+                && resolved != null && explanationTargetService.prepared(submission, resolved.submission())
+                && items.stream().allMatch(SubmitPreviewResponse.Item::answered);
         return new SubmitPreviewResponse(
                 new SubmitPreviewResponse.FileInfo(submission.getOriginalFilename(),
                         organization.getCode() + "_" + expectedLabel + "."
@@ -135,10 +138,10 @@ public class SubmissionSubmitService {
         if (!job.passed()) {
             throw SubmissionErrorCode.VALIDATION_FAILED.exception();
         }
-        if (!explanationTargetService.prepared(submissionId)) {
+        Baseline baseline = baselineResolver.resolve(submission, request);
+        if (!explanationTargetService.prepared(submission, baseline.submission())) {
             throw SubmissionErrorCode.VALIDATION_REQUIRED.exception();
         }
-        Baseline baseline = baselineResolver.resolve(submission, request);
         if (!explanationTargetService.contextMatches(submission, baseline.submission())) {
             throw SubmissionErrorCode.REVIEW_CONTEXT_CHANGED.exception();
         }
