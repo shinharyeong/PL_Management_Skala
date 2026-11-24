@@ -38,7 +38,7 @@ class LocalFileStorageTest extends PostgresIntegrationTest {
 
     @Test
     void rejectsWrongExtensionAndEmptyFile() {
-        assertThatThrownBy(() -> storage.save(FilePurpose.SUBMISSION_EXCEL, "a.xlsb", null, new ByteArrayInputStream(new byte[]{1})))
+        assertThatThrownBy(() -> storage.save(FilePurpose.SUBMISSION_EXCEL, "a.xls", null, new ByteArrayInputStream(new byte[]{1})))
                 .isInstanceOf(BusinessException.class).extracting("code").isEqualTo("UNSUPPORTED_FILE_TYPE");
         assertThatThrownBy(() -> storage.save(FilePurpose.SUBMISSION_EXCEL, "a.xlsx", null, new ByteArrayInputStream(new byte[0])))
                 .isInstanceOf(BusinessException.class).extracting("code").isEqualTo("INVALID_REQUEST");

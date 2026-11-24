@@ -3483,7 +3483,7 @@ paths:
       tags:
       - 업로드·검증
       summary: UP-03 제출 초안 생성 + 파일 규칙 확인 + 파싱 작업 등록
-      description: '엑셀 파일을 multipart로 받아 파일 이름·확장자(.xlsx, 요청당 1개)·조직(코드)을 먼저 확인하고, 통과하면 S3 `drafts/excel/`에 저장한 뒤 DRAFT를 만들고 파싱 작업을 큐(`parse.jobs`)에 넣는다.
+      description: '엑셀 파일을 multipart로 받아 파일 이름·확장자(.xlsx·.xlsb, 요청당 1개)·조직(코드)을 먼저 확인하고, 통과하면 S3 `drafts/excel/`에 저장한 뒤 DRAFT를 만들고 파싱 작업을 큐(`parse.jobs`)에 넣는다.
 
         응답의 `kind`로 화면 제목(연간 계획 제출 / 월간 시트 제출)을 정한다(FR-UPLOAD-001). ''파일 다시 선택''도 이 API로 새 DRAFT를 만든다.
 
@@ -3513,7 +3513,7 @@ paths:
                 file:
                   type: string
                   format: binary
-                  description: .xlsx 파일
+                  description: .xlsx 또는 .xlsb 파일(실제 배포 양식은 .xlsb)
             encoding:
               file:
                 contentType: application/octet-stream

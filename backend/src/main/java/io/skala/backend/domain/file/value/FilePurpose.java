@@ -15,7 +15,7 @@ import lombok.RequiredArgsConstructor;
 public enum FilePurpose {
 
     /** 조직 담당자가 올린 제출 엑셀(제출 전) */
-    SUBMISSION_EXCEL("drafts/excel/", Set.of("xlsx"), 20L * 1024 * 1024),
+    SUBMISSION_EXCEL("drafts/excel/", Set.of("xlsx", "xlsb"), 20L * 1024 * 1024),
     /** 소명 첨부(제출 전) */
     EXPLANATION_ATTACHMENT("drafts/attachments/", Set.of(), 16L * 1024 * 1024),
     /** AI 보고서 틀 분석용 PDF */
