@@ -1,0 +1,12 @@
+# 업로드 원본·제출 양식 저장소(backend /data). 개인 kubectl로 한 번만 적용한다: kubectl apply -f k8s/once/
+# GitHub Actions 배포 Role은 PVC를 만들거나 고칠 수 없어 kustomization.yaml에 넣지 않는다.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backend-data
+  namespace: p1-2
+  labels: { app.kubernetes.io/part-of: pl-management }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 5Gi }

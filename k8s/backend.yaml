@@ -1,6 +1,6 @@
 # Spring Boot API. 엑셀 파서를 자식 프로세스로 실행한다(이미지에 parser/src 포함).
 # 업로드 원본·제출 양식은 PVC backend-data(/data)에 둔다 — 볼륨이 한 파드에만 붙으므로 Recreate로 교체한다.
-# PVC는 팀 권한으로 만들 수 없어 포털에 신청해 만든다(5Gi, ReadWriteOnce). 그래서 이 파일에 넣지 않는다.
+# PVC는 k8s/once/에 있다 — GitHub Actions 배포 Role은 PVC를 다룰 수 없어 개인 kubectl로 한 번만 만든다.
 apiVersion: v1
 kind: ConfigMap
 metadata: { name: backend-config }

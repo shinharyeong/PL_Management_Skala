@@ -1,6 +1,6 @@
 # 인프라 구성
 
-SKALA 플랫폼이 제공하는 EKS 공유 클러스터(`skala-pg`)에 팀 네임스페이스 `p1-2` 하나로 배포합니다. 진입은 플랫폼 공용 NGINX Ingress Controller(`public-nginx`), 이미지 저장소는 ECR, 배포는 **main에 push되면 GitHub Actions(`deploy.yml`)가 캠퍼스 PC의 self-hosted runner에서** 합니다. 보안 사후 조치로 이전 클러스터(`skala-2026`)가 삭제되고 2026-11-25에 새로 만들어졌습니다(Harbor → ECR, kubeconfig 토큰 → GitHub OIDC). 구성도는 [architecture.png](architecture.png)입니다.
+SKALA 플랫폼이 제공하는 EKS 공유 클러스터(`skala-pg`)에 팀 네임스페이스 `p1-2` 하나로 배포합니다. 진입은 플랫폼 공용 NGINX Ingress Controller(`public-nginx`), 이미지 저장소는 ECR, 배포는 **main에 push되면 GitHub Actions(`deploy.yml`)가 캠퍼스 PC의 self-hosted runner에서** 합니다. 보안 사후 조치로 이전 클러스터(`skala-2026`)가 삭제되고 2026-11-24에 새로 만들어졌습니다(Harbor → ECR). Namespace·쿼터·RDS·S3·도메인과 플랫폼 Secret(`rds-credentials`, `team-tls`)은 그대로 옮겨졌고, 팀이 만든 것은 다시 만들었습니다. 구성도는 [architecture.png](architecture.png)입니다.
 
 - **1차 배포(현재)**: frontend·backend·ai 세 파드. backend가 파서를 자식 프로세스로 실행하고, 업로드 원본은 backend PVC에 둡니다. 매니페스트는 [`k8s/`](../k8s), 절차는 아래 4절입니다.
 - **목표 구성(2차)**: 아래 2절 표처럼 RabbitMQ·parser-worker·db-mcp를 더하고 원본을 S3로 옮깁니다.
@@ -94,9 +94,10 @@ PL_Management_Skala/
 ├── k8s/                        # kubectl apply -k 로 배포하는 매니페스트(Kustomize)
 │   ├── kustomization.yaml      # 이미지 태그는 자리표시(<서비스>-main). deploy.yml이 임시 복사본에서 커밋 해시로 바꿔 적용
 │   ├── backend.yaml  ai.yaml  frontend.yaml  ingress.yaml
-│   └── jobs/seed-demo.yaml     # 체험 계정 시드 Job(deploy.yml을 seed=true로 수동 실행할 때만)
+│   ├── once/                   # 개인 kubectl로 한 번만 적용: PVC backend-data, NetworkPolicy(Actions Role 권한 밖)
+│   └── jobs/seed-demo.yaml     # 체험 계정 시드 Job(deploy.yml을 seed=true로 수동 실행할 때)
 ├── docs/
-└── scripts/                    # 로컬 개발(dev-up·dev-down)과 검증 스크립트
+└── scripts/                    # deploy.sh(빌드 없이 태그로 적용)·seed-demo.sh·upload-template.sh, 로컬 개발·검증 스크립트
 ```
 
 목표 구성(2차)에서는 `parser/`를 parser-worker 이미지로 분리하고, RabbitMQ StatefulSet과 큐 메시지 스키마를 더합니다.
@@ -120,7 +121,7 @@ PL_Management_Skala/
 - 제출본, 버전, 소명, master, 자료 틀, 알림을 저장합니다.
 - backend와 parser-worker는 팀 계정을 씁니다. db-mcp는 보고서용 뷰(`report` 스키마의 `fact`·`v_op`·`gap`·`explanation`·`dim_version`·`dim_org`, 마이그레이션 `V20261124_1500__report_views.sql`)에만 SELECT 권한이 있는 읽기 전용 역할을 씁니다. SELECT 이외의 구문, 실행 시간, 행 수는 db-mcp가 실행 전에 한 번 더 검사합니다.
 - 원본 파일의 메타데이터는 `stored_object`, 파일 자체는 1차 배포에서 backend PVC(`/data/storage`)에 둡니다. S3 `uploads/` 연결은 2차 과제입니다.
-- 팀 계정 동시 연결은 50개까지라 backend 연결 풀을 5로 둡니다(`application-prod.yml`). 접속 값은 Secret `rds-credentials`에서 받습니다. 새 플랫폼은 RDS 계정을 캔버스로 알려 주고 팀이 Secret을 만들 수 없어, 포털에 신청해 이전과 같은 키(`SPRING_DATASOURCE_URL`, `DATABASE_URL`, `PGHOST`·`PGPORT`·`PGDATABASE`·`PGUSER`·`PGPASSWORD`·`PGSSLMODE`)로 만듭니다. backend는 `PGUSER`·`PGPASSWORD`를 Spring 이름으로 넘겨받습니다(`k8s/backend.yaml`).
+- 팀 계정 동시 연결은 50개까지라 backend 연결 풀을 5로 둡니다(`application-prod.yml`). 접속 값은 플랫폼 Secret `rds-credentials`(`SPRING_DATASOURCE_URL`, `DATABASE_URL`, `PGHOST`·`PGPORT`·`PGDATABASE`·`PGUSER`·`PGPASSWORD`·`PGSSLMODE`)에서 받습니다. backend는 `PGUSER`·`PGPASSWORD`를 Spring 이름으로 넘겨받습니다(`k8s/backend.yaml`).
 - 공용 인스턴스라 자동 스냅샷으로 팀별 복원이 안 됩니다. 발표 전 등 중요한 시점에는 `pg_dump`로 직접 백업합니다(플랫폼 가이드 "백업과 복원").
 
 ## 4. 배포
@@ -132,9 +133,11 @@ PL_Management_Skala/
 | CD | **main 기준.** develop → main PR이 머지되면 `deploy.yml`이 캠퍼스 PC의 self-hosted runner에서 돈다: GitHub OIDC로 Role `gha-p1-2`를 받아 → 서비스 3개를 빌드해 ECR에 push(같은 태그가 이미 있으면 생략) → `k8s/` 임시 복사본에 태그 적용 → `kubectl apply -k` → rollout 확인. 인증은 main 브랜치와 캠퍼스 IP에서만 허용된다. 지금 배포된 버전은 이미지 태그로 안다. Actions 탭에서 다시 실행(Re-run)하면 같은 커밋을 다시 배포한다 |
 | Runner | 캠퍼스 안 PC에 설치(repo → Settings → Actions → Runners). aws CLI v2·kubectl·docker가 있어야 하고, 배포할 때 켜져 있어야 한다. 저장소가 공개라 Settings → Actions → General에서 외부 기여자의 fork PR 워크플로는 승인 후에만 돌게 한다 |
 | Actions 로그 | 공개 저장소라 누구나 본다. 워크플로에서 Pod 로그·Secret·인증코드를 출력하지 않는다 |
-| 처음 한 번 | 빈 DB면 Actions → deploy → Run workflow(main, seed 체크)로 체험 계정·조직을 넣는다(`k8s/jobs/seed-demo.yaml`). 제출 양식(.xlsb)은 PVC `/data/templates/submission-template.xlsb`에 있어야 하는데, 새 권한에는 `kubectl exec`가 없어 업로드 방법을 따로 만들어야 한다(5절) |
-| 포털에 신청해 만드는 것 | Secret `rds-credentials`, Secret `app-secrets`(`REPORT_AI_TOKEN` 필수, `OPENAI_API_KEY`·`SPRING_MAIL_*` 선택), PVC `backend-data`(5Gi, RWO). 팀 권한으로는 Secret·PVC를 만들 수 없고 어떤 리소스도 지울 수 없다 |
-| 팀 권한 | Deployment·StatefulSet·Service·ConfigMap·Ingress·HPA·Job·CronJob 생성·수정, Pod·로그·Event 조회. NetworkPolicy는 목록에 없다 |
+| Actions Role 권한 | Deployment·StatefulSet·Service·ConfigMap·Ingress·HPA·Job·CronJob 생성·수정. Secret·PVC·NetworkPolicy와 삭제는 안 되므로 그런 것은 `k8s/`의 kustomization 밖(`k8s/once/`)에 두고 개인 kubectl로 적용한다 |
+| 개인 kubectl | 포털 가이드 「kubectl 접속」 명령으로 `~/.kube/p1-2.yaml`을 만든다. 토큰은 매일 06:00 재발급(26시간 유효), 캠퍼스 네트워크에서만. p1-2 안의 Secret·PVC 생성·삭제, logs·exec·port-forward가 된다. AWS 자격 증명은 없어 ECR push는 Actions로만 한다 |
+| 처음 한 번(개인 kubectl) | `kubectl create secret generic app-secrets --from-literal=REPORT_AI_TOKEN="$(openssl rand -hex 32)"`(`OPENAI_API_KEY`·`SPRING_MAIL_*`은 선택) → `kubectl apply -f k8s/once/` → 배포 → `scripts/upload-template.sh <양식.xlsb>`. 빈 DB일 때만 `scripts/seed-demo.sh` |
+| 수동 배포 | runner가 없거나 매니페스트만 바꿨을 때, 되돌릴 때: `scripts/deploy.sh [커밋 해시 12자리]`. ECR에 있는 `<서비스>-<해시>` 이미지로 `kubectl apply -k`만 한다(빌드 없음) |
+| NetworkPolicy | `k8s/once/networkpolicy.yaml`(ai는 backend에서만). 2026-11-25 확인 결과 플랫폼이 NetworkPolicy를 강제하지 않아(frontend → ai 접속이 열려 있음) 지금은 효과가 없다. 대신 ai 계약 API는 `REPORT_AI_TOKEN`으로 막는다 |
 | 비용 | 포털 자원 관리에서 끄고 켠다. 끄지 않으면 밤·주말에도 비용이 쌓인다 |
 | 모니터링 | 플랫폼 팀 Grafana 없음. Pod 상태·로그로 확인 |
 
@@ -143,10 +146,8 @@ PL_Management_Skala/
 | 항목 | 내용 |
 | --- | --- |
 | DB 읽기 전용 역할 | 팀 계정으로 역할을 만들 수 있는지. 안 되면 운영 측에 요청하고, 그래도 안 되면 NFR-SEC-004를 db-mcp 검사 기준으로 수정 |
-| 제출 양식 업로드 | 새 권한에 `kubectl exec`가 없어 PVC에 양식을 넣을 방법이 없다. 기획 담당자용 업로드 API(backend)가 필요 |
-| 개인 조회 권한 | 안내에 개인 kubeconfig가 없다. 로그(1차 로그인 인증코드 포함)를 보려면 포털에 조회 권한을 신청하거나 SMTP로 바꾼다 |
 | SMTP 계정 | 인증 메일을 보낼 메일 계정과 발송 한도. 정해지면 `app-secrets`에 `SPRING_MAIL_*`를 넣고 `APP_AUTH_DEV_LOG_CODE`를 `false`로 |
 | 파서 분리(2차) | 1차는 backend가 파서를 자식 프로세스로 실행하고 DB 작업 큐를 씀. parser-worker 분리와 RabbitMQ 전환 작업 필요 |
-| 원본 S3 전환(2차) | `LocalFileStorage`(PVC)를 S3로 바꾸는 작업. 새 플랫폼에서 버킷과 접근 ServiceAccount를 제공하는지 확인 필요. 옮기면 클러스터를 다시 만들어도 파일이 남는다 |
+| 원본 S3 전환(2차) | `LocalFileStorage`(PVC)를 S3로 바꾸는 작업. 버킷 `skala-2026-finalproj-p1-2`와 `s3-access`·`s3-config`는 새 클러스터에도 있다. 옮기면 클러스터를 다시 만들어도 파일이 남는다 |
 | SSE | 대화 편집을 스트리밍으로 보내면 Ingress에 `proxy-buffering: "off"` 주석 추가(`proxy-read-timeout`은 120초로 이미 있음) |
 | 자료 렌더링 | 차트·표 이미지 생성을 브라우저에서 할지 서버에서 할지 결정 |
