@@ -35,12 +35,19 @@ management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,prometheus
   endpoint:
     health:
       # 쿠버네티스 프로브용 /actuator/health/readiness·liveness
       probes:
         enabled: true
+  metrics:
+    tags:
+      application: backend
+    distribution:
+      # Grafana에서 API 응답 시간 p95를 계산하려면 히스토그램 버킷이 필요하다
+      percentiles-histogram:
+        http.server.requests: true
 
 app:
   # 제출 양식(연간·월간 공통). 엑셀은 저장소에 커밋하지 않으므로 배포 환경에 파일을 둔다.

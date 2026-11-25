@@ -12,6 +12,12 @@ server:
   forward-headers-strategy: framework
   shutdown: graceful
 
+management:
+  server:
+    # actuator(health·prometheus)를 8081로 분리한다. frontend nginx가 /actuator를 8080으로 넘기므로
+    # 같은 포트면 지표가 Ingress로 외부에 노출된다. 8081은 클러스터 안(프로브·Prometheus)에서만 쓴다.
+    port: 8081
+
 app:
   # 운영에서는 report-ai 내부 토큰이 없으면 거부한다(공용 클러스터라 다른 네임스페이스에서도 서비스에 닿을 수 있음).
   report-ai:
