@@ -347,3 +347,15 @@
 .monthly-panel .calculator-pipeline .pipeline-step { flex: 0 0 auto; gap: 5px; font-size: 12px; color: var(--muted); }
 .monthly-panel .calculator-pipeline .pipeline-step .badge { width: 20px; height: 20px; font-size: 11px; }
 .monthly-panel .calculator-pipeline .pipeline-line { width: 16px; flex-shrink: 0; }
+
+/* Keep calculator actions reachable while scrolling long results. */
+.monthly-panel .calculator-actions-dock{position:fixed;bottom:max(12px,env(safe-area-inset-bottom));z-index:40;box-sizing:border-box;background:#fff;border:1px solid #b9cce8;border-radius:12px;box-shadow:0 -4px 28px #14243b1c,0 4px 14px #14243b14;padding:14px 18px;max-height:50dvh;overflow-y:auto;gap:16px}
+.monthly-panel .calculator-actions-dock>strong{white-space:nowrap}
+.monthly-panel .calculator-actions-dock>.field{flex:1;min-width:160px;font-size:12px;gap:4px}
+.monthly-panel .calculator-actions-dock input{width:100%}
+.monthly-panel .calculator-actions-dock>.actions{flex-shrink:0;flex-wrap:wrap}
+.monthly-panel .calculator-actions-dock .btn.primary{min-width:220px}
+.calculator-actions-space{flex-shrink:0;pointer-events:none}
+@media(min-width:761px){body:has(.calculator-actions-dock) .copy-editor-bar{max-width:220px}}
+@media(max-width:1000px){.monthly-panel .calculator-actions-dock{flex-wrap:wrap;gap:10px;padding:12px}.monthly-panel .calculator-actions-dock>.field{min-width:180px}.monthly-panel .calculator-actions-dock>.actions{width:100%;justify-content:flex-end}.monthly-panel .calculator-actions-dock .btn{min-height:40px}}
+@media(max-width:600px){.monthly-panel .calculator-actions-dock>.actions{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:6px}.monthly-panel .calculator-actions-dock .btn{min-width:0;padding:8px;font-size:12px}.monthly-panel .calculator-actions-dock .btn.primary{min-width:0}.monthly-panel .calculator-actions-dock>.field{min-width:0}body:has(.calculator-actions-dock) .copy-editor-bar{top:8px;bottom:auto;max-width:calc(100vw - 20px)}body:has(.calculator-actions-dock) .copy-editor-bar p{display:none}}

@@ -1,10 +1,12 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useSession } from '../stores/session'
 import { dateTime, errorText, saveBlob } from '../lib/display'
 import { formatMoney } from '../lib/decimal-display'
 import { normalizeOrgReviewPage } from '../lib/submission-api'
 import { baselineLabel, reviewEvidencePath } from '../lib/review-api.js'
+import {canAnswerExplanation} from '../lib/explanation-editing.js'
+import {readReviewDraft, saveReviewDraft, clearReviewDraft, resubmissionChange, scenarioLabel} from '../lib/org-review-display.js'
 import { evidenceFileSelection } from '../lib/org-upload.js'
 import PButton from 'primevue/button'
 import PTextarea from 'primevue/textarea'
@@ -17,6 +19,7 @@ import PPanel from 'primevue/panel'
 const props = defineProps({ submission: { type: Object, required: true } })
 const emit = defineEmits(['changed', 'loaded'])
 const session = useSession()
+const groups = ref([]), progress = ref(null), draftKey = ref(''), draftRestored = ref(false)
 const items = ref([]), detail = ref(null), selectedId = ref(''), answer = ref(''), note = ref('')
 const loading = ref(false), busy = ref(false), error = ref(''), message = ref(''), attachments = ref([])
 const evidence = ref([]), comparisonBaseline = ref(null), attachmentFile = ref(null), attachmentInput = ref(null)
@@ -24,7 +27,10 @@ const controller = new AbortController()
 let detailController = new AbortController(), generation = 0
 const keys = new Map()
 const latest = computed(() => detail.value?.explanations?.at(-1))
-const editable = computed(() => session.actor?.role === 'ORG_MANAGER' && latest.value?.verdict === 'PENDING' && !latest.value.inheritedFrom && (props.submission.status === 'DRAFT' || (props.submission.status === 'PENDING' && latest.value.round > 1)))
+const editable = computed(() => canAnswerExplanation(session.actor?.role,props.submission.status,latest.value))
+const hasPrevious = computed(() => detail.value?.rows?.some(row => row.previous != null))
+const displayRows = computed(() => (detail.value?.rows || []).map(row => ({...row, correction:resubmissionChange(row.current,row.previous)})))
+watch(answer, value => { if(editable.value && draftKey.value) saveReviewDraft(draftKey.value,value) }, {flush:'sync'})
 const canDecide = computed(() => session.actor?.role === 'PLANNER' && props.submission.status === 'PENDING' && latest.value?.answer && latest.value.verdict === 'PENDING')
 
 /** 조직 소명 목록과 서버가 선택한 비교 기준을 읽는다.
@@ -36,7 +42,7 @@ async function load() {
   try {
     const page = normalizeOrgReviewPage(await session.request(`/api/v1/review-items?view=ORG&submissionId=${props.submission.id}`, { signal: controller.signal }))
     if (controller.signal.aborted) return
-    items.value = page.items; comparisonBaseline.value = page.baseline; emit('loaded', page)
+    items.value = page.items; groups.value = page.groups || []; progress.value = page.progress; comparisonBaseline.value = page.baseline; emit('loaded', page)
     const id = items.value.some(item => item.id === selectedId.value) ? selectedId.value : items.value[0]?.id
     if (id) await select(id)
     else detail.value = null
@@ -48,15 +54,21 @@ async function load() {
  * Args: id reviewItemId. Returns: Promise<void>. Raises: 없음(오류 표시).
  * Side Effects: 이전 조회 취소·HTTP 조회·화면 상태 갱신.
  */
-async function select(id) {
+async function select(id, preserveDraft = false) {
+  const pendingAnswer = preserveDraft && editable.value && selectedId.value === id ? answer.value : null
   const current = ++generation
+  if(editable.value && draftKey.value) saveReviewDraft(draftKey.value,answer.value)
+  draftKey.value = ''; draftRestored.value = false
   detailController.abort(); detailController = new AbortController()
   attachmentFile.value = null
   selectedId.value = id; detail.value = null; attachments.value = []; evidence.value = []; answer.value = ''; note.value = ''; error.value = ''
   try {
     const result = await session.request(`/api/v1/review-items/${id}`, { signal: detailController.signal })
     if (current !== generation || controller.signal.aborted) return
-    detail.value = result; answer.value = result.explanations?.at(-1)?.answer || ''
+    detail.value = result
+    const key = `${session.actor?.id}:${props.submission.id}:${id}:${result.stateToken}`
+    const saved = result.explanations?.at(-1)?.answer || ''
+    answer.value = pendingAnswer ?? readReviewDraft(key,saved); draftRestored.value = answer.value !== saved; draftKey.value = key
     const [files, source] = await Promise.all([
       session.request(`/api/v1/review-items/${id}/attachments`, { signal: detailController.signal }),
       session.request(reviewEvidencePath(id), { signal: detailController.signal }),
@@ -81,6 +93,7 @@ async function command(action) {
   try {
     await session.request(`/api/v1/review-items/${id}/${action === 'answer' ? 'answer' : 'decisions'}`, { method: action === 'answer' ? 'PUT' : 'POST', headers: { 'Idempotency-Key': keys.get(fingerprint) }, body: JSON.stringify(body), signal: controller.signal })
     if (controller.signal.aborted) return
+    if(action === 'answer') { clearReviewDraft(draftKey.value); draftKey.value = '' }
     keys.delete(fingerprint); message.value = action === 'answer' ? '소명을 저장했습니다.' : action === 'ACCEPT' ? '소명을 수락했습니다.' : '소명 보완을 요청했습니다.'
     await load(); emit('changed')
   } catch (cause) { if (cause.name !== 'AbortError') error.value = errorText(cause) }
@@ -114,7 +127,7 @@ async function attach() {
   busy.value = true; error.value = ''
   try {
     await session.request(`/api/v1/review-items/${detail.value.id}/attachments`, { method: 'POST', body, headers: { 'Idempotency-Key': crypto.randomUUID() }, signal: controller.signal })
-    if (!controller.signal.aborted) { await select(selectedId.value); emit('changed') }
+    if (!controller.signal.aborted) { await select(selectedId.value,true); emit('changed') }
   } catch (cause) { if (cause.name !== 'AbortError') error.value = errorText(cause) }
   finally { busy.value = false }
 }
@@ -141,27 +154,37 @@ onBeforeUnmount(dispose)
 
 <template>
   <section class="panel current-reviews">
-    <div class="section-heading"><h2>변경 항목·소명</h2><span class="muted">{{ items.length }}개 항목</span></div>
+    <div class="section-heading"><h2>변경 항목·소명</h2><span class="muted">{{submission.status === 'DRAFT' ? '소명' : '요청 소명'}} {{ progress?.answered ?? 0 }}/{{ progress?.required ?? items.length }} 작성</span></div>
     <p class="muted">비교 기준 · {{ baselineLabel(comparisonBaseline || submission.baseline) }}</p>
+    <p v-if="!comparisonBaseline || comparisonBaseline.kind === 'NONE'" class="first-submission-notice">이전 비교 제출본 없음 · 현재 제출값만 표시합니다. 이전 값과 차액·차이율은 —로 표시합니다.</p>
     <PMessage v-if="error" severity="error" :closable="false">{{ error }}</PMessage>
     <PMessage v-if="message" severity="success" :closable="false">{{ message }}</PMessage>
     <PMessage v-if="loading" severity="info" :closable="false">소명 항목을 불러오는 중…</PMessage>
-    <PMessage v-else-if="!items.length" severity="secondary" :closable="false">현재 제출본에 소명 대상이 없습니다.</PMessage>
+    <PMessage v-else-if="!items.length" severity="secondary" :closable="false">{{ submission.type === 'ANNUAL_PLAN' ? '연간 계획은 비교 기준 없이 제출 파일을 확인해 제출할 수 있습니다.' : '현재 제출본에 작성할 소명 대상이 없습니다.' }}</PMessage>
     <div v-if="items.length" class="review-layout">
       <aside class="review-list" aria-label="소명 항목 선택">
-        <PButton v-for="item in items" :key="item.id" class="review-item" :severity="selectedId === item.id ? 'primary' : 'secondary'" :outlined="selectedId !== item.id" :aria-pressed="selectedId === item.id" :disabled="busy" @click="select(item.id)">
-          <span class="review-item-content"><span>{{ item.reportItem.name }}</span><small>{{ item.month }}월 · {{ { PLAN: '계획', ACTUAL: '실적', ESTIMATE: '추정' }[item.scenario] }} · {{ { EMPTY: '미작성', WRITTEN: '작성 완료', INHERITED: '이전 소명 유지' }[item.answerState] }}</small></span>
-        </PButton>
+        <details v-for="group in groups" :key="group.group" class="review-group" open>
+          <summary>{{ group.group === 'REVENUE' ? '매출' : '영업비용' }} <small>{{ group.cellCount }}개 셀</small></summary>
+          <details v-for="period in group.months" :key="`${period.month}-${period.scenario}`" class="review-period" open>
+            <summary>{{ period.month }}월 {{ scenarioLabel(period.scenario) }} <small>{{ period.items.length }}개 항목</small></summary>
+            <PButton v-for="item in period.items" :key="item.reviewItemId" class="review-item" :class="{active:selectedId === item.reviewItemId}" :severity="selectedId === item.reviewItemId ? 'primary' : 'secondary'" :outlined="selectedId !== item.reviewItemId" :aria-pressed="selectedId === item.reviewItemId" :disabled="busy" @click="select(item.reviewItemId)">
+              <span class="review-item-content"><strong>{{ item.name }}</strong><small>{{ item.sourceCell || '원본 셀은 상세에서 확인' }}</small><span class="answer-state" :class="item.answerState">{{ {EMPTY:'미작성',WRITTEN:'작성 완료',INHERITED:'이전 소명 유지'}[item.answerState] || item.answerState }}</span></span>
+            </PButton>
+          </details>
+        </details>
       </aside>
       <div v-if="detail" class="review-detail">
         <h3>{{ detail.path }}</h3>
-        <PDataTable :value="detail.rows" stripedRows scrollable :tableStyle="{minWidth:'36rem'}" :pt="{table:{'aria-label':'원본 셀별 금액 비교 · 원'}}">
+        <p class="muted">금액 단위: 원<span v-if="hasPrevious"> · 승인 기준 차이와 직전 반려본 대비 수정 차이를 구분합니다.</span></p>
+        <PDataTable :value="displayRows" stripedRows scrollable :tableStyle="{minWidth:'36rem'}" :pt="{table:{'aria-label':'원본 셀별 금액 비교 · 원'}}">
           <PColumn header="원본 셀"><template #body="{data}">{{data.sourceCell || '—'}}</template></PColumn>
-          <PColumn header="기준" bodyClass="number"><template #body="{data}">{{formatMoney(data.baseline)}}</template></PColumn>
-          <PColumn v-if="detail.rows.some(row => row.previous !== null)" header="직전 반려 제출값" bodyClass="number"><template #body="{data}">{{formatMoney(data.previous)}}</template></PColumn>
-          <PColumn header="현재" bodyClass="number"><template #body="{data}">{{formatMoney(data.current)}}</template></PColumn>
-          <PColumn header="차액" bodyClass="number"><template #body="{data}">{{formatMoney(data.diff)}}</template></PColumn>
-          <PColumn header="차이율"><template #body="{data}">{{data.rate === null ? '—' : data.rate + '%'}}</template></PColumn>
+          <PColumn header="승인 기준값" bodyClass="number"><template #body="{data}">{{formatMoney(data.baseline)}}</template></PColumn>
+          <PColumn v-if="hasPrevious" header="직전 반려 제출값" bodyClass="number"><template #body="{data}">{{formatMoney(data.previous)}}</template></PColumn>
+          <PColumn header="이번 제출값" bodyClass="number"><template #body="{data}">{{formatMoney(data.current)}}</template></PColumn>
+          <PColumn header="승인 기준 차액" bodyClass="number"><template #body="{data}">{{formatMoney(data.diff)}}</template></PColumn>
+          <PColumn header="승인 기준 차이율"><template #body="{data}">{{data.rate === null ? '—' : data.rate + '%'}}</template></PColumn>
+          <PColumn v-if="hasPrevious" header="직전 반려본 대비 수정액" bodyClass="number"><template #body="{data}">{{formatMoney(data.correction.diff)}}</template></PColumn>
+          <PColumn v-if="hasPrevious" header="직전 반려본 대비 수정률"><template #body="{data}">{{data.correction.rate == null ? '—' : data.correction.rate + '%'}}</template></PColumn>
           <template #empty>비교할 원본 셀이 없습니다.</template>
         </PDataTable>
         <PMessage v-if="latest?.requestNote" severity="info" :closable="false" class="preserve-lines">{{latest.requestNote}}</PMessage>
@@ -174,7 +197,9 @@ onBeforeUnmount(dispose)
             <template #empty>조회 가능한 원천 근거가 없습니다.</template>
           </PDataTable>
         </PPanel>
+        <section v-if="detail.previousExplanation" class="previous-explanation"><h4>지난 승인 소명</h4><p class="preserve-lines">{{detail.previousExplanation.answer}}</p><small>{{detail.previousExplanation.approvedLabel || '승인된 소명'}} · {{detail.previousExplanation.answeredBy?.name || '—'}} · {{dateTime(detail.previousExplanation.answeredAt)}}</small></section>
         <form v-if="editable" @submit.prevent="command('answer')">
+          <p v-if="draftRestored" class="muted" role="status">저장 전 작성하던 내용을 유지했습니다. 소명 저장을 눌러 반영해 주세요.</p>
           <label :for="`review-answer-${detail.id}`">소명 작성<PTextarea :id="`review-answer-${detail.id}`" v-model="answer" rows="5" autoResize required maxlength="4000" :disabled="busy" /></label>
           <div class="attachment-input">
             <strong>근거 파일 첨부</strong>
@@ -194,7 +219,7 @@ onBeforeUnmount(dispose)
           <label :for="`review-note-${detail.id}`">경영기획 메모<PTextarea :id="`review-note-${detail.id}`" v-model="note" rows="3" autoResize maxlength="4000" :disabled="busy" /></label>
           <div class="button-row"><PButton type="button" label="소명 보완 요청" severity="warn" outlined :disabled="busy || !note.trim()" @click="command('REQUEST_AGAIN')" /><PButton type="submit" label="소명 수락" :loading="busy" :disabled="busy" /></div>
         </form>
-        <PPanel v-for="explanation in detail.explanations" :key="explanation.id" :header="`${explanation.round}회차 · ${{ PENDING: '검토 중', ACCEPTED: '수락', REQUESTED_AGAIN: '보완 요청' }[explanation.verdict] || explanation.verdict}`" toggleable>
+        <PPanel v-for="explanation in detail.explanations" :key="explanation.id" :header="`${explanation.round}회차 · ${{ PENDING: '검토 중', ACCEPTED: '승인', REJECTED: '소명 보완 요청', REQUESTED_AGAIN: '보완 요청' }[explanation.verdict] || explanation.verdict}`" toggleable>
           <p class="preserve-lines">{{ explanation.answer || '아직 작성된 소명이 없습니다.' }}</p><small>{{ explanation.answeredBy?.name }} · {{ dateTime(explanation.answeredAt) }}</small><p v-if="explanation.reviewNote" class="preserve-lines">{{ explanation.reviewNote }}</p>
         </PPanel>
       </div>
@@ -204,6 +229,18 @@ onBeforeUnmount(dispose)
 </template>
 
 <style scoped>
+.first-submission-notice {padding:12px 16px;background:#f0f5fb;border-radius:8px;color:#415672;}
+.review-group > summary,.review-period > summary {cursor:pointer;font-weight:700;padding:10px;border-radius:7px;}
+.review-group > summary {background:#203e61;color:white;}
+.review-period {margin:8px 0 8px 8px;border-left:2px solid #d7e3f0;padding-left:8px;}
+.review-period > summary {background:#e4f2f3;color:#195866;margin-bottom:8px;}
+summary small {float:right;font-weight:400;}
+.review-period .review-item {margin-bottom:8px;}
+.answer-state {align-self:flex-start;font-size:12px;border-radius:6px;padding:2px 7px;background:#fff2d5;color:#8a5300;}
+.answer-state.WRITTEN,.answer-state.INHERITED {background:#e3f4eb;color:#226446;}
+.previous-explanation {padding:16px;background:#f2f7f2;border:1px solid #d9e9dc;border-radius:10px;}
+.previous-explanation h4 {margin:0;}
+
 .review-layout { display:grid; grid-template-columns:minmax(200px,1fr) minmax(0,3fr); gap:20px; }
 .review-list { display:flex; flex-direction:column; gap:8px; max-height:600px; overflow:auto; }
 .review-item { width:100%; justify-content:flex-start; text-align:left; }

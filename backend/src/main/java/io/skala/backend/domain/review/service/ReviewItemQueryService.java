@@ -75,8 +75,10 @@ public class ReviewItemQueryService {
         Submission submission = submissionAccess.loadForRead(submissionId, user);
         View view = reviewComparison.build(submission);
         Map<Long, ReviewExplanation> round1 = reviewExplanationRepository.findAllBySubmissionId(submissionId).stream()
-                .filter(e -> e.getRound() == ExplanationTargetService.ORG_ROUND)
-                .collect(Collectors.toMap(e -> e.getReviewItem().getId(), Function.identity()));
+                .filter(e -> submission.getStatus() != SubmissionStatus.DRAFT
+                        || e.getRound() == ExplanationTargetService.ORG_ROUND)
+                .collect(Collectors.toMap(e -> e.getReviewItem().getId(), Function.identity(),
+                        (a, b) -> a.getRound() >= b.getRound() ? a : b));
 
         Map<ReportItemKind, TreeMap<Integer, List<OrgReviewListResponse.Item>>> grouped = new LinkedHashMap<>();
         grouped.put(ReportItemKind.REVENUE, new TreeMap<>());
@@ -114,7 +116,15 @@ public class ReviewItemQueryService {
             groups.add(new OrgReviewListResponse.Group(kind.name(),
                     months.stream().mapToInt(m -> m.items().size()).sum(), months));
         });
-        ExplanationTargetService.Progress progress = explanationTargetService.progress(submissionId);
+        ExplanationTargetService.Progress progress;
+        if (submission.getStatus() == SubmissionStatus.DRAFT) {
+            progress = explanationTargetService.progress(submissionId);
+        } else {
+            List<ReviewExplanation> requested = round1.values().stream()
+                    .filter(e -> e.getRequestedAt() != null).toList();
+            progress = new ExplanationTargetService.Progress(
+                    (int) requested.stream().filter(ReviewExplanation::isAnswered).count(), requested.size());
+        }
         return new OrgReviewListResponse(baseline(view),
                 new OrgReviewListResponse.Progress(progress.answered(), progress.required()), groups);
     }
