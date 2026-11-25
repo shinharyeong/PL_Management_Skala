@@ -32,7 +32,8 @@ spec:
       containers:
         - name: backend
           image: backend-image   # kustomization.yaml images가 ECR 주소·태그로 바꾼다
-          ports: [{ name: http, containerPort: 8080 }]
+          # management(8081): actuator health·prometheus. prod 프로필에서 분리(application-prod.yml). Ingress에는 열지 않는다.
+          ports: [{ name: http, containerPort: 8080 }, { name: management, containerPort: 8081 }]
           envFrom:
             - secretRef: { name: rds-credentials }          # SPRING_DATASOURCE_URL, PG* (USERNAME·PASSWORD는 아래 env로)
             - configMapRef: { name: backend-config }
@@ -49,14 +50,14 @@ spec:
             limits: { cpu: 1500m, memory: 2Gi }
           volumeMounts: [{ name: data, mountPath: /data }]
           startupProbe:
-            httpGet: { path: /actuator/health, port: http }
+            httpGet: { path: /actuator/health, port: management }
             periodSeconds: 10
             failureThreshold: 30
           readinessProbe:
-            httpGet: { path: /actuator/health/readiness, port: http }
+            httpGet: { path: /actuator/health/readiness, port: management }
             periodSeconds: 10
           livenessProbe:
-            httpGet: { path: /actuator/health/liveness, port: http }
+            httpGet: { path: /actuator/health/liveness, port: management }
             periodSeconds: 20
       volumes:
         - name: data
@@ -67,4 +68,6 @@ kind: Service
 metadata: { name: backend }
 spec:
   selector: { app: backend }
-  ports: [{ name: http, port: 8080, targetPort: http }]
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+    - { name: management, port: 8081, targetPort: management }   # Prometheus 수집용(클러스터 안)

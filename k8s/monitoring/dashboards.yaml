@@ -1,0 +1,10 @@
+# Grafana 대시보드 공급자: grafana-dashboards ConfigMap(k8s/monitoring/dashboards/*.json)을 읽는다
+apiVersion: 1
+providers:
+  - name: pl-management
+    folder: PL Management
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

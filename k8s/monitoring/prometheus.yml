@@ -1,0 +1,15 @@
+# Prometheus 수집 대상. 서비스 주소를 직접 적는다(팀 권한에 Role 생성이 없어 쿠버네티스 자동 탐색을 못 쓴다).
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  # Spring Boot actuator — 관리 포트 8081(k8s/backend.yaml). HTTP 요청·JVM·DB 커넥션 풀 지표
+  - job_name: backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["backend:8081"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
