@@ -1,0 +1,49 @@
+# 지표 수집(Prometheus). 팀 권한에는 Role을 만들 권한이 없어 쿠버네티스 자동 탐색 대신 서비스 주소를 직접 적는다(prometheus.yml).
+# 저장소 PVC prometheus-data는 k8s/once/에 있다 — Actions 배포 Role은 PVC를 다룰 수 없어 개인 kubectl로 한 번만 만든다.
+# 클러스터 안에서만 쓴다(Ingress 없음). 화면은 Grafana(/grafana)로 본다.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: prometheus, labels: { app: prometheus } }
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy: { type: Recreate }   # RWO 볼륨이라 새 파드가 뜨기 전에 이전 파드를 내린다
+  selector: { matchLabels: { app: prometheus } }
+  template:
+    metadata: { labels: { app: prometheus } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 65534, runAsGroup: 65534, fsGroup: 65534 }
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.4
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            # PVC 5Gi 안에서 오래된 지표부터 지운다
+            - --storage.tsdb.retention.time=15d
+            - --storage.tsdb.retention.size=4GB
+          ports: [{ name: http, containerPort: 9090 }]
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /-/ready, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /-/healthy, port: http }
+            periodSeconds: 30
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus }
+            - { name: data, mountPath: /prometheus }
+      volumes:
+        - name: config
+          configMap: { name: prometheus-config }
+        - name: data
+          persistentVolumeClaim: { claimName: prometheus-data }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: prometheus }
+spec:
+  selector: { app: prometheus }
+  ports: [{ name: http, port: 9090, targetPort: http }]

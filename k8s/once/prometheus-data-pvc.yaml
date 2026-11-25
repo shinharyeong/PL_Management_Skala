@@ -1,0 +1,11 @@
+# Prometheus 지표 저장소. GitHub Actions 배포 Role은 PVC를 만들 수 없어 개인 kubectl로 한 번만 적용한다.
+# 보관 기간·크기는 k8s/monitoring/prometheus.yaml(15일, 4GB)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: p1-2
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 5Gi }

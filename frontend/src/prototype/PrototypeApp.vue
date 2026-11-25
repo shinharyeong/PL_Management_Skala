@@ -1,5 +1,5 @@
 <script setup>
-import copy from './ui-copy.json'
+import copy from './copy-text.js'
 import PButton from 'primevue/button'
 import PInputText from 'primevue/inputtext'
 import PDialog from 'primevue/dialog'
@@ -20,12 +20,14 @@ import { pageTitles } from './router.js'
 import NavIcon from './NavIcon.vue'
 import FeedbackToast from './FeedbackToast.vue'
 
+const CopyEditor = import.meta.env.DEV ? defineAsyncComponent(() => import('./CopyEditor.vue')) : null
 const store = usePrototypeStore()
 const route = useRoute(), router = useRouter()
 watch(()=>store.error,value=>{if(value&&store.toast?.message!==value)store.notify(value,'error')})
 const page = computed(() => String(route.name || 'login'))
 const email = ref(''), code = ref(''), authStep = ref('email'), authError = ref('')
 const logoutVisible = ref(false)
+const logoutDialog = ref(null)
 const sentAt = ref(null), now = ref(Date.now())
 const authResponse = ref(null)
 const challenge = computed(() => ({remaining: Math.max(0,Math.ceil((Date.parse(authResponse.value?.expiresAt)-now.value)/1000))||0, resendIn:Math.max(0,Math.ceil((Date.parse(authResponse.value?.resendAvailableAt)-now.value)/1000))||0, expired:authResponse.value && now.value >= Date.parse(authResponse.value.expiresAt)}))
@@ -142,7 +144,7 @@ async function signIn(){if(await store.run(()=>store.login(authResponse.value.em
  * Args: 없음. Returns: Promise<void>.
  * Raises: 없음; store.run이 표시한다. Side Effects: 로그아웃 요청과 인증 상태·대화상자·경로 변경.
  */
-async function logout(){if(await store.run(()=>store.logout())){changeEmail();email.value='';logoutVisible.value=false;router.replace({name:'login'})}}
+async function logout(){if(await store.run(()=>store.logout())){changeEmail();email.value='';logoutVisible.value=false;logoutDialog.value?.close();router.replace({name:'login'})}}
 watch(()=>store.actor,actor=>{if(!actor)router.replace({name:'login'})})
 watch(page,async value=>{
   if(!store.actor)return
@@ -150,71 +152,69 @@ watch(page,async value=>{
     await store.refreshBadge()
     if(['monthly','monthly-request'].includes(value))await store.loadMonthly()
   })
-})
+}, { immediate: true })
 </script>
 
 <template>
+  <CopyEditor v-if="localDevelopment" />
   <FeedbackToast />
-  <div class="prototype-banner">경영팀을 부탁해 <span>서버 연결본 · 로컬 검증 환경</span></div>
+  <div class="prototype-banner"><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span> <span><span data-copy-key="shellText.text002">{{ copy.shellText.text002 }}</span></span></div>
   <div v-if="page === 'login'" class="auth-page">
-    <a class="brand auth-brand" href="#/login">경영팀을 부탁해</a>
+    <a class="brand auth-brand" href="#/login"><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span></a>
     <main class="auth-main">
-      <section v-if="localDevelopment" class="auth-form local-account-form"><h1>로컬 계정 선택</h1><p class="muted">접속할 계정을 선택해 주세요.</p><div class="local-account-list"><PButton v-for="account in localAccounts" :key="account.email" class="local-account-button" severity="secondary" outlined :disabled="store.busy" @click="localSignIn(account)"><strong>{{account.name}}</strong><span>{{account.hint}}</span></PButton></div><p v-if="store.busy" class="muted" role="status">선택한 계정으로 접속 중입니다.</p><p v-if="store.error" class="error" role="alert">{{store.error}}</p></section>
+      <section v-if="localDevelopment" class="auth-form local-account-form"><h1><span data-copy-key="shellText.text003">{{ copy.shellText.text003 }}</span></h1><p class="muted"><span data-copy-key="shellText.text004">{{ copy.shellText.text004 }}</span></p><div class="local-account-list"><button v-for="account in localAccounts" :key="account.email" class="local-account-button" :disabled="store.busy" @click="localSignIn(account)"><strong>{{account.name}}</strong><span>{{account.hint}}</span></button></div><p v-if="store.busy" class="muted" role="status"><span data-copy-key="shellText.text005">{{ copy.shellText.text005 }}</span></p><p v-if="store.error" class="error" role="alert">{{store.error}}</p></section>
       <form v-else class="auth-form" @submit.prevent="authStep === 'email' ? requestCode() : signIn()">
         <h1>{{ authStep === 'email' ? '로그인' : '인증코드 입력' }}</h1>
         <p class="muted auth-description">{{ authStep === 'email' ? '회사 이메일로 인증 메일을 받아\n로그인해 주세요.' : `${email}\n인증코드 6자리를 입력해 주세요.` }}</p>
         <div v-if="authStep === 'email'" class="field">
-          <label for="company-email">{{ copy.login.emailLabel }}</label>
-          <PInputText id="company-email" v-model="email" type="email" autocomplete="email" required placeholder="kim.plan@sk.com" :aria-invalid="!!authError" aria-describedby="auth-help auth-error" @input="authError = ''" />
-          <small id="auth-help" class="muted">{{ copy.login.emailHelp }}</small>
+          <label for="company-email"><span data-copy-key="login.emailLabel">{{ copy.login.emailLabel }}</span></label>
+          <input id="company-email" v-model="email" type="email" autocomplete="email" required placeholder="kim.plan@sk.com" :aria-invalid="!!authError" aria-describedby="auth-help auth-error" @input="authError = ''" />
+          <small id="auth-help" class="muted"><span data-copy-key="login.emailHelp">{{ copy.login.emailHelp }}</span></small>
         </div>
         <div v-else class="field">
-          <div class="row-between"><label for="auth-code">인증코드</label><span class="muted">남은 시간 {{ clockText(challenge.remaining) }}</span></div>
-          <PInputText id="auth-code" v-model="code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code" placeholder="6자리 인증코드" required :aria-invalid="!!authError" aria-describedby="auth-error auth-code-help" @input="authError = ''" />
-          <small id="auth-code-help" class="muted">{{ copy.login.codeHelp }}</small>
-          <p v-if="challenge.expired" class="error" role="status">유효시간 3분이 지났습니다. 코드를 다시 받아 주세요.</p>
-          <div class="row-between"><PButton type="button" severity="secondary" variant="text" :disabled="challenge.resendIn > 0" @click="resendCode">{{ challenge.resendIn ? `${clockText(challenge.resendIn)} 후 재전송` : '인증코드 다시 받기' }}</PButton></div>
+          <div class="row-between"><label for="auth-code"><span data-copy-key="shellText.text006">{{ copy.shellText.text006 }}</span></label><span class="muted"><span data-copy-key="shellText.text007">{{ copy.shellText.text007 }}</span> {{ clockText(challenge.remaining) }}</span></div>
+          <input id="auth-code" v-model="code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code" placeholder="6자리 인증코드" required :aria-invalid="!!authError" aria-describedby="auth-error auth-code-help" @input="authError = ''" />
+          <small id="auth-code-help" class="muted"><span data-copy-key="login.codeHelp">{{ copy.login.codeHelp }}</span></small>
+          <p v-if="challenge.expired" class="error" role="status"><span data-copy-key="shellText.text008">{{ copy.shellText.text008 }}</span></p>
+          <div class="row-between"><button type="button" class="text-button" :disabled="challenge.resendIn > 0" @click="resendCode">{{ challenge.resendIn ? `${clockText(challenge.resendIn)} 후 재전송` : '인증코드 다시 받기' }}</button></div>
         </div>
         <p v-if="authError" id="auth-error" class="error" role="alert">{{ authError }}</p>
         <p v-if="authNotice && authStep === 'code'" class="muted" role="status">{{ authNotice }}</p>
-        <PButton class="auth-cta" type="submit" :disabled="store.busy || (authStep === 'code' && challenge.expired)">{{ authStep === 'email' ? '인증 메일 받기' : '로그인' }}</PButton>
-        <p class="muted">{{ copy.login.loginHelp }}</p><aside v-if="localDevelopment" class="auth-demo"><strong>로컬 검증 환경</strong><p v-if="authStep === 'email'">인증 메일 받기를 누르면 발급된 인증코드가 여기에 표시됩니다.</p><p v-else-if="challenge.expired" role="status">인증코드가 만료되었습니다. 코드를 다시 받아 주세요.</p><p v-else-if="localAuthCode" role="status">발급된 인증코드 <strong class="local-auth-code">{{ localAuthCode }}</strong></p><p v-else role="status">{{ localCodeNotice || '인증코드를 확인하는 중입니다.' }}</p><p>경영기획팀 <code>kim.plan@sk.com</code></p><p>사업부15 담당자 <code>f66.test@sk.com</code></p></aside>
+        <button class="btn primary auth-cta" type="submit" :disabled="store.busy || (authStep === 'code' && challenge.expired)">{{ authStep === 'email' ? '인증 메일 받기' : '로그인' }}</button>
+        <p class="muted"><span data-copy-key="login.loginHelp">{{ copy.login.loginHelp }}</span></p><aside v-if="localDevelopment" class="auth-demo"><strong><span data-copy-key="shellText.text009">{{ copy.shellText.text009 }}</span></strong><p v-if="authStep === 'email'"><span data-copy-key="shellText.text010">{{ copy.shellText.text010 }}</span></p><p v-else-if="challenge.expired" role="status"><span data-copy-key="shellText.text011">{{ copy.shellText.text011 }}</span></p><p v-else-if="localAuthCode" role="status"><span data-copy-key="shellText.text012">{{ copy.shellText.text012 }}</span> <strong class="local-auth-code">{{ localAuthCode }}</strong></p><p v-else role="status">{{ localCodeNotice || '인증코드를 확인하는 중입니다.' }}</p><p><span data-copy-key="shellText.text013">{{ copy.shellText.text013 }}</span> <code>kim.plan@sk.com</code></p><p><span data-copy-key="shellText.text014">{{ copy.shellText.text014 }}</span> <code>f66.test@sk.com</code></p></aside>
 
       </form>
     </main>
-    <footer class="muted">{{ copy.login.footer }}</footer>
+    <footer class="muted"><span data-copy-key="login.footer">{{ copy.login.footer }}</span></footer>
   </div>
   <div v-else-if="store.actor" class="app-layout">
-    <a class="skip-link" href="#main-content" @click.prevent="focusMain">본문으로 건너뛰기</a>
+    <a class="skip-link" href="#main-content" @click.prevent="focusMain"><span data-copy-key="shellText.text015">{{ copy.shellText.text015 }}</span></a>
     <aside class="sidebar">
-      <a class="brand" :href="store.actor.role === 'org' ? '#/org-requests' : '#/home'"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>경영팀을 부탁해</a>
+      <a class="brand" :href="store.actor.role === 'org' ? '#/org-requests' : '#/home'"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span></a>
       <p class="role-caption">{{ store.actor.role === 'org' ? '조직 담당자' : '경영기획팀' }}</p>
       <nav aria-label="주 메뉴">
-        <PMenu :model="menuModel">
-          <template #item="{ item, props: itemProps }">
-            <a v-bind="itemProps.action" :href="`#/${item.id}`" :class="{active: itemSelected(item), 'workspace-item': item.org}" :aria-current="itemSelected(item) ? 'page' : undefined" @click.prevent="selectMenu(item)">
-              <img v-if="item.icon" :src="`/assets/${item.icon}${itemSelected(item) ? '-active' : ''}.svg`" alt="" />
-              <NavIcon v-else-if="!item.org" :name="item.id" />
-              <span>{{ item.label }}</span><PBadge v-if="item.count" :value="item.count" severity="info" />
-            </a>
-          </template>
-        </PMenu>
+        <template v-for="menu in menus" :key="menu.id">
+          <a :href="`#/${menu.id}`" class="nav-link" :class="{ active: menuSelected(menu.id) }" :aria-current="menuSelected(menu.id) ? 'page' : undefined">
+            <img v-if="menu.icon" :src="`/assets/${menu.icon}${menuSelected(menu.id) ? '-active' : ''}.svg`" alt="" />
+            <NavIcon v-else :name="menu.id" />
+            <span><span :data-copy-key="'pages.'+menu.id">{{ copy.pages[menu.id] || menu.label }}</span></span><span v-if="menu.id === 'notifications' && store.unread" class="nav-count">{{ store.unread }}</span>
+          </a>
+          <div v-if="menu.id === 'monthly' && store.workspaces.length" class="workspace-nav">
+            <button v-for="work in store.workspaces" :key="work.org" class="nav-link" :class="{ active: ['workspace','cell'].includes(page) && store.activeOrg === work.org }" @click="store.activeOrg = work.org; navigate('workspace')"><span>{{ work.name }}</span><span class="nav-count">{{ work.count }}</span></button>
+          </div>
+        </template>
       </nav>
-      <div class="sidebar-user"><span class="user-avatar" aria-hidden="true">{{ store.actor.name.slice(0,1) }}</span><strong>{{ store.actor.name }}</strong><small>{{ store.actor.department }}</small><PButton severity="secondary" variant="text" @click="logoutVisible = true">{{ copy.login.logout }}</PButton></div>
+      <div class="sidebar-user"><span class="user-avatar" aria-hidden="true">{{ store.actor.name.slice(0,1) }}</span><strong>{{ store.actor.name }}</strong><small>{{ store.actor.department }}</small><button class="text-button" @click="logoutDialog.showModal()"><span data-copy-key="login.logout">{{ copy.login.logout }}</span></button></div>
     </aside>
     <div class="workspace-shell">
     <main id="main-content" class="main-content" tabindex="-1">
-      <PMessage v-if="store.error" severity="error" :closable="false">{{ store.error }}</PMessage><PProgressBar v-if="store.busy" mode="indeterminate" class="page-progress" aria-label="처리 중" />
+      <p v-if="store.error" class="notice error" role="alert">{{ store.error }}</p><p v-if="store.busy" class="muted" role="status"><span data-copy-key="shellText.text016">{{ copy.shellText.text016 }}</span></p>
       <HomePanel v-if="page === 'home'" @navigate="navigate" />
       <MonthlyPanel v-else-if="monthlyPages.includes(page)" :page="page" @navigate="navigate" />
       <OrgPanel v-else-if="page.startsWith('org-')" :page="page" @navigate="navigate" />
-      <ReportPanel v-else-if="page==='reports'" />
-      <ManagementPanels v-else :page="page" @navigate="navigate" />
+      <ReportPanel v-else-if="page==='reports'" /><ManagementPanels v-else :page="page" @navigate="navigate" />
     </main>
     </div>
   </div>
-  <PDialog v-model:visible="logoutVisible" modal :header="copy.login.logoutTitle" :style="{width:'28rem'}" :closable="!store.busy" :close-on-escape="!store.busy">
-    <p>{{ copy.login.logoutHelp }}</p>
-    <template #footer><PButton severity="secondary" outlined :disabled="store.busy" @click="logoutVisible=false">{{ copy.login.cancel }}</PButton><PButton :loading="store.busy" @click="logout">{{ copy.login.logout }}</PButton></template>
-  </PDialog>
+  <dialog ref="logoutDialog" class="confirm-dialog" aria-labelledby="logout-title"><h2 id="logout-title"><span data-copy-key="login.logoutTitle">{{ copy.login.logoutTitle }}</span></h2><p class="muted"><span data-copy-key="login.logoutHelp">{{ copy.login.logoutHelp }}</span></p><div class="actions"><button class="btn" @click="logoutDialog.close()"><span data-copy-key="login.cancel">{{ copy.login.cancel }}</span></button><button class="btn primary" @click="logout"><span data-copy-key="login.logout">{{ copy.login.logout }}</span></button></div></dialog>
 </template>

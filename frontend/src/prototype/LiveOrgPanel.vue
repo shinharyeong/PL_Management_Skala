@@ -1,5 +1,5 @@
 <script setup>
-import copy from './ui-copy.json'
+import copy from './copy-text.js'
 import {uploadGuidance} from './upload-guidance.js'
 import {computed,ref,watch,onBeforeUnmount} from 'vue'
 import {usePrototypeStore} from './live-store.js'
@@ -25,6 +25,9 @@ import './org-live.css'
 const props=defineProps({page:String}),emit=defineEmits(['navigate']),store=usePrototypeStore()
 const filenameHelp=computed(()=>uploadGuidance(store.actor,store.activeOrgRequest))
 const file=ref(null),submission=ref(null),diagnostics=ref(null),preview=ref(null),reply=ref(''),request=ref(null),loading=ref(false)
+const dragOver=ref(false)
+const statusClass=value=>['REJECTED','RESUBMIT_REQUESTED'].includes(value)?'recheck':value==='APPROVED'?'approved':value==='PENDING'?'progress':'waiting'
+function dropFile(event){dragOver.value=false;chooseFile({files:Array.from(event.dataTransfer?.files||[])})}
 const fileInput=ref(null),fileError=ref(''),historyType=ref('monthly'),historyPeriod=ref('all'),historyStatus=ref('all'),openHistoryId=ref('')
 const historyKind=computed(()=>historyType.value==='annual'?'ANNUAL_PLAN':'MONTHLY_ACTUAL')
 const historyByKind=computed(()=>store.orgHistory.filter(s=>s.kind===historyKind.value))
@@ -51,10 +54,10 @@ function date(value){if(!value)return '—';const d=new Date(value);return Numbe
  * Side Effects: 파일 선택·오류 상태만 변경하며 HTTP 요청은 보내지 않는다.
  */
 function chooseFile(event){
-  const selected=submissionFileSelection(event)
+  const selected=submissionFileSelection(event?.target?.files ? {files:Array.from(event.target.files)} : event)
   file.value=selected.file
   fileError.value=selected.error
-  if(selected.error){fileInput.value?.clear();fileError.value=selected.error}
+  if(selected.error){fileInput.value?.clear?.();if(fileInput.value instanceof HTMLInputElement)fileInput.value.value='';fileError.value=selected.error}
 }
 /** 선택한 제출 파일을 해제한다.
  * Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 메모리 선택·오류만 초기화한다.
@@ -120,96 +123,57 @@ async function submit(){await store.run(async()=>{await store.api(`/api/v1/submi
 async function template(){await store.run(async()=>saveFile(await store.api('/api/v1/submission-template/file',{blob:true}),'제출양식.xlsx'))}
 </script>
 <template>
-  <section class="org-panel org-live">
-    <PMessage v-if="loading" severity="info" :closable="false">불러오는 중…</PMessage>
-    <template v-if="page==='org-requests'">
-      <h1>{{ copy.pages['org-requests'] }}</h1>
-      <section class="card org-card" aria-labelledby="org-open-title">
-        <div class="org-section-heading"><h2 id="org-open-title">열린 요청</h2><span class="muted">{{store.orgRequests.length}}건</span></div>
-        <article v-for="item in store.orgRequests" :key="item.id" class="org-request-card" :class="{'org-resubmit':item.isResubmit}">
-          <div class="org-live-request-content">
-            <PTag :severity="item.isResubmit?'danger':item.kind==='EXPLANATION'?'warn':'info'" :value="item.isResubmit?'재제출 필요':item.kind==='EXPLANATION'?'소명 요청':'제출 요청'" />
-            <h3>{{item.title}}</h3>
-            <PMessage v-if="item.reviewComment" severity="warn" :closable="false" class="org-live-message"><strong>경영기획 재요청 코멘트</strong><p>{{item.reviewComment}}</p></PMessage>
-            <p class="muted">회신 기한 {{date(item.dueAt)}}</p>
-          </div>
-          <PButton :label="item.isResubmit?'재제출 시작':item.kind==='EXPLANATION'?'소명 시작':'제출 시작'" :disabled="store.busy" @click="open(item)" />
-        </article>
-        <PMessage v-if="!store.orgRequests.length" severity="secondary" :closable="false">열린 요청이 없습니다.</PMessage>
-      </section>
-    </template>
-    <template v-else-if="page==='org-history'">
-      <h1>{{ copy.pages['org-history'] }}</h1>
-      <section class="card org-card">
-        <div class="org-section-heading"><h2>제출본</h2><span class="muted">조회 {{historyRows.length}}건</span></div>
-        <PSelectButton v-model="historyType" :options="historyTypeOptions" optionLabel="label" optionValue="value" :allowEmpty="false" aria-label="제출 구분" />
-        <div class="org-history-filters">
-          <label for="org-history-period">대상 연월<PSelect inputId="org-history-period" v-model="historyPeriod" :options="historyPeriodOptions" optionLabel="label" optionValue="value" /></label>
-          <label for="org-history-status">처리 상태<PSelect inputId="org-history-status" v-model="historyStatus" :options="historyStatusOptions" optionLabel="label" optionValue="value" /></label>
-          <PButton label="초기화" severity="secondary" text @click="resetHistory" />
+<section class="org-panel org-live">
+  <p v-if="loading" class="muted" role="status"><span data-copy-key="organizationText.text001">{{ copy.organizationText.text001 }}</span></p>
+  <template v-if="page==='org-requests'">
+    <h1>{{ copy.pages['org-requests'] }}</h1>
+    <section class="card org-card" aria-labelledby="org-open-title">
+      <div class="org-section-heading"><h2 id="org-open-title"><span data-copy-key="organizationText.text002">{{ copy.organizationText.text002 }}</span></h2><span class="muted">{{store.orgRequests.length}}<span data-copy-key="organizationText.text003">{{ copy.organizationText.text003 }}</span></span></div>
+      <article v-for="item in store.orgRequests" :key="item.id" class="org-request-card" :class="{'org-resubmit':item.isResubmit}">
+        <div class="org-live-request-content"><span class="badge" :class="item.isResubmit?'recheck':item.kind==='EXPLANATION'?'progress':'submitted'">{{item.isResubmit?'재제출 필요':item.kind==='EXPLANATION'?'소명 요청':'제출 요청'}}</span><h3>{{item.title}}</h3><div v-if="item.reviewComment" class="org-rerequest-comment"><strong><span data-copy-key="organizationText.text004">{{ copy.organizationText.text004 }}</span></strong><p>{{item.reviewComment}}</p></div><p v-if="item.message" class="org-request-message">{{item.message}}</p><p class="muted"><span data-copy-key="organizationText.text005">{{ copy.organizationText.text005 }}</span> {{date(item.dueAt)}}</p></div>
+        <button class="btn primary" :disabled="store.busy" @click="open(item)">{{item.isResubmit?'재제출 시작':item.kind==='EXPLANATION'?'소명 시작':'제출 시작'}}</button>
+      </article>
+      <p v-if="!store.orgRequests.length" class="muted org-empty"><span data-copy-key="organizationText.text006">{{ copy.organizationText.text006 }}</span></p>
+    </section>
+  </template>
+  <template v-else-if="page==='org-history'">
+    <h1>{{ copy.pages['org-history'] }}</h1>
+    <section class="card org-card">
+      <div class="org-section-heading"><h2><span data-copy-key="organizationText.text007">{{ copy.organizationText.text007 }}</span></h2><span class="muted"><span data-copy-key="organizationText.text008">{{ copy.organizationText.text008 }}</span> {{historyRows.length}}<span data-copy-key="organizationText.text003">{{ copy.organizationText.text003 }}</span></span></div>
+      <div class="org-history-tabs" role="group" aria-label="제출 구분"><button :aria-pressed="historyType==='monthly'" :class="{active:historyType==='monthly'}" @click="historyType='monthly'"><span data-copy-key="organizationText.text009">{{ copy.organizationText.text009 }}</span></button><button :aria-pressed="historyType==='annual'" :class="{active:historyType==='annual'}" @click="historyType='annual'"><span data-copy-key="organizationText.text010">{{ copy.organizationText.text010 }}</span></button></div>
+      <div class="org-history-filters"><label><span data-copy-key="organizationText.text011">{{ copy.organizationText.text011 }}</span><select v-model="historyPeriod"><option value="all">전체 연월</option><option v-for="period in historyPeriods" :key="period" :value="period">{{period}}</option></select></label><label><span data-copy-key="organizationText.text012">{{ copy.organizationText.text012 }}</span><select v-model="historyStatus"><option value="all">전체 상태</option><option v-for="value in historyStatuses" :key="value" :value="value">{{historyStatusLabel(value)}}</option></select></label><button class="org-link-button" @click="resetHistory"><span data-copy-key="organizationText.text013">{{ copy.organizationText.text013 }}</span></button></div>
+      <div class="org-table-scroll" role="region" aria-label="제출 이력" tabindex="0"><table class="org-history-table"><thead><tr><th><span data-copy-key="organizationText.text014">{{ copy.organizationText.text014 }}</span></th><th><span data-copy-key="organizationText.text015">{{ copy.organizationText.text015 }}</span></th><th><span data-copy-key="organizationText.text016">{{ copy.organizationText.text016 }}</span></th><th><span data-copy-key="organizationText.text017">{{ copy.organizationText.text017 }}</span></th><th><span data-copy-key="organizationText.text018">{{ copy.organizationText.text018 }}</span></th></tr></thead><tbody><template v-for="s in historyRows" :key="s.id"><tr><td>{{s.requestTitle}}</td><td>{{s.label}}</td><td>{{date(s.submittedAt)}}</td><td><span class="badge" :class="statusClass(historyState(s))">{{historyStatusLabel(historyState(s))}}</span></td><td><button class="org-link-button" :aria-expanded="openHistoryId===s.id" @click="openHistoryId=openHistoryId===s.id?'':s.id"><span data-copy-key="organizationText.text019">{{ copy.organizationText.text019 }}</span></button></td></tr><tr v-if="openHistoryId===s.id"><td colspan="5" class="org-history-detail"><strong>{{s.requestTitle}}</strong><p v-if="s.reviewComment" class="org-rerequest-comment"><span data-copy-key="organizationText.text020">{{ copy.organizationText.text020 }}</span> {{s.reviewComment}}</p><p class="muted">{{s.label}} · {{date(s.submittedAt)}} · {{historyStatusLabel(historyState(s))}}</p><button class="btn" :disabled="store.busy" @click="store.run(()=>store.downloadSubmission(s.id,s.file?.name))">{{s.file?.name || '원본'}} ↓</button></td></tr></template></tbody></table></div>
+      <p v-if="!historyRows.length" class="muted org-empty"><span data-copy-key="organizationText.text021">{{ copy.organizationText.text021 }}</span></p>
+    </section>
+  </template>
+  <template v-else>
+    <h1>{{store.activeOrgRequest?.title || '제출 요청을 선택해 주세요'}}</h1>
+    <section v-if="store.activeOrgRequest" class="card org-card">
+      <template v-if="page==='org-upload'">
+        <h2>{{store.activeOrgRequest?.isResubmit?'엑셀 파일 재제출':'엑셀 파일 업로드'}}</h2><aside v-if="store.activeOrgRequest?.reviewComment" class="org-rerequest-comment"><strong><span data-copy-key="organizationText.text004">{{ copy.organizationText.text004 }}</span></strong><p>{{store.activeOrgRequest.reviewComment}}</p><small><span data-copy-key="organizationText.text022">{{ copy.organizationText.text022 }}</span></small></aside>
+        <p v-if="request?.request?.message" class="org-baseline muted org-live-message">{{request.request.message}}</p><p class="muted"><span data-copy-key="organizationText.text005">{{ copy.organizationText.text005 }}</span> {{date(request?.request?.dueAt)}}</p>
+        <div class="org-template"><div><strong><span data-copy-key="organizationText.text023">{{ copy.organizationText.text023 }}</span></strong><p class="muted"><span data-copy-key="organizationText.text024">{{ copy.organizationText.text024 }}</span></p></div><button class="btn" :disabled="store.busy" @click="template"><span data-copy-key="organizationText.text025">{{ copy.organizationText.text025 }}</span></button></div>
+        <p class="notice">{{filenameHelp}}</p>
+        <div class="org-dropzone" :class="{dragging:dragOver}" @dragover.prevent="dragOver=true" @dragleave.prevent="dragOver=false" @drop.prevent="!store.busy && dropFile($event)">
+          <strong>{{file?.name || '엑셀 파일을 여기에 끌어다 놓으세요'}}</strong><span class="muted"><span data-copy-key="organizationText.text026">{{ copy.organizationText.text026 }}</span></span>
+          <input ref="fileInput" class="org-file-input" type="file" accept=".xlsx,.xlsb" aria-label="제출할 엑셀 파일" :disabled="store.busy" @change="chooseFile" />
+          <div class="actions"><button class="btn" :disabled="store.busy" @click="fileInput?.click()">{{file?'파일 다시 선택':'파일 선택'}}</button><button v-if="file" class="btn danger" :disabled="store.busy" @click="file=null;fileError=''"><span data-copy-key="organizationText.text027">{{ copy.organizationText.text027 }}</span></button></div>
         </div>
-        <PDataTable :value="historyRows" dataKey="id" :expandedRows="openHistoryId?{[openHistoryId]:true}:{}" stripedRows scrollable :tableStyle="{minWidth:'42rem'}" :pt="{table:{'aria-label':'제출 이력'}}">
-          <PColumn field="requestTitle" header="제출 요청" />
-          <PColumn field="label" header="제출 버전" />
-          <PColumn header="제출일"><template #body="{data}">{{date(data.submittedAt)}}</template></PColumn>
-          <PColumn header="상태"><template #body="{data}"><PTag :severity="statusSeverity(historyState(data))" :value="historyStatusLabel(historyState(data))" /></template></PColumn>
-          <PColumn header="상세"><template #body="{data}"><PButton :label="openHistoryId===data.id?'닫기':'보기'" text :aria-expanded="openHistoryId===data.id" @click="toggleHistory(data.id)" /></template></PColumn>
-          <template #expansion="{data}"><CurrentSubmissionHistory :submission-id="data.id" /></template>
-          <template #empty>선택한 조건의 제출 이력이 없습니다.</template>
-        </PDataTable>
-      </section>
-    </template>
-    <template v-else>
-      <h1>{{store.activeOrgRequest?.title || '제출 요청을 선택해 주세요'}}</h1>
-      <section v-if="store.activeOrgRequest" class="card org-card">
-        <template v-if="page==='org-upload'">
-          <h2>{{store.activeOrgRequest?.isResubmit?'엑셀 파일 재제출':'엑셀 파일 업로드'}}</h2>
-          <PMessage v-if="store.activeOrgRequest?.reviewComment" severity="warn" :closable="false" class="org-live-message"><strong>경영기획 재요청 코멘트</strong><p>{{store.activeOrgRequest.reviewComment}}</p><small>코멘트를 확인하고 수정한 파일을 다시 제출해 주세요.</small></PMessage>
-          <p v-if="request?.request?.message" class="org-baseline muted org-live-message">{{request.request.message}}</p>
-          <p class="muted">회신 기한 {{date(request?.request?.dueAt)}}</p>
-          <div class="org-template"><div><strong>제출 양식</strong><p class="muted">요청에 맞는 엑셀 양식으로 제출해 주세요.</p></div><PButton label="양식 다운로드" severity="secondary" outlined :disabled="store.busy" @click="template" /></div>
-          <PMessage severity="info" :closable="false">{{filenameHelp}}</PMessage>
-          <PFileUpload :key="store.activeRequest" ref="fileInput" class="org-prime-upload" name="file" customUpload :auto="false" :multiple="false" accept=".xlsx,.xlsb" :maxFileSize="20*1024*1024" :fileLimit="1" :disabled="store.busy" :showUploadButton="false" :showCancelButton="false" invalidFileTypeMessage="{0}: .xlsx 또는 .xlsb 파일을 선택해 주세요." invalidFileSizeMessage="{0}: 20MB 이하 파일을 선택해 주세요." invalidFileLimitMessage="한 번에 파일 1개만 선택해 주세요." @select="chooseFile" @clear="clearFile">
-            <template #header="{chooseCallback,clearCallback}">
-              <PButton label="파일 선택" icon="pi pi-folder-open" severity="secondary" outlined :disabled="store.busy || Boolean(file)" @click="chooseCallback" />
-              <PButton v-if="file" label="선택한 파일 제거" icon="pi pi-times" severity="danger" text :disabled="store.busy" @click="clearCallback" />
-            </template>
-            <template #content="{messages}">
-              <PMessage v-for="message in messages" :key="message" severity="error" :closable="false">{{message}}</PMessage>
-              <div class="org-upload-prompt"><strong>{{file?.name || '엑셀 파일을 여기에 끌어다 놓으세요'}}</strong><span class="muted">.xlsx / .xlsb · 요청당 파일 1개 · 최대 20MB</span></div>
-            </template>
-          </PFileUpload>
-          <PMessage v-if="fileError" severity="error" :closable="false">{{fileError}}</PMessage>
-          <p class="org-upload-notice muted">검증 시작 시 파일을 서버에 업로드하고 형식·조직 정보를 확인합니다.</p>
-          <div class="org-upload-actions"><PButton label="요청함으로" severity="secondary" outlined @click="emit('navigate','org-requests')" /><PButton label="검증 시작" :disabled="!file || store.busy" :loading="store.busy" @click="upload" /></div>
-        </template>
-        <template v-else><h2>변경 확인·소명</h2><p v-if="request?.request?.message" class="org-baseline muted org-live-message">{{request.request.message}}</p><p class="muted">회신 기한 {{date(request?.request?.dueAt)}} · 기존 파일과 숫자는 변경되지 않습니다.</p></template>
-        <template v-if="submission">
-          <div class="org-live-validation">
-            <div><strong>{{submission.versionLabel}}</strong><PTag :severity="statusSeverity(submission.status)" :value="status(submission.status)" /><p class="muted">파싱 {{ {QUEUED:'대기',RUNNING:'진행 중',SUCCEEDED:'완료',FAILED:'실패'}[submission.parsing?.status] || submission.parsing?.status }}</p></div>
-            <div class="actions"><PButton label="검증 상태 새로고침" severity="secondary" outlined :disabled="store.busy" @click="store.run(reload)" /><PButton v-if="submission.status==='DRAFT'" label="검증 다시 실행" severity="secondary" outlined :disabled="store.busy || submission.parsing?.status!=='SUCCEEDED'" @click="store.run(validate)" /></div>
-          </div>
-          <PMessage v-if="['QUEUED','RUNNING'].includes(submission.parsing?.status)" severity="info" :closable="false">파싱 중입니다. 검증 상태 새로고침으로 진행 상태를 확인해 주세요.</PMessage>
-          <PPanel v-if="diagnostics" :header="`파일 검증 결과 · 수정 필요 ${diagnostics.errorCount}건`" toggleable>
-            <PDataTable :value="diagnostics.items" stripedRows scrollable :tableStyle="{minWidth:'38rem'}" :pt="{table:{'aria-label':'파일 검증 결과'}}">
-              <PColumn header="원본 위치"><template #body="{data}">{{data.sourceCell || '위치 확인 필요'}}</template></PColumn>
-              <PColumn header="항목"><template #body="{data}">{{data.item || '—'}}</template></PColumn>
-              <PColumn field="rule" header="검증 결과" /><PColumn field="guide" header="수정 안내" />
-              <template #empty>표시할 검증 항목이 없습니다.</template>
-            </PDataTable>
-          </PPanel>
-          <CurrentSubmissionReviews :key="submission.id" :submission="submission" @changed="reload" />
-          <div v-if="submission.status==='DRAFT'" class="org-explanation-footer">
-            <PMessage v-if="!submission.validation?.canSubmit" severity="warn" :closable="false">파일 검증과 필수 변경 확인·소명 작성을 완료해야 제출할 수 있습니다.</PMessage><span v-else class="muted">제출할 내용을 확인해 주세요.</span>
-            <div><PButton label="요청함으로" severity="secondary" outlined @click="emit('navigate','org-requests')" /><PButton label="제출 내용 확인" :disabled="store.busy || !submission.validation?.canSubmit" @click="confirm" /></div>
-          </div>
-          <PDialog :visible="Boolean(preview)" header="제출 내용 확인" modal blockScroll :closable="!store.busy" :closeOnEscape="!store.busy" :style="{width:'42rem',maxWidth:'94vw'}" @update:visible="closePreview">
-            <template v-if="preview"><dl class="org-review-summary"><dt>파일</dt><dd>{{preview.file.name}}</dd><dt>저장 파일명</dt><dd>{{preview.file.savedAs}}</dd><dt>제출 버전</dt><dd>{{preview.expectedLabel}}</dd><dt>비교 기준</dt><dd>{{baselineLabel(preview.baseline)}}</dd><dt>변경 항목</dt><dd>{{preview.items.length}}개</dd></dl><label for="org-submission-reply" class="org-dialog-field">회신 메시지<PTextarea id="org-submission-reply" v-model="reply" rows="4" autoResize :disabled="store.busy" /></label></template>
-            <template #footer><PButton label="작성으로 돌아가기" severity="secondary" outlined :disabled="store.busy" @click="closePreview(false)" /><PButton label="제출하기" :disabled="store.busy" :loading="store.busy" @click="submit" /></template>
-          </PDialog>
-        </template>
-        <PMessage v-else-if="page==='org-explanation' && !loading" severity="secondary" :closable="false">요청함에서 현재 제출본이 연결된 소명 요청을 다시 선택해 주세요.</PMessage>
-      </section>
-    </template>
-  </section>
+        <p v-if="fileError" class="org-inline-message" role="alert">{{fileError}}</p>
+        <p class="org-upload-notice muted"><span data-copy-key="organizationText.text028">{{ copy.organizationText.text028 }}</span></p>
+        <div class="org-upload-actions"><button class="btn" @click="emit('navigate','org-requests')"><span data-copy-key="organizationText.text029">{{ copy.organizationText.text029 }}</span></button><button class="btn primary" :disabled="!file || store.busy" @click="upload"><span data-copy-key="organizationText.text030">{{ copy.organizationText.text030 }}</span></button></div>
+      </template>
+      <template v-else><h2><span data-copy-key="organizationText.text031">{{ copy.organizationText.text031 }}</span></h2><p v-if="request?.request?.message" class="org-baseline muted org-live-message">{{request.request.message}}</p><p class="muted"><span data-copy-key="organizationText.text005">{{ copy.organizationText.text005 }}</span> {{date(request?.request?.dueAt)}} <span data-copy-key="organizationText.text032">{{ copy.organizationText.text032 }}</span></p></template>
+      <template v-if="submission">
+        <div class="org-live-validation"><div><strong>{{submission.versionLabel}}</strong><span class="badge" :class="statusClass(submission.status)">{{status(submission.status)}}</span><p class="muted"><span data-copy-key="organizationText.text033">{{ copy.organizationText.text033 }}</span> {{ {QUEUED:'대기',RUNNING:'진행 중',SUCCEEDED:'완료',FAILED:'실패'}[submission.parsing?.status] || submission.parsing?.status }}</p></div><div class="actions"><button class="btn" :disabled="store.busy" @click="store.run(reload)"><span data-copy-key="organizationText.text034">{{ copy.organizationText.text034 }}</span></button><button v-if="submission.status==='DRAFT'" class="btn" :disabled="store.busy || submission.parsing?.status!=='SUCCEEDED'" @click="store.run(validate)"><span data-copy-key="organizationText.text035">{{ copy.organizationText.text035 }}</span></button></div></div>
+        <p v-if="['QUEUED','RUNNING'].includes(submission.parsing?.status)" class="notice"><span data-copy-key="organizationText.text036">{{ copy.organizationText.text036 }}</span></p>
+        <details v-if="diagnostics" class="org-live-diagnostics" open><summary><span data-copy-key="organizationText.text037">{{ copy.organizationText.text037 }}</span> {{diagnostics.errorCount}}<span data-copy-key="organizationText.text003">{{ copy.organizationText.text003 }}</span></summary><div class="org-table-scroll"><table class="org-history-table"><thead><tr><th><span data-copy-key="organizationText.text038">{{ copy.organizationText.text038 }}</span></th><th><span data-copy-key="organizationText.text039">{{ copy.organizationText.text039 }}</span></th><th><span data-copy-key="organizationText.text040">{{ copy.organizationText.text040 }}</span></th><th><span data-copy-key="organizationText.text041">{{ copy.organizationText.text041 }}</span></th></tr></thead><tbody><tr v-for="(item,i) in diagnostics.items" :key="i"><td>{{item.sourceCell || '위치 확인 필요'}}</td><td>{{item.item || '—'}}</td><td>{{item.rule}}</td><td>{{item.guide}}</td></tr></tbody></table></div></details>
+        <CurrentSubmissionReviews :key="submission.id" :submission="submission" @changed="reload" />
+        <div v-if="submission.status==='DRAFT'" class="org-explanation-footer"><p v-if="!submission.validation?.canSubmit" class="org-restriction"><span data-copy-key="organizationText.text042">{{ copy.organizationText.text042 }}</span></p><span v-else class="muted"><span data-copy-key="organizationText.text043">{{ copy.organizationText.text043 }}</span></span><div><button class="btn" @click="emit('navigate','org-requests')"><span data-copy-key="organizationText.text029">{{ copy.organizationText.text029 }}</span></button><button class="btn primary" :disabled="store.busy || !submission.validation?.canSubmit" @click="confirm"><span data-copy-key="organizationText.text044">{{ copy.organizationText.text044 }}</span></button></div></div>
+        <section v-if="preview" class="card org-card"><h2><span data-copy-key="organizationText.text044">{{ copy.organizationText.text044 }}</span></h2><dl class="org-review-summary"><dt><span data-copy-key="organizationText.text045">{{ copy.organizationText.text045 }}</span></dt><dd>{{preview.file.name}}</dd><dt><span data-copy-key="organizationText.text046">{{ copy.organizationText.text046 }}</span></dt><dd>{{preview.file.savedAs}}</dd><dt><span data-copy-key="organizationText.text015">{{ copy.organizationText.text015 }}</span></dt><dd>{{preview.expectedLabel}}</dd><dt><span data-copy-key="organizationText.text047">{{ copy.organizationText.text047 }}</span></dt><dd>{{preview.items.length}}<span data-copy-key="organizationText.text048">{{ copy.organizationText.text048 }}</span></dd></dl><label class="field"><span data-copy-key="organizationText.text049">{{ copy.organizationText.text049 }}</span><textarea v-model="reply" /></label><div class="org-upload-actions"><button class="btn" @click="preview=null"><span data-copy-key="organizationText.text050">{{ copy.organizationText.text050 }}</span></button><button class="btn primary" :disabled="store.busy" @click="submit"><span data-copy-key="organizationText.text051">{{ copy.organizationText.text051 }}</span></button></div></section>
+      </template>
+      <p v-else-if="page==='org-explanation' && !loading" class="muted org-empty"><span data-copy-key="organizationText.text052">{{ copy.organizationText.text052 }}</span></p>
+    </section>
+  </template>
+</section>
 </template>

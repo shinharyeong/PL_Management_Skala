@@ -1,26 +1,36 @@
-@layer app {
-/* PrimeVue 컴포넌트의 테마를 유지하고 조직 화면의 배치만 지정한다. */
-.org-live .org-live-request-content { min-width:0; }
-.org-live .org-live-request-content .muted { margin-top:8px; }
-.org-live .org-live-message { white-space:pre-wrap; overflow-wrap:anywhere; }
-.org-live .org-live-validation { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px; border:1px solid var(--p-content-border-color); border-radius:var(--p-border-radius-lg); flex-wrap:wrap; }
+/* Match the original organization prototype around the connected review controls. */
+.org-live .org-live-request-content { min-width: 0; }
+.org-live .org-live-request-content .muted { margin-top: 8px; }
+.org-live .org-live-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+.org-live .org-live-validation { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px; background:#f2f6fb; border:1px solid #dce4ef; border-radius:12px; flex-wrap:wrap; }
 .org-live .org-live-validation strong { display:inline-block; margin-right:12px; }
 .org-live .org-live-validation p { margin-top:8px; }
+.org-live .org-live-diagnostics { border:1px solid #dce4ef; border-radius:12px; padding:18px; }
+.org-live .org-live-diagnostics summary { cursor:pointer; font-weight:600; margin-bottom:16px; }
 .org-live .current-reviews { min-width:0; padding-top:4px; }
 .org-live .current-reviews .section-heading { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; margin-bottom:20px; }
 .org-live .current-reviews .review-layout { grid-template-columns:300px minmax(0,1fr); gap:24px; align-items:start; }
-.org-live .current-reviews .review-list { padding:4px; }
-.org-live .current-reviews .review-item { padding:14px 12px; line-height:1.6; }
-.org-live .current-reviews .review-detail { border:1px solid var(--p-content-border-color); border-radius:var(--p-border-radius-lg); padding:24px; min-width:0; gap:20px; }
-.org-live .current-reviews .review-detail > h3 { font-size:19px; padding-bottom:16px; border-bottom:1px solid var(--p-content-border-color); }
-.org-live .org-prime-upload { margin-top:16px; }
-.org-live .org-upload-prompt { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; min-height:140px; padding:16px; text-align:center; overflow-wrap:anywhere; }
-.org-live .org-history-filters { margin:16px 0; }
-.org-live .org-history-filters .p-select { min-width:150px; }
-.org-live .org-explanation-footer > div { display:flex; flex-wrap:wrap; gap:12px; }
-.org-dialog-field { display:flex; flex-direction:column; gap:10px; margin-top:20px; }
-@media(max-width:1200px) { .org-live .current-reviews .review-layout { grid-template-columns:260px minmax(0,1fr); gap:18px; }.org-live .current-reviews .review-detail { padding:20px; } }
-@media(max-width:900px) { .org-live .current-reviews .review-layout { grid-template-columns:minmax(0,1fr); }.org-live .current-reviews .review-list { max-height:380px; } }
-@media(max-width:760px) { .org-live .current-reviews .review-detail { padding:16px; }.org-live .org-live-validation { padding:16px; }.org-live .org-request-card > .p-button { margin-left:auto; }.org-live .org-upload-actions { flex-wrap:wrap; } }
+.org-live .current-reviews .review-list { border:1px solid #dce4ef; border-radius:12px; background:#f0f4f9; padding:14px; display:flex; flex-direction:column; gap:8px; }
+.org-live .current-reviews .review-item { border:1px solid #dce4ef; border-radius:9px; background:white; padding:14px 12px; font:inherit; font-size:14px; line-height:1.6; overflow-wrap:anywhere; }
+.org-live .current-reviews .review-item.active { background:#eaf2ff; border-color:#8cafe9; box-shadow:inset 3px 0 #245fdb; }
+.org-live .current-reviews .review-detail { border:1px solid #dce4ef; border-radius:12px; padding:24px; min-width:0; gap:20px; }
+.org-live .current-reviews .review-detail > h3 { font-size:19px; color:#14243b; padding-bottom:16px; border-bottom:1px solid #e6ecf4; }
+.org-live .current-reviews .review-detail th { background:#edf2f8; color:#526176; font-size:13px; }
+.org-live .current-reviews .review-detail td { font-size:14px; }
+.org-live .current-reviews .review-detail td, .org-live .current-reviews .review-detail th { padding:15px 12px; border:1px solid #dce4ef; }
+.org-live .current-reviews .review-detail form > label { display:flex; flex-direction:column; gap:10px; font-size:14px; color:#243b58; }
+.org-live .current-reviews .button { display:inline-flex; align-items:center; justify-content:center; align-self:flex-end; min-height:44px; border:1px solid #cbd6e5; border-radius:9px; padding:10px 20px; font:inherit; font-size:14px; color:#243b58; background:white; cursor:pointer; }
+.org-live .current-reviews .button.primary { background:var(--accent); border-color:var(--accent); color:white; }
+.org-live .current-reviews .button:disabled { cursor:not-allowed; color:#667080; background:#e8ebef; border-color:#e8ebef; }
+.org-live .current-reviews .button-row { display:flex; flex-wrap:wrap; gap:12px; justify-content:flex-end; }
+.org-live .current-reviews .preserve-lines { white-space:pre-wrap; overflow-wrap:anywhere; }
+.org-live .org-history-table td { vertical-align:top; }
+.org-live .org-history-detail .btn { margin-top:12px; max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+@media(max-width:1200px) { .org-live .current-reviews .review-layout { grid-template-columns:260px minmax(0,1fr); gap:18px; } .org-live .current-reviews .review-detail { padding:20px; } }
+@media(max-width:900px) { .org-live .current-reviews .review-layout { grid-template-columns:minmax(0,1fr); } .org-live .current-reviews .review-list { max-height:380px; } }
+@media(max-width:760px) { .org-live .current-reviews .review-detail { padding:16px; } .org-live .org-live-validation { padding:16px; } .org-live .org-request-card > .btn { margin-left:auto; } .org-live .org-upload-actions { flex-wrap:wrap; } }
 
-}
+.org-live .org-request-card.org-resubmit { background:#fff2ee; border:2px solid #e7a18e; border-left:6px solid #c34629; }
+.org-live .org-resubmit .badge { background:#b73520; color:#fff; font-weight:700; }
+.org-live .org-rerequest-comment { padding:16px; border:1px solid #e8aa98; border-left:4px solid #bf4327; border-radius:10px; background:#fff2eb; color:#792e1e; margin:12px 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.org-live .org-rerequest-comment p { margin:8px 0; }

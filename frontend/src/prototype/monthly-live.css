@@ -1,70 +1,101 @@
-@layer app {
-/* 월간 PrimeVue 표는 원본 금액과 버전의 의미를 유지하고 작은 화면에서는 가로로 스크롤한다. */
-.monthly-panel .p-datatable,
-.monthly-panel .p-treetable { min-width: 0; max-width: 100%; }
-.monthly-panel .version-controls .p-select { width: 100%; min-width: 0; }
-.monthly-panel .gap-toggle-control { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
-.monthly-panel .gap-toggle-control strong { margin-left: 8px; }
-.monthly-panel .gap-amount-control { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.monthly-panel .gap-controls > .actions .p-button { min-width: 140px; }
-.monthly-panel .unit-field .p-select { min-width: 100px; }
-.monthly-panel .sort-field .p-select { min-width: 190px; }
-.monthly-panel .selection-bar > .field { flex: 1; min-width: 200px; }
-.monthly-panel .selection-bar .p-inputtext { width: 100%; }
-.monthly-panel .answer-card.p-button { align-items: flex-start; text-align: left; white-space: normal; }
-.monthly-panel .answer-card.active { border-color: var(--p-primary-color); background: var(--p-primary-50); }
-.monthly-panel .live-hierarchy-item { display: inline-flex; gap: 10px; align-items: center; min-width: 0; }
-.monthly-panel .live-hierarchy-item .p-checkbox { flex-shrink: 0; }
-.monthly-panel .live-hierarchy-item .cell-link { white-space: normal; text-align: left; line-height: 1.6; }
-.monthly-panel .live-group-label { font-weight: 650; overflow-wrap: anywhere; }
-.monthly-panel .live-gap-table .number .p-treetable-body-cell-content { justify-content: flex-end; font-variant-numeric: tabular-nums; }
-.monthly-panel .live-gap-table tr[aria-level="1"] > td { background: #1e3b5c; color: white; }
-.monthly-panel .live-gap-table tr[aria-level="1"] .p-treetable-node-toggle-button,
-.monthly-panel .live-gap-table tr[aria-level="1"] .negative,
-.monthly-panel .live-gap-table tr[aria-level="1"] .positive { color: white; }
-.monthly-panel .live-gap-table tr[aria-level="2"] > td { background: #e7f2f4; color: #285d66; }
-.monthly-panel .live-gap-table tr[aria-level="3"] > td { background: #eff5e9; color: #405e30; }
-.monthly-panel .live-gap-table tr:has(.gap-selected) > td { background: var(--p-primary-50); }
-.monthly-panel .live-gap-table .p-tag { white-space: normal; }
+/* Live API content in the original prototype hierarchy and cell grid. */
+/* Nine shared columns: three fixed hierarchy rails + item + five value/status columns. */
+.monthly-panel .hierarchy-table.live-gap-table table { width: 100%; min-width: 1200px; table-layout: fixed; border-collapse: collapse; }
+.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-gutter { width: 10px; }
+.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-name { width: calc(34% - 30px); }
+.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-amount { width: 14%; }
+.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-rate { width: 10%; }
+.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-status { width: 14%; }
+.monthly-panel .hierarchy-table.live-gap-table th,
+.monthly-panel .hierarchy-table.live-gap-table td { vertical-align: middle; }
+.monthly-panel .hierarchy-table.live-gap-table thead th { height: 52px; padding: 12px 18px; font-size: 12px; font-weight: 600; background: #f1f5fa; }
+.monthly-panel .hierarchy-table.live-gap-table tbody th,
+.monthly-panel .hierarchy-table.live-gap-table tbody tr:not(.hierarchy-close) td:not(.hierarchy-rail) { padding: 13px 18px; }
+.monthly-panel .hierarchy-table.live-gap-table .hierarchy-close td { padding: 0; height: 5px; border: 0; }
+.monthly-panel .hierarchy-table.live-gap-table .hierarchy-rail { padding: 0; border: 0; }
+.monthly-panel .hierarchy-table.live-gap-table th:last-child { text-align: left; }
+.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-heading,
+.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-item { display: flex; gap: 12px; align-items: center; }
+.monthly-panel .hierarchy-table.live-gap-table input[type=checkbox] { flex: 0 0 16px; width: 16px; height: 16px; margin: 0; accent-color: #315fd0; }
+.monthly-panel .hierarchy-table.live-gap-table .hierarchy-detail { height: 64px; }
+.monthly-panel .hierarchy-table.live-gap-table tbody tr td.hierarchy-detail { padding: 0; }
+.monthly-panel .hierarchy-table.live-gap-table .hierarchy-detail .live-hierarchy-item { min-height: 64px; padding: 13px 18px; margin: 0; width: 100%; box-sizing: border-box; line-height: 1.65; }
+.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-item span { overflow-wrap: anywhere; }
+.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-item.is-selectable { cursor: pointer; }
+.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-item.is-selectable:hover { background: #edf3ff; }
+.monthly-panel .hierarchy-table.live-gap-table .live-hierarchy-item:focus-within { outline: 2px solid #315fd0; outline-offset: -2px; }
+.monthly-panel .hierarchy-table.live-gap-table .cell-link { min-height: 0; line-height: 1.65; white-space: normal; overflow-wrap: anywhere; }
+.monthly-panel .hierarchy-table.live-gap-table .number { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.monthly-panel .hierarchy-table.live-gap-table .major-row .number { color: white; }
+.monthly-panel .hierarchy-table.live-gap-table .badge { white-space: nowrap; }
+.monthly-panel .hierarchy-table.live-gap-table thead th { position: relative; border-right: 1px solid #bac9dc; padding-right: 20px; }
+.monthly-panel .hierarchy-table.live-gap-table tbody tr:not(.hierarchy-close) td.number,
+.monthly-panel .hierarchy-table.live-gap-table tbody tr:not(.hierarchy-close) td:last-child { border-left: 1px solid #c9d5e3; overflow: hidden; text-overflow: ellipsis; }
+.monthly-panel .hierarchy-table.live-gap-table .major-row td.number,
+.monthly-panel .hierarchy-table.live-gap-table .major-row td:last-child { border-left-color: #58708c; }
+.monthly-panel .hierarchy-table.live-gap-table .column-resizer { position: absolute; top: 0; bottom: 0; right: 0; width: 9px; cursor: col-resize; touch-action: none; user-select: none; z-index: 2; }
+.monthly-panel .hierarchy-table.live-gap-table .column-resizer::after { content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 2px; background: transparent; }
+.monthly-panel .hierarchy-table.live-gap-table .column-resizer:hover::after,
+.monthly-panel .hierarchy-table.live-gap-table .column-resizer:focus-visible::after { background: #315fd0; }
+.monthly-panel .hierarchy-table.live-gap-table .column-resizer:focus-visible { outline: 2px solid #315fd0; outline-offset: -2px; }
+.monthly-panel .hierarchy-table.live-gap-table.is-resizing,
+.monthly-panel .hierarchy-table.live-gap-table.is-resizing * { cursor: col-resize !important; user-select: none; }
 .monthly-panel .live-cell-detail .live-summary-values { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px 24px; }
 .monthly-panel .live-cell-detail .live-summary-values div { display: flex; flex-direction: column; gap: 4px; }
 .monthly-panel .live-cell-detail .live-summary-values small { color: #587092; font-size: 12px; }
 .monthly-panel .live-cell-detail .live-summary-values strong { font-size: 17px; font-weight: 650; overflow-wrap: anywhere; }
-.monthly-panel .live-version-grid th,
-.monthly-panel .live-version-grid td { vertical-align: top; overflow-wrap: anywhere; }
-.monthly-panel .live-version-grid .version-heading { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; white-space: normal; }
-.monthly-panel .live-version-grid .version-heading small { font-weight: 400; line-height: 1.7; }
-.monthly-panel .live-version-grid .version-source-name { display: block; margin-top: 8px; }
-.monthly-panel .live-version-grid th.current-version { background: #eaf1ff; }
-.monthly-panel .live-version-grid th.new-version { background: #fff3d9; }
-.monthly-panel .live-version-grid td.current-cell { background: #f0f5ff; }
-.monthly-panel .live-version-grid td.new-cell { background: #fffaf0; }
-.monthly-panel .live-version-grid .p-datatable-row-group-header > td { background: #eaf1fd; color: #285d9b; }
-.monthly-panel .live-version-grid .live-version-value { display: block; font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.monthly-panel .live-version-grid .live-version-value small { margin-left: 4px; font-size: 12px; font-weight: 400; }
-.monthly-panel .live-version-grid .live-version-change { margin-top: 12px; color: #64748b; font-size: 12px; }
-.monthly-panel .live-version-grid .live-version-change b { color: #344c6a; font-size: 14px; font-weight: 550; }
+.monthly-panel .version-grid.live-version-grid th,
+.monthly-panel .version-grid.live-version-grid td { width: auto; padding: 18px; border-right: 1px solid #dde5ef; overflow-wrap: anywhere; }
+.monthly-panel .version-grid.live-version-grid thead th { background: #f1f5fa; color: #49607c; }
+.monthly-panel .version-grid.live-version-grid th.current-version { background: #245fdb; color: white; }
+.monthly-panel .version-grid.live-version-grid th.new-version { background: #fff3d9; color: #9a5a14; }
+.monthly-panel .version-grid.live-version-grid th > span,
+.monthly-panel .version-grid.live-version-grid th > small { display: block; margin-top: 8px; font-size: 12px; font-weight: 400; line-height: 1.7; }
+.monthly-panel .version-grid.live-version-grid .source-sheet th { background: #eaf1fd; color: #285d9b; padding: 12px 18px; }
+.monthly-panel .version-grid.live-version-grid td.current-cell { background: #f0f5ff; }
+.monthly-panel .version-grid.live-version-grid td.new-cell { background: #fffaf0; }
+.monthly-panel .version-grid.live-version-grid .live-version-value { display: block; font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.monthly-panel .version-grid.live-version-grid .live-version-value small { margin-left: 4px; font-size: 12px; font-weight: 400; }
+.monthly-panel .version-grid.live-version-grid .live-version-change { margin-top: 12px; color: #64748b; font-size: 12px; }
+.monthly-panel .version-grid.live-version-grid .live-version-change b { color: #344c6a; font-size: 14px; font-weight: 550; }
 .monthly-panel .live-cell-detail .live-source-notes > article { margin-top: 18px; padding-top: 18px; border-top: 1px solid #e5eaf1; }
 .monthly-panel .live-cell-detail .live-source-notes dl { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 0; font-size: 13px; }
 .monthly-panel .live-cell-detail .live-source-notes dl > div { display: grid; grid-template-columns: 110px minmax(0,1fr); gap: 16px; }
 .monthly-panel .live-cell-detail .live-source-notes dt { color: #667080; }
 .monthly-panel .live-cell-detail .live-source-notes dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.monthly-panel .live-history-panel .timeline { border-left: 2px solid #dce5f5; padding-left: 16px; color: #64748b; font-size: 12px; }
-.monthly-panel .live-history-panel.current-history > .p-panel-header { background: var(--p-primary-50); }
-.monthly-panel .live-history-panel .history-memo { display: grid; gap: 8px; margin: 20px 0; }
-.monthly-panel .live-history-panel .history-memo p { white-space: pre-wrap; overflow-wrap: anywhere; }
-.monthly-panel .monthly-submission-state { display: block; margin-top: 8px; font-size: 12px; white-space: nowrap; color: #526176; }
-.monthly-panel .monthly-submission-review { display: flex; flex-direction: column; gap: 16px; border-top: 1px solid #dce4ef; margin-top: 8px; padding-top: 20px; white-space: normal; }
-.monthly-panel .monthly-submission-review .p-textarea { width: 100%; }
-@media (max-width: 1200px) {
-  .monthly-panel .version-controls > .p-select:last-child { grid-column: 1 / -1; }
-}
-@media (max-width: 600px) {
+.monthly-panel .live-cell-detail .live-evidence summary { cursor: pointer; font-weight: 600; margin-bottom: 16px; }
+.monthly-panel .live-cell-detail .live-evidence table { min-width: 800px; }
+.monthly-panel .live-cell-detail .history-card > p { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width:600px) {
   .monthly-panel .live-cell-detail .live-summary-values { grid-template-columns: minmax(0,1fr); }
   .monthly-panel .live-cell-detail .live-source-notes dl > div { grid-template-columns: minmax(0,1fr); gap: 4px; }
-  .monthly-panel .gap-controls > .actions .p-button { min-width: 0; flex: 1; }
-  .monthly-panel .selection-bar > .actions { flex-wrap: wrap; }
-  .monthly-panel .selection-bar > .actions .p-button { flex: 1; }
 }
 
-}
+.monthly-panel .monthly-submission-state { display:block; margin-top:8px; font-size:12px; white-space:nowrap; color:#526176; }
+.monthly-panel .monthly-submission-review { display:flex; flex-direction:column; gap:16px; border-top:1px solid #dce4ef; margin-top:8px; padding-top:20px; white-space:normal; }
+.monthly-panel .monthly-submission-review textarea { width:100%; }
+
+.monthly-panel .badge.not-requested{background:#f1f3f5;color:#576170;border:1px solid #d7dce2}
+
+.monthly-panel .custom-gap-condition{display:flex;align-items:center;gap:12px;padding:8px 12px;border:1px solid #d4dce8;border-radius:12px;background:#f7f8fa;max-width:100%;flex-wrap:wrap}
+.monthly-panel .custom-gap-condition.on{background:#f2f6ff;border-color:#a7bbe9}
+.monthly-panel .gap-condition-toggle{display:flex;align-items:center;gap:12px;padding:4px 0;border:0;background:transparent;min-height:34px;font-size:13px;font-weight:550}
+.monthly-panel .gap-condition-input{display:flex;align-items:center;gap:8px;font-size:12px;color:#526176;min-width:0}
+.monthly-panel .gap-condition-input input{width:90px;min-width:0;min-height:38px;height:38px;padding:6px 10px;border:1px solid #bdcce5;border-radius:8px;background:white;font-size:14px;text-align:right;font-variant-numeric:tabular-nums}
+.monthly-panel .gap-condition-input.amount-input input{width:164px}
+.monthly-panel .gap-condition-input input:disabled{background:#edf0f4;color:#88909c;border-color:#dce1e7}
+.monthly-panel .gap-criteria-warning{margin:0;padding:10px 14px;border:1px solid #e6bd69;border-radius:8px;background:#fff6dd;color:#805209;font-size:13px}
+@media(max-width:600px){.monthly-panel .custom-gap-condition{width:100%;justify-content:space-between}.monthly-panel .gap-controls>.actions{width:100%;flex-wrap:wrap}.monthly-panel .gap-condition-input.amount-input input{width:136px}}
+
+.monthly-panel .gap-amount-units{display:inline-flex;align-items:center;padding:3px;gap:3px;border:1px solid #cbd6e7;border-radius:8px;background:#e8edf5}
+.monthly-panel .gap-amount-units button{border:0;border-radius:5px;background:transparent;padding:6px 10px;min-height:30px;white-space:nowrap;color:#637087;font-size:12px;font-weight:550}
+.monthly-panel .gap-amount-units button[aria-pressed=true]{background:#fff;color:#245fdb;box-shadow:0 1px 4px #182e5720}
+.monthly-panel .gap-amount-suffix{font-size:12px;color:#526176}
+.monthly-panel .gap-condition-input.amount-input input{width:112px}
+
+.monthly-panel .workspace-unit-bar{display:flex;align-items:center;justify-content:flex-end;gap:12px;font-size:13px;color:#526176}
+
+.monthly-panel .hierarchy-table.live-gap-table .major-collapse-button{display:flex;align-items:center;gap:8px;width:100%;border:0;padding:4px 0;background:transparent;color:inherit;font:inherit;font-weight:650;text-align:left;cursor:pointer;white-space:normal;overflow-wrap:anywhere}
+.monthly-panel .hierarchy-table.live-gap-table .major-collapse-icon{width:16px;flex-shrink:0;font-size:14px}
+.monthly-panel .hierarchy-table.live-gap-table .major-collapse-button:hover{color:#d9e9ff}
+.monthly-panel .hierarchy-table.live-gap-table .major-collapse-button:focus-visible{outline:2px solid #bad5ff;outline-offset:4px;border-radius:3px}

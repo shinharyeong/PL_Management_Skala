@@ -1,7 +1,7 @@
 <script setup>
 import {ref,watch,onBeforeUnmount} from 'vue'
 import {usePrototypeStore} from './live-store.js'
-import copy from './ui-copy.json'
+import copy from './copy-text.js'
 import {submissionReviewStatus} from './review-status.js'
 import {notificationDate,notificationTime,mergeNotificationGroups} from './presentation.js'
 import PButton from 'primevue/button'
@@ -52,26 +52,20 @@ async function openNotification(item){
 }
 </script>
 <template>
- <header class="mg-heading"><div><p class="mg-breadcrumb">경영기획팀 / {{copy.pages.notifications}}</p><h1>{{copy.pages.notifications}}</h1></div></header>
- <p class="mg-description">조직 제출, 소명 회신, 기한 경과 알림을 확인합니다.</p>
+ <header class="mg-heading"><div><p class="mg-breadcrumb"><span data-copy-key="notificationText.text001">{{ copy.notificationText.text001 }}</span> <span data-copy-key="pages.notifications">{{copy.pages.notifications}}</span></p><h1><span data-copy-key="pages.notifications">{{copy.pages.notifications}}</span></h1></div></header>
+ <p class="mg-description"><span data-copy-key="notificationText.text002">{{ copy.notificationText.text002 }}</span></p>
  <div class="mg-filter-row">
-  <div class="mg-tabs" role="group" aria-label="알림 유형"><PButton v-for="(label,key) in types" :key="key" class="btn" :severity="type===key?undefined:'secondary'" :outlined="type!==key" :class="[type===key?'primary':'','mg-type-'+tones[key]]" :aria-pressed="type===key" @click="type=key">{{label}} {{page?.typeCounts[key]??'—'}}</PButton></div>
-  <label class="mg-checkbox"><PCheckbox v-model="unreadOnly" inputId="notifications-unread" binary />안 읽은 알림만</label>
+  <div class="mg-tabs" role="group" aria-label="알림 유형"><button v-for="(label,key) in types" :key="key" class="btn" :class="[type===key?'primary':'','mg-type-'+tones[key]]" :aria-pressed="type===key" @click="type=key">{{label}} {{page?.typeCounts[key]??'—'}}</button></div>
+  <label class="mg-checkbox"><input v-model="unreadOnly" type="checkbox"><span data-copy-key="notificationText.text003">{{ copy.notificationText.text003 }}</span></label>
  </div>
- <p v-if="error" class="notice error" role="alert">{{error}}</p><p v-if="loading" class="muted" role="status">알림을 불러오는 중입니다.</p>
+ <p v-if="error" class="notice error" role="alert">{{error}}</p><p v-if="loading" class="muted" role="status"><span data-copy-key="notificationText.text004">{{ copy.notificationText.text004 }}</span></p>
  <section v-for="group in page?.groups" :key="group.date" class="mg-notification-group">
-  <h2>{{notificationDate(group.date)}} {{group.items.length}}건 · 안 읽음 {{group.unreadCount}}</h2>
-  <PCard v-for="item in group.items" :key="item.id" role="article" class="card mg-notification" :class="{'mg-read':item.read,'mg-unread':!item.read}"><template #content>
-   <div class="mg-notification-body"><div class="mg-notification-meta"><img src="/assets/prototype-unread-dot.svg" alt="" width="8" height="8" class="mg-unread-dot" :class="{hidden:item.read}"><PTag :class="'mg-'+tones[item.type]" :severity="item.type==='OVERDUE'?'danger':item.type==='REPLY'?'contrast':'info'" :value="types[item.type]||item.type" /><PTag class="notification-read-label" :class="item.read?'is-read':'is-unread'" :severity="item.read?'secondary':'info'" :value="item.read?'읽음':'안 읽음'" /><PTag v-if="item.type==='SUBMISSION'" class="badge" :severity="({blue:'info',amber:'warn',red:'danger',gray:'secondary'})[submissionReviewStatus(submissions[item.link?.query?.submissionId]).tone]" :class="'mg-status-'+submissionReviewStatus(submissions[item.link?.query?.submissionId]).tone" :value="submissionReviewStatus(submissions[item.link?.query?.submissionId]).label" /></div><h3 :class="{'mg-red':item.type==='OVERDUE'}">{{item.title}}</h3><p>{{item.organization?.name}} · {{item.organization?.code}}</p><small class="muted">{{item.actor?.name ? item.actor.name+' 회신' : '회신 대기'}}</small></div>
-   <div class="mg-notification-action"><small :class="item.type==='OVERDUE'?'mg-red':'muted'">{{notificationTime(item)}}</small><PButton class="btn" :severity="item.type==='OVERDUE'?'secondary':undefined" :class="{primary:item.type!=='OVERDUE'}" :disabled="store.busy" @click="openNotification(item)">{{item.type==='OVERDUE'?'현황 보기':item.type==='SUBMISSION'&&submissionReviewStatus(submissions[item.link?.query?.submissionId]).done?'처리 내역 보기':'검토하기'}}</PButton></div>
-  </template></PCard>
+  <h2>{{notificationDate(group.date)}} {{group.items.length}}<span data-copy-key="notificationText.text005">{{ copy.notificationText.text005 }}</span> {{group.unreadCount}}</h2>
+  <article v-for="item in group.items" :key="item.id" class="card mg-notification" :class="{'mg-read':item.read,'mg-unread':!item.read}">
+   <div class="mg-notification-body"><div class="mg-notification-meta"><img src="/assets/prototype-unread-dot.svg" alt="" width="8" height="8" class="mg-unread-dot" :class="{hidden:item.read}"><span :class="'mg-'+tones[item.type]">{{types[item.type]||item.type}}</span><span class="notification-read-label" :class="item.read?'is-read':'is-unread'">{{item.read?'읽음':'안 읽음'}}</span><span v-if="item.type==='SUBMISSION'" class="badge" :class="'mg-status-'+submissionReviewStatus(submissions[item.link?.query?.submissionId]).tone">{{submissionReviewStatus(submissions[item.link?.query?.submissionId]).label}}</span></div><h3 :class="{'mg-red':item.type==='OVERDUE'}">{{item.title}}</h3><p>{{item.organization?.name}} · {{item.organization?.code}}</p><small class="muted">{{item.actor?.name ? item.actor.name+' 회신' : '회신 대기'}}</small></div>
+   <div class="mg-notification-action"><small :class="item.type==='OVERDUE'?'mg-red':'muted'">{{notificationTime(item)}}</small><button class="btn" :class="{primary:item.type!=='OVERDUE'}" :disabled="store.busy" @click="openNotification(item)">{{item.type==='OVERDUE'?'현황 보기':item.type==='SUBMISSION'&&submissionReviewStatus(submissions[item.link?.query?.submissionId]).done?'처리 내역 보기':'검토하기'}}</button></div>
+  </article>
  </section>
- <p v-if="page&&!page.groups.length&&!loading" class="card mg-empty">조건에 맞는 알림이 없습니다.</p>
- <PButton v-if="page?.nextCursor" class="btn" severity="secondary" :disabled="loading" @click="load(true)">알림 더 보기</PButton>
+ <p v-if="page&&!page.groups.length&&!loading" class="card mg-empty"><span data-copy-key="notificationText.text006">{{ copy.notificationText.text006 }}</span></p>
+ <button v-if="page?.nextCursor" class="btn" :disabled="loading" @click="load(true)"><span data-copy-key="notificationText.text007">{{ copy.notificationText.text007 }}</span></button>
 </template>
-
-<style scoped>
-.mg-notification :deep(.p-card-body),.mg-notification :deep(.p-card-content){display:contents;padding:0}
-.mg-checkbox{display:inline-flex;align-items:center;gap:.5rem}
-.mg-notification-meta :deep(.p-tag){white-space:normal}
-</style>

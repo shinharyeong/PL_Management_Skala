@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
+import { createSessionPersistence } from '../lib/session-persistence.js'
 
 /** AUTH-02·04의 MeResponse를 기존 역할 라우터에서 사용하는 사용자 형태로 변환한다. */
 function actorFromMe(me) {
@@ -9,9 +10,10 @@ function actorFromMe(me) {
 
 /** 메모리 인증과 동일 출처 통신을 구성한다.
  * Args: 없음. Returns: Pinia 세션 상태와 동작. Raises: 없음.
- * Side Effects: 로그인·요청 시 HTTP 통신; 토큰을 저장소·로그에 기록하지 않음.
+ * Side Effects: 로그인·요청 시 HTTP 통신; 토큰과 만료 시각만 같은 탭의 sessionStorage에 보관하며 로그에는 기록하지 않음.
  */
 export const useSession = defineStore('session', function sessionStore() {
+  const persistence = createSessionPersistence()
   const actor = ref(null)
   const token = ref('')
   const organizations = ref([])
@@ -25,6 +27,7 @@ export const useSession = defineStore('session', function sessionStore() {
    * Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 메모리 인증 제거, HTTP 취소.
    */
   function clear() {
+    persistence.clear()
     lifetime.abort()
     lifetime = new AbortController()
     actor.value = null
@@ -63,6 +66,7 @@ export const useSession = defineStore('session', function sessionStore() {
       const error = new Error(problem.detail || '요청을 처리하지 못했습니다. 다시 시도해 주세요.')
       error.code = problem.code || `HTTP_${response.status}`
       error.requestId = problem.requestId
+      error.status = response.status
       throw error
     }
     if (response.status === 204) return null
@@ -76,6 +80,26 @@ export const useSession = defineStore('session', function sessionStore() {
     const user = actorFromMe(result.me)
     if (!result.token) throw new Error('로그인 토큰을 확인하지 못했습니다.')
     clear(); token.value = result.token; actor.value = user; profileConfirmed.value = true
+    return persistence.save(result)
+  }
+
+  /** Restore only after the server verifies the tab's credential. A network outage keeps it for retry. */
+  async function restore() {
+    const saved = persistence.read()
+    if (!saved) return false
+    const credential = saved.token
+    token.value = credential
+    try {
+      const me = await request('/api/v1/me', { signal: AbortSignal.timeout(10000) })
+      if (token.value !== credential) return false
+      try { confirmProfile(me) } catch (error) { clear(); throw error }
+      return true
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) { clear(); return false }
+      if (token.value !== credential) return false // A newer login/logout wins.
+      token.value = ''; actor.value = null; profileConfirmed.value = false
+      throw error
+    }
   }
 
   /** 서버가 확인한 소속·역할 확인 결과를 반영한다.
@@ -136,5 +160,5 @@ export const useSession = defineStore('session', function sessionStore() {
     clear()
   }
 
-  return { actor, token, organizations, unreadCount, profileConfirmed, reviewWorkspaces, clear, request, accept, confirmProfile, refreshProfile, openReviewWorkspace, closeReviewWorkspace, finishReviewWorkspace, refreshUnread, logout }
+  return { actor, token, organizations, unreadCount, profileConfirmed, reviewWorkspaces, clear, request, accept, restore, confirmProfile, refreshProfile, openReviewWorkspace, closeReviewWorkspace, finishReviewWorkspace, refreshUnread, logout }
 })

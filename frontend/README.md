@@ -49,3 +49,9 @@ npm run test:prototype
 [전환 검증 기록](../docs/development/frontend-primevue.md#검증과-남은-확인)을 참고하세요.
 
 `check:prototype`는 옛 데모 15화면용 스크립트로 실제 연결본의 통합/브라우저 검증을 대체하지 않습니다. 사용자 파일·DB 백업·인증코드·토큰·실행 결과는 저장소에 포함하지 않습니다. `scripts/load-business-unit-dataset.py` 등은 별도 로컬 더미 DB 검증용이며 서비스 실행에 필요하지 않습니다. 테스트 계정과 과거 검증 환경은 [BUSINESSUNITS-TEST.md](BUSINESSUNITS-TEST.md)를 참고하세요.
+
+## 월간 검토 화면 통합
+
+기존 서비스 화면 디자인을 유지하면서 최신 보고서·업로드 API 계약을 사용합니다. 계산기는 전체/검토중/소명 중/제외됨/승인됨 필터와 사용자 입력 Gap 조건을 제공합니다. 대 분류 접기, 항목 셀 전체 선택, 오른쪽 경계를 고정한 열 너비 조절을 지원합니다. 버전별 소명 이력과 담당자 메모를 나란히 표시합니다.
+
+새로고침 로그인 유지는 [SESSION-PERSISTENCE.md](./SESSION-PERSISTENCE.md), 로컬 문구 편집은 [COPY-EDITING.md](./COPY-EDITING.md)를 참고하세요. 월간 추가 발송은 `POST /api/v1/submission-requests/{requestId}/targets` 백엔드가 필요하며 현재 develop 백엔드에는 없습니다.

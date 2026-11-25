@@ -1,7 +1,7 @@
 @layer legacy, primevue, app;
 
 @layer app {
-  :root{font-family:Inter,"Pretendard","Noto Sans KR",system-ui,sans-serif;color:#1e293b;background:#f5f7fb;font-synthesis:none}
+
   .p-button{font-weight:600}.p-button-label{white-space:normal}
   .p-select,.p-inputtext,.p-inputnumber,.p-textarea{max-width:100%}
   .p-inputnumber-input{min-width:0;width:100%}

@@ -2,13 +2,15 @@ import { defineStore } from 'pinia'
 import { createMonthlySession, seoulPeriod } from './domain.js'
 import { createApiClient, comparisons, flattenGapTree, status, saveFile } from './live-api.js'
 import { useSession } from '../stores/session.js'
-import { reviewActionBody } from '../lib/review-api.js'
+import { annualProgressRows } from './review-status.js'
+import { monthlyProgress } from './monthly-progress.js'
+import {reviewActionBody} from '../lib/review-api.js'
 
 let client
 export const usePrototypeStore = defineStore('connected-frontend', {
   state: () => ({ live:true, actor:null, token:'', error:'', busy:false, loading:false, unreadCount:0, toast:null, toastSequence:0,
     organizations:[], notifications:[], orgRequests:[], orgHistory:[], items:{}, carts:{}, monthlySessions:{},
-    activeOrg:'', activeRequest:'', monthlyRequest:null, annualRequest:null, requestOptions:[], orgReasons:{},
+    monthlyLoaded:false, activeOrg:'', activeRequest:'', monthlyRequest:null, annualRequest:null, requestOptions:[], orgReasons:{},
     notificationPage:null, notificationTarget:null, annualRows:[], activeReviewId:null, reviewDetail:null, evidence:null, versions:null, currentSubmission:null }),
   getters:{ unread:s=>s.unreadCount, currentOrg:s=>s.organizations.find(o=>o.id===s.activeOrg)||{ name:'조직을 선택해 주세요',code:'—' },
     workspaces:s=>Object.entries(s.carts).filter(([,rows])=>rows.length).map(([org,rows])=>({org,name:s.organizations.find(o=>o.id===org)?.name||org,count:rows.length})),
@@ -22,39 +24,40 @@ export const usePrototypeStore = defineStore('connected-frontend', {
     async run(fn){ if(this.busy)return false; this.busy=true;this.error='';try{await fn();return true}catch(e){this.error=[e.message,e.code,e.requestId&&`요청 ID: ${e.requestId}`].filter(Boolean).join(' · ');this.notify(this.error,'error');return false}finally{this.busy=false} },
     async pages(path){const rows=[];let cursor;do{const p=await this.api(path+(path.includes('?')?'&':'?')+'limit=100'+(cursor?'&cursor='+encodeURIComponent(cursor):''));rows.push(...(p.items||[]));cursor=p.nextCursor}while(cursor);return rows},
     requestCode(email){return this.api('/api/v1/auth/codes',{method:'POST',body:{email}})},
-    async login(email,code){const r=await this.api('/api/v1/auth/sessions',{method:'POST',body:{email,code}}); const m=r.me;if(!m?.user?.id||!['PLANNER','ORG_MANAGER'].includes(m.role))throw new Error('사용자 정보를 확인하지 못했습니다.'); useSession().accept(r);this.token=r.token;this.actor={...m.user,role:m.role==='PLANNER'?'planner':'org',orgId:m.organization?.id,orgCode:m.organization?.code,department:m.organization?.name||'경영기획팀'}},
+    syncSession(session){const m=session.actor;this.token=session.token;this.actor={id:m.id,name:m.name,email:m.email,role:m.role==='PLANNER'?'planner':'org',orgId:m.organization?.id,orgCode:m.organization?.code,department:m.organization?.name||'경영기획팀'}},
+    async restoreLogin(){const session=useSession();if(!await session.restore())return false;this.syncSession(session);return true},
+    async login(email,code){const r=await this.api('/api/v1/auth/sessions',{method:'POST',body:{email,code}});const session=useSession();const saved=session.accept(r);this.syncSession(session);if(!saved)this.notify('이 브라우저에서는 로그인 유지 정보를 저장할 수 없습니다. 새로고침하면 다시 로그인해야 합니다.','error')},
     async logout(){await this.api('/api/v1/auth/session',{method:'DELETE'});this.clear()},
     async refreshBadge(){if(this.actor?.role==='planner'){const r=await this.api('/api/v1/me/badges');this.unreadCount=r.unreadNotifications}},
-    async loadOrganizations(){const rows=await this.pages('/api/v1/organizations?active=true');this.organizations=rows.map(o=>({...o,author:o.managers?.map(m=>m.name).join(', ')||'—',department:o.name,submissionStatus:'회신 대기',explanationStatus:'—'}));this.activeOrg ||=rows[0]?.id||''},
-    async loadMonthly(){const p=seoulPeriod(); const rows=await this.pages('/api/v1/submission-requests?type=MONTHLY_ACTUAL');this.requestOptions=rows;const r=rows.find(r=>r.year===p.year&&r.month===p.month);this.monthlyRequest=r?await this.api('/api/v1/submission-requests/'+r.id):null;await this.loadOrganizations();const targets=this.monthlyRequest?.targets||[];this.organizations=this.organizations.map(o=>{const t=targets.find(t=>t.organization.id===o.id);return {...o,submissionStatus:t?status(t.displayStatus):'요청 없음',requestedAt:t?.requestedAt,requestDue:t?.dueAt,latestSubmission:t?.latestSubmission,fileName:t?.latestSubmission?.label||null}})},
+    async loadOrganizations(){const rows=await this.pages('/api/v1/organizations?active=true');this.organizations=rows.map(o=>({...o,author:o.managers?.map(m=>m.name).join(', ')||'—',department:o.name,submissionStatus:'요청 필요',explanationStatus:'—'}));this.activeOrg ||=rows[0]?.id||''},
+    async loadMonthly(){this.monthlyLoaded=false;const p=seoulPeriod(); const rows=await this.pages('/api/v1/submission-requests?type=MONTHLY_ACTUAL');this.requestOptions=rows;const r=rows.find(r=>r.year===p.year&&r.month===p.month);this.monthlyRequest=r?await this.api('/api/v1/submission-requests/'+r.id):null;await this.loadOrganizations();const targets=this.monthlyRequest?.targets||[];this.organizations=this.organizations.map(o=>({...o,...monthlyProgress(targets.find(t=>t.organization.id===o.id))}));this.monthlyLoaded=true},
     async reply(org){const o=this.organizations.find(o=>o.id===org);if(!o?.latestSubmission)return;const s=await this.api('/api/v1/submissions/'+o.latestSubmission.id);Object.assign(o,{author:s.submittedBy?.name||'—',message:s.replyMessage||'',fileName:s.file?.name,submittedAt:s.submittedAt,submission:s})},
     monthlySession(org){if(!this.monthlySessions[org]){const s=createMonthlySession();s.draft.baseVersion='fixed';s.draft.compareVersion='latest';this.monthlySessions[org]=s}return this.monthlySessions[org]},
     comparisonItems(org){return this.items[org]||[]},
-    async loadGap(org,type='실적 vs 계획'){const id=this.monthlyRequest?.request.id;if(!id){this.items[org]=[];return}const p=await this.api(`/api/v1/review-items?view=PLANNER&requestId=${id}&organizationId=${org}&comparison=${comparisons[type]}&tab=ALL`);this.items[org]=flattenGapTree(p.tree,type);const selected=this.items[org].filter(r=>r.status==='검토 완료');this.carts[org]=[...(this.carts[org]||[]).filter(r=>!this.items[org].some(n=>n.id===r.id)),...selected.map(r=>({...r,conditions:{...this.monthlySession(org).draft,type}}))];if(p.submission)this.currentSubmission=await this.api('/api/v1/submissions/'+p.submission.id)},
-    /** 실제 항목 ID·상태 토큰으로 검토 명령을 실행하고 최신 표를 조회한다.
-     * Args: org 조직 ID, rows 선택 항목, action 명령, extra 사유·기한·메시지.
-     * Returns: Promise<void>. Raises: 명령 검증·HTTP 오류. Side Effects: 검토 상태 변경·화면 갱신.
-     */
+    async loadGap(org,type='실적 vs 계획') {
+      const id=this.monthlyRequest?.request.id
+      if(!id){this.items[org]=[];return}
+      const p=await this.api(`/api/v1/review-items?view=PLANNER&requestId=${id}&organizationId=${org}&comparison=${comparisons[type]}&tab=ALL`)
+      this.items[org]=flattenGapTree(p.tree,type,this.organizations.find(item=>item.id===org)?.name)
+      // Calculation refreshes an existing cart; only addToCart creates workspace entries.
+      this.carts[org]=(this.carts[org]||[]).flatMap(saved=>{
+        const fresh=this.items[org].find(item=>item.id===saved.id)
+        return !fresh ? [saved] : fresh.status==='검토 완료' ? [{...fresh,conditions:saved.conditions}] : []
+      })
+      if(p.submission)this.currentSubmission=await this.api('/api/v1/submissions/'+p.submission.id)
+    },
     async reviewAction(org,rows,action,extra={}){await this.api('/api/v1/review-items/actions',{method:'POST',body:reviewActionBody(action,rows,extra)});await this.loadGap(org,this.monthlySession(org).applied?.type)},
-    async addToCart(org,rows,conditions){await this.reviewAction(org,rows,'SELECT');const latest=this.items[org]||[];this.carts[org]=[...(this.carts[org]||[]).filter(r=>!rows.some(n=>n.id===r.id)),...latest.filter(r=>rows.some(n=>n.id===r.id)).map(r=>({...r,conditions:{...conditions}}))]},
-    /** 제외 사유를 보존하고 선택 항목을 검토 대상에서 제외한다.
-     * Args: org 조직 ID, ids 항목 ID 목록, note 사용자가 입력한 제외 사유.
-     * Returns: Promise<void>. Raises: 검증·HTTP 오류. Side Effects: 서버 검토 상태·작업공간 갱신.
-     */
+    async addToCart(org,rows,conditions){const unselected=rows.filter(r=>r.status==='검토 필요');if(unselected.length)await this.reviewAction(org,unselected,'SELECT');const latest=this.items[org]||[];this.carts[org]=[...(this.carts[org]||[]).filter(r=>!rows.some(n=>n.id===r.id)),...latest.filter(r=>rows.some(n=>n.id===r.id)).map(r=>({...r,conditions:{...conditions}}))]},
     async excludeItems(org,ids,note){await this.reviewAction(org,(this.items[org]||[]).filter(r=>ids.includes(r.id)),'EXCLUDE',{note});this.carts[org]=(this.carts[org]||[]).filter(r=>!ids.includes(r.id))},
-    /** 한 항목을 사유와 함께 제외한다.
-     * Args: org 조직 ID, id 항목 ID, note 제외 사유.
-     * Returns: Promise<void>. Raises: 검증·HTTP 오류. Side Effects: 제외 처리.
-     */
     removeCartItem(org,id,note){return this.excludeItems(org,[id],note)},
     async sendExplanation(org,message,due){const rows=this.carts[org]||[];if(!rows.length)throw new Error('선택한 항목이 없습니다.');await this.reviewAction(org,rows,'REQUEST_EXPLANATION',{message,dueAt:new Date(due+':00+09:00').toISOString()});this.carts[org]=[];await this.loadMonthly();await this.refreshBadge();return true},
-    async createRequest(type,organizationIds,due,message,year){const p=seoulPeriod();await this.api('/api/v1/submission-requests',{method:'POST',body:{type,year:year||p.year,month:type==='MONTHLY_ACTUAL'?p.month:null,organizationIds,dueAt:new Date(due+':00+09:00').toISOString(),message}});if(type==='MONTHLY_ACTUAL')await this.loadMonthly();else await this.loadAnnual(year)},
+    async createRequest(type,organizationIds,due,message,year){const p=seoulPeriod();const dueAt=new Date(due+':00+09:00').toISOString();if(type==='MONTHLY_ACTUAL'&&this.monthlyRequest){await this.api('/api/v1/submission-requests/'+this.monthlyRequest.request.id+'/targets',{method:'POST',body:{organizationIds,dueAt,message}})}else{await this.api('/api/v1/submission-requests',{method:'POST',body:{type,year:year||p.year,month:type==='MONTHLY_ACTUAL'?p.month:null,organizationIds,dueAt,message}})};if(type==='MONTHLY_ACTUAL')await this.loadMonthly();else await this.loadAnnual(year)},
     async openDetail(id){this.activeReviewId=id;const r=await Promise.all([this.api('/api/v1/review-items/'+id),this.api('/api/v1/review-items/'+id+'/evidence'),this.api('/api/v1/review-items/'+id+'/versions')]);if(this.activeReviewId===id)[this.reviewDetail,this.evidence,this.versions]=r},
     async decideExplanation(id,verdict,note){await this.api(`/api/v1/review-items/${id}/decisions`,{method:'POST',body:{verdict,note,expectedStateToken:this.reviewDetail.stateToken}});await this.openDetail(id);await this.loadGap(this.activeOrg,this.monthlySession(this.activeOrg).applied?.type)},
     async downloadSubmission(id,name){saveFile(await this.api(`/api/v1/submissions/${id}/file`,{blob:true}),name||'제출본.xlsx')},
     async loadNotifications(){this.notificationPage=await this.api('/api/v1/notifications?limit=100');this.notifications=this.notificationPage.groups.flatMap(g=>g.items.map(n=>({...n,day:g.date,org:n.organization?.name,code:n.organization?.code,author:n.actor?.name,time:n.occurredAt})));this.unreadCount=this.notificationPage.summary.unreadCount},
     async markAllRead(){await this.api('/api/v1/notifications/read',{method:'POST',body:{all:true}});await this.loadNotifications()},
-    async loadAnnual(year=seoulPeriod().year){await this.loadOrganizations();const rows=await this.pages('/api/v1/submission-requests?type=ANNUAL_PLAN');const r=rows.find(r=>r.year===Number(year));this.annualRequest=r?await this.api('/api/v1/submission-requests/'+r.id):null;this.annualRows=this.annualRequest?.targets||[]},
+    async loadAnnual(year=seoulPeriod().year){await this.loadOrganizations();const rows=await this.pages('/api/v1/submission-requests?type=ANNUAL_PLAN');const r=rows.find(r=>r.year===Number(year));this.annualRequest=r?await this.api('/api/v1/submission-requests/'+r.id):null;this.annualRows=annualProgressRows(this.organizations,this.annualRequest?.targets)},
     async markSubmissionNotificationsRead(submissionId){
       const ids=[];let cursor
       do{const page=await this.api('/api/v1/notifications?limit=100'+(cursor?'&cursor='+encodeURIComponent(cursor):''));

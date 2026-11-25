@@ -1,4 +1,3 @@
-@layer legacy {
 /* Match the prototype surfaces while containing API titles and real filenames. */
 .live-management .mg-heading > div,.live-management .mg-notification-body { min-width:0; }
 .live-management .mg-notification-meta,.live-management .mg-filter-row,.live-management .mg-actions { flex-wrap:wrap; }
@@ -37,5 +36,3 @@
 .live-management .badge.mg-status-blue { background:#dceeff; color:#17458f; border:1px solid #a5c7ee; font-weight:700; }
 .live-management .badge.mg-status-red { background:#ffe1dc; color:#a52d20; border:1px solid #e69c91; font-weight:700; }
 .live-management .mg-heading { flex-wrap:wrap; }
-
-}
