@@ -1,7 +1,7 @@
-"""챗봇 조회용 SQLite 구조(DDL)와 AI 에게 보여 줄 구조 설명.
+"""백엔드 보고서용 뷰 계약과 AI에게 보여 줄 구조 설명. 스키마 생성은 백엔드가 맡는다.
 
 fact 는 합계 행 없이 가장 작은 항목만 담는다. 영업이익은 v_op 뷰가 매출 − 영업비용으로 계산한다.
-version 이 곧 시점이다: 확정 master / 잠정 / 월마감(close-<연도>-<월>).
+version 이 곧 시점이다: 확정 master / 잠정 provisional / 연간 계획 annual.
 """
 from __future__ import annotations
 
@@ -10,35 +10,6 @@ import hashlib
 ALLOWED_TABLES = ("fact", "v_op", "gap", "explanation", "dim_version", "dim_org")
 # SQL 에서 쓸 수 있는 인자(이름 있는 바인딩)
 PARAMS = ("version", "version_prev", "base_year", "base_month", "scn")
-
-DDL = """
-CREATE TABLE IF NOT EXISTS dim_version(
-  version TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT, year INTEGER, month INTEGER, loaded_at TEXT, source TEXT, row_count INTEGER, is_latest INTEGER DEFAULT 0);
-CREATE TABLE IF NOT EXISTS dim_org(org_code TEXT PRIMARY KEY, org_name TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS fact(
-  version TEXT NOT NULL, org_code TEXT NOT NULL, org_name TEXT, kind TEXT NOT NULL,
-  cat1 TEXT, cat2 TEXT, item TEXT, detail TEXT, team TEXT, manager TEXT, src TEXT,
-  year INTEGER NOT NULL, month INTEGER NOT NULL, scenario TEXT NOT NULL, amount_won BIGINT NOT NULL);
-CREATE TABLE IF NOT EXISTS gap(
-  version TEXT NOT NULL, gap_id TEXT, gap_type TEXT, org_code TEXT, org_name TEXT, item TEXT, year INTEGER, month INTEGER, scenario TEXT, basis TEXT,
-  previous_won BIGINT, current_won BIGINT, diff_won BIGINT, rate_percent TEXT, status TEXT, explanation_status TEXT);
-CREATE TABLE IF NOT EXISTS explanation(
-  version TEXT NOT NULL, explanation_id TEXT, gap_key TEXT, gap_id TEXT, org_code TEXT, org_name TEXT, kind TEXT, item TEXT, year INTEGER, month INTEGER, scenario TEXT,
-  link_type TEXT, status TEXT, verdict TEXT, rounds INTEGER, answer TEXT, src TEXT);
-CREATE OR REPLACE VIEW v_op AS
-  SELECT version, org_code, org_name, year, month, scenario,
-         SUM(CASE WHEN kind='매출' THEN amount_won ELSE 0 END) AS revenue_won,
-         SUM(CASE WHEN kind='영업비용' THEN amount_won ELSE 0 END) AS cost_won,
-         SUM(CASE WHEN kind='매출' THEN amount_won ELSE -amount_won END) AS op_won
-  FROM fact GROUP BY version, org_code, org_name, year, month, scenario;
-"""
-
-INDEXES = """
-CREATE INDEX IF NOT EXISTS ix_fact_main ON fact(version, org_code, kind, year, month, scenario);
-CREATE INDEX IF NOT EXISTS ix_fact_item ON fact(version, kind, year, month, scenario, cat1, cat2);
-CREATE INDEX IF NOT EXISTS ix_gap_v ON gap(version, org_code, year, month);
-CREATE INDEX IF NOT EXISTS ix_expl_v ON explanation(version, org_code, year, month);
-"""
 
 # AI 에게 보내는 구조 설명(데이터 값은 포함하지 않는다)
 SCHEMA_DOC = """테이블/뷰(PostgreSQL). 금액 컬럼은 모두 원 단위이고(소수가 있을 수 있다) 이름이 _won 으로 끝난다. 값이 없는 칸은 행이 없다(0 으로 채우지 않는다): 행이 없는 것과 0 을 구분한다.
@@ -50,7 +21,7 @@ SCHEMA_DOC = """테이블/뷰(PostgreSQL). 금액 컬럼은 모두 원 단위이
     항목×월×구분 단위의 Gap 이고 임계값을 넘은 것만 있다. previous_won 은 비교 기준(계획 또는 직전 제출본) 금액이다. 임계값 숫자는 없다.
 - explanation(version, explanation_id, gap_key, gap_id, org_code, org_name, kind, item, year, month, scenario, link_type, status('수락'|'검토중'), verdict, rounds, answer, src)
     소명 회차마다 한 행이다. answer 는 수락된 소명의 원문만 있고 나머지는 NULL 이다. gap_key 는 소명이 붙은 검토 항목이다.
-    link_type 'GAP' 은 임계값을 넘은 항목의 소명이고 gap_id 로 gap 과 이어진다. 'CHANGE' 는 변경 확인 단계의 소명이고 gap_id 가 NULL 이다.
+    link_type 'GAP' 은 임계값을 넘은 항목의 소명이다. 하나의 gap_key에 PLAN/PREVIOUS 비교가 함께 있을 수 있으므로 gap.gap_id = explanation.gap_key || '-' || gap.basis 로 연결한다. explanation.gap_id는 그중 첫 비교만 가리킨다. 'CHANGE' 는 변경 확인 단계의 소명이고 gap_id 가 NULL 이다.
 - dim_version(version, kind('master'|'provisional'|'annual'), label, year, month, source), dim_org(org_code, org_name)
     version 은 월마다 하나다: master-YYYY-MM(확정) 또는 provisional-YYYY-MM(master 가 없는 달의 조직별 최신 승인본, 잠정).
     annual-YYYY 는 그해 확정 연간 계획(month 없음)이다. 연간 계획 자체를 물을 때만 version = 'annual-YYYY' 로 쓴다.
@@ -81,4 +52,4 @@ EXAMPLES = """예시(질문 형식 → sql). <조직코드>·<월>은 형식 자
 - "Gap 종류별 건수" → SELECT gap_type, COUNT(*) AS gap_count FROM gap WHERE version = :version GROUP BY gap_type ORDER BY gap_count DESC
 - "<월>월 조직별 영업이익을 계획과 비교" → SELECT a.org_name, a.op_won AS actual_op_won, p.op_won AS plan_op_won, a.op_won - p.op_won AS diff_won FROM v_op a JOIN v_op p ON a.org_code = p.org_code AND a.year = p.year AND a.month = p.month WHERE a.version = :version AND p.version = :version AND a.scenario = 'ACTUAL' AND p.scenario = 'PLAN' AND a.year = :base_year AND a.month = :base_month ORDER BY diff_won"""
 
-SCHEMA_HASH = hashlib.sha256((SCHEMA_DOC + RULES + EXAMPLES + DDL).encode("utf-8")).hexdigest()[:16]
+SCHEMA_HASH = hashlib.sha256((SCHEMA_DOC + RULES + EXAMPLES).encode("utf-8")).hexdigest()[:16]

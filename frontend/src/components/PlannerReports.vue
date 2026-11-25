@@ -1,7 +1,7 @@
 <script setup>
-import ReportAuthoring from './ReportAuthoring.vue'
+import LiveReportPanel from '../prototype/LiveReportPanel.vue'
 </script>
 
 <template>
-  <ReportAuthoring />
+  <LiveReportPanel />
 </template>

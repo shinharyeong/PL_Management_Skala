@@ -1,10 +1,10 @@
-"""LLM 호출을 한 곳으로 모은다(LangChain 인터페이스).
+"""공통 LangChain 모델 인터페이스와 유일한 OpenAI SDK 전송 경로.
 
-- `chat_model()` 은 LangChain `BaseChatModel` 을 돌려준다. LangGraph 노드·체인은 이 모델을 그대로 쓴다.
-- 실제 전송은 지금과 같이 OpenAI 공식 SDK(`openai_client.make_client`)로 한다. 그래서 재시도·제한 시간 설정과
-  테스트의 가짜 클라이언트(`make_client` 바꿔 끼우기)가 그대로 동작한다. ChatOpenAI 로 바꾸고 싶으면 `_SdkChatModel` 만 바꾼다.
-- `ask_json()` 은 JSON 응답 한 번 호출(지금 기능들이 쓰는 모양): 시스템·사용자 메시지 → 파싱한 JSON + 토큰 수.
-  예외는 그대로 올려 보낸다(호출하는 쪽이 오류 종류만 기록하고 규칙 기반으로 대신 답한다).
+LangGraph는 호출 순서·분기·재시도를 관리하고 이 모듈은 모델 호출 한 번을 담당한다.
+`chat_model()`의 BaseChatModel을 `ask_json()`이 호출해 JSON과 토큰 수를 반환한다.
+PDF VLM·자연어 SQL·보고 편집·핵심 문장이 같은 인터페이스를 사용하며,
+실제 전송은 openai_client.make_client가 만든 SDK 클라이언트의 chat.completions다.
+예외는 호출부가 처리해 필요한 경우 기본 질의나 원문을 사용한다.
 """
 from __future__ import annotations
 

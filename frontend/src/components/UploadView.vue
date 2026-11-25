@@ -3,7 +3,8 @@ import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSession } from '../stores/session'
 import { requestTitle, errorText, saveBlob } from '../lib/display'
-import { inspectUploadFilename } from '../lib/upload-filename'
+import { inspectUploadFilename, preserveWorkbookExtension } from '../lib/upload-filename'
+import { normalizeUploadRequest } from '../lib/submission-api'
 import { requestAction } from '../lib/request-workflow'
 
 const route = useRoute()
@@ -38,7 +39,7 @@ const blockedAction = computed(function uploadBlocker() { return requestAction(r
 const filename = computed(function expectedFilename() {
   if (!request.value) return ''
   const period = request.value.type === 'ANNUAL_PLAN' ? 'PLAN' : String(request.value.month).padStart(2, '0')
-  return `${session.actor.organization?.code}_${request.value.year}-${period}.xlsx`
+  return preserveWorkbookExtension(file.value?.name, `${session.actor.organization?.code}_${request.value.year}-${period}.xlsx`)
 })
 
 /** 선택 파일에 요청의 제출 이름을 적용하려면 동의가 필요한지 계산한다.
@@ -65,9 +66,10 @@ async function load() {
   error.value = ''
   try {
     const result = await session.request(`/api/v1/submission-requests/${route.params.id}`, { signal: controller.signal })
-    if (!controller.signal.aborted) request.value = result
-    try { templateInfo.value = await session.request(`/api/v1/submission-requests/${route.params.id}/template`, { signal: controller.signal }) }
-    catch (cause) { if (cause.name !== 'AbortError') templateError.value = errorText(cause) }
+    if (!controller.signal.aborted) {
+      request.value = normalizeUploadRequest(result, session.actor)
+      templateInfo.value = { available: true, filename: '공통 제출 양식' }
+    }
   }
   catch (cause) { if (cause.name !== 'AbortError') error.value = errorText(cause) }
   finally { loading.value = false }
@@ -78,7 +80,7 @@ async function load() {
  */
 function choose() { if (canUpload.value) input.value?.click() }
 
-/** 한 개의 XLSX를 검사하고 원본 이름·바이트를 유지한 채 선택한다.
+/** 한 개의 XLSX/XLSB를 검사하고 원본 이름·바이트를 유지한 채 선택한다.
  * Args: files 파일 목록. Returns: 없음. Raises: 없음(화면 표시).
  * Side Effects: 메모리 파일·동의·멱등키·오류 갱신; 다른 조직이나 이름 근거가 맞지 않는 파일은 선택하지 않는다.
  */
@@ -90,8 +92,8 @@ function selectFiles(files) {
   uploadKey = ''
   if (files.length !== 1) { error.value = '파일은 한 번에 1개만 선택해 주세요.'; return }
   const selected = files[0]
-  if (!selected.name.toLowerCase().endsWith('.xlsx')) { error.value = '.xlsx 파일만 업로드할 수 있습니다.'; return }
-  if (selected.size > 16 * 1024 * 1024 || selected.size === 0) { error.value = '비어 있지 않은 16MB 이하의 파일을 선택해 주세요.'; return }
+  if (!/\.(xlsx|xlsb)$/i.test(selected.name)) { error.value = '.xlsx 또는 .xlsb 파일만 업로드할 수 있습니다.'; return }
+  if (selected.size > 20 * 1024 * 1024 || selected.size === 0) { error.value = '비어 있지 않은 20MB 이하의 파일을 선택해 주세요.'; return }
   const policy = inspectUploadFilename(selected.name, filename.value, session.actor.organization?.code)
   if (!policy.allowed) { error.value = policy.reason; return }
   file.value = selected
@@ -137,18 +139,18 @@ async function upload() {
   finally { busy.value = '' }
 }
 
-/** 경영기획팀이 이 요청에 등록한 실제 제출 양식을 내려받는다.
+/** 연간·월간 공통 제출 양식을 내려받는다.
  * Args: 없음. Returns: Promise<void>. Raises: 없음(화면 표시).
- * Side Effects: 권한 확인된 원문을 조직·기간별 제출 파일명으로 다운로드한다. 저장된 양식 원문·파일명은 변경하지 않는다.
+ * Side Effects: 권한 확인된 원문 다운로드. 미등록 양식은 서버의 오류로 안내한다.
  */
 async function template() {
   if (busy.value || !canUpload.value || !templateInfo.value?.available) return
   busy.value = 'download'
   error.value = ''
   try {
-    const blob = await session.request(`/api/v1/submission-requests/${route.params.id}/template/file`, { blob: true, signal: controller.signal })
+    const blob = await session.request('/api/v1/submission-template/file', { blob: true, signal: controller.signal })
     if (controller.signal.aborted) return
-    saveBlob(blob, filename.value)
+    saveBlob(blob, '제출양식.xlsx')
   } catch (cause) { if (cause.name !== 'AbortError') error.value = errorText(cause) }
   finally { busy.value = '' }
 }
@@ -172,8 +174,8 @@ onBeforeUnmount(dispose)
       <div v-if="previousSubmissionLink" class="notice reupload-guide"><strong>확인한 전체 파일을 올려 주세요.</strong><p>원본 수정이 필요한 경우 이전 안내의 시트·행·월·셀을 확인하고 수정·저장한 파일을 선택하세요. 변경하지 않은 항목도 모두 포함해야 합니다. 업로드하면 새 초안에서 파싱 결과를 확인하고 업무 검증·필수 소명·최종 제출을 진행합니다.</p></div>
       <div class="template-row"><div><h3>제출 양식</h3><p class="muted">{{ filename }}</p><small v-if="templateInfo?.available && templateInfo.filename !== filename" class="muted">등록 양식: {{ templateInfo.filename }}</small><small v-if="!templateInfo?.available" class="muted">{{ templateError ? '제출 양식을 확인하지 못했습니다.' : '경영기획팀의 양식 등록이 필요합니다.' }}</small></div><button class="button" :disabled="!!busy || !templateInfo?.available" @click="template">{{ busy === 'download' ? '다운로드 중…' : '양식 다운로드' }}</button></div>
       <div :class="['drop-zone', { dragging }]" @dragover.prevent="dragging = true" @dragleave.prevent="dragging = false" @drop.prevent="onDrop">
-        <h3>엑셀 파일을 여기에 끌어다 놓으세요</h3><p>.xlsx · 요청당 파일 1개 · 최대 16MB</p>
-        <input ref="input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="visually-hidden" :disabled="!!busy" aria-label="엑셀 파일 선택" @change="onFile" />
+        <h3>엑셀 파일을 여기에 끌어다 놓으세요</h3><p>.xlsx / .xlsb · 요청당 파일 1개 · 최대 20MB</p>
+        <input ref="input" type="file" accept=".xlsx,.xlsb" class="visually-hidden" :disabled="!!busy" aria-label="엑셀 파일 선택" @change="onFile" />
         <button class="button" :disabled="!!busy" @click="choose">파일 선택</button>
       </div>
       <div v-if="file" class="selected-upload">

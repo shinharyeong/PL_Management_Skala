@@ -1,13 +1,13 @@
-"""챗봇(AI 작업실) 테스트: SQL 검사기, 되묻기, 자기 수정, 문장 숫자 검증, 엑셀 숫자 == SQL 결과, 버전 필터, 적재기. 실제 OpenAI 호출 없음(모의 클라이언트)."""
+"""챗봇(AI 작업실) 테스트: SQL 검사기, 되묻기, 자기 수정, 문장 숫자 검증, 파일 없는 조회 응답, 버전 필터. 실제 OpenAI 호출 없음(모의 클라이언트)."""
 import json
 import psycopg
 from types import SimpleNamespace
 
-import openpyxl
 import pytest
 from fastapi.testclient import TestClient
 
-from app.chat import db, schema, service, sqlguard
+from tests import db_support as db
+from app.chat import schema, service, sqlguard
 from app.main import app
 from app.services import openai_client
 
@@ -42,7 +42,17 @@ def ai(monkeypatch):
 
 
 def seed(extra_close_value=None):
-    """작은 조회 DB: 조직 2개, 버전 2개(월마감 10월, 확정 master 11월). 금액은 원 단위."""
+    """작은 조회 DB: 조직 2개, 버전 2개(월마감 10월, 확정 master 11월). 금액은 원 단위.
+
+    Args:
+        extra_close_value: 테스트 fixture 또는 합성 입력.
+    Returns:
+        없음. 실패는 assert 또는 예외로 보고한다.
+    Raises:
+        AssertionError: 계약과 다른 결과. DB fixture 오류는 그대로 전파한다.
+    Side Effects:
+        모의 호출과 테스트 자료를 사용한다. PostgreSQL fixture는 승인된 환경에서만 실행한다.
+    """
     con = db.open_writer()
     with con:
         con.executemany("INSERT INTO dim_org VALUES(?,?)", [("F10", "사업부1"), ("F901", "사업부18")])
@@ -59,7 +69,7 @@ def seed(extra_close_value=None):
         con.execute("INSERT INTO explanation VALUES('master-2026-11-01','EXP-18-020','F901:REV030:2026:11:ACTUAL','G1','F901','사업부18','매출','신사업/기타B2B',2026,11,'ACTUAL','CONTRIBUTES_TO_OP_GAP','수락','ACCEPTED',2,'신규 B2B 계약 근거를 보완했습니다.','매출_세부!AU34')")
         con.execute("INSERT INTO explanation VALUES('master-2026-11-01','EXP-X','F10:X','G9','F10','사업부1','매출','로밍',2026,11,'ACTUAL','NO_GAP','검토중','ACCEPTED',1,NULL,'매출_세부!AU23')")
         db.mark_latest(con)
-        con.executescript(schema.INDEXES)
+        con.executescript(db.INDEXES)
     con.close()
 
 
@@ -240,35 +250,25 @@ def test_version_filter_and_default_latest(ai):
     assert r["params"]["version_prev"] == "close-2026-10" or r["params"]["version"] == "close-2026-10"
 
 
-# ------------------------------------------------------------------ 엑셀 숫자 == SQL 결과
-def test_excel_numbers_equal_sql_result_and_has_formula_chart(ai):
+# ------------------------------------------------------------------ 파일 없는 조회 응답
+def test_chat_returns_evidence_without_creating_an_export(ai):
+    """질의는 근거를 반환하고 파일 내보내기는 백엔드에 맡기는지 확인한다.
+
+    Args:
+        ai: 모의 모델 fixture.
+    Returns:
+        없음.
+    Raises:
+        AssertionError: 근거 누락 또는 파일 생성 응답.
+    Side Effects:
+        별도 승인된 테스트 DB의 합성 자료를 조회한다. 파일은 만들지 않는다.
+    """
     seed()
     r = client.post("/v1/chat", json={"question": "조직별 영업이익", "quick_id": "org_op"}).json()
-    f = client.get(r["file"]["url"])
-    assert f.status_code == 200 and "attachment" in f.headers["content-disposition"]
-    path = db.files_dir() / f"{r['file']['id']}.xlsx"
-    wb = openpyxl.load_workbook(path)
-    assert wb.sheetnames == ["요약", "결과", "근거"]
-    ws = wb["결과"]
-    header = [c.value for c in ws[1]]
-    assert header == ["org_name", "revenue_won", "revenue_억원", "cost_won", "cost_억원", "op_won", "op_억원"]
-    con = db.open_readonly()
-    rows = con.execute("SELECT org_name, revenue_won, cost_won, op_won FROM v_op WHERE version='master-2026-11-01' AND year=2026 AND month=11 AND scenario='ACTUAL' ORDER BY op_won DESC").fetchall()
-    for i, row in enumerate(rows, start=2):
-        assert [ws.cell(i, c).value for c in (1, 2, 4, 6)] == list(tuple(row))                   # 정수 원 단위가 그대로
-        assert ws.cell(i, 3).value == f"=B{i}/100000000" and ws.cell(i, 7).value == f"=F{i}/100000000"
-    assert ws.freeze_panes == "A2" and ws.auto_filter.ref and len(ws._charts) == 1
-    assert "SELECT" in wb["근거"]["B1"].value and wb["요약"]["B2"].value == "master-2026-11-01 (확정)"
-    con.close()
+    assert r["status"] == "ok" and r["file"] is None
+    assert r["evidence"] and r["rows_preview"]
 
 
 def test_file_endpoint_rejects_bad_id():
     assert client.get("/v1/chat/files/../../etc").status_code in (404, 422)
     assert client.get("/v1/chat/files/0123456789abcdef").status_code == 404
-
-
-# ------------------------------------------------------------------ 적재기
-
-
-
-

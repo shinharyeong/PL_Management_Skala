@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { createMonthlySession, seoulPeriod } from './domain.js'
 import { createApiClient, comparisons, flattenGapTree, status, saveFile } from './live-api.js'
 import { useSession } from '../stores/session.js'
+import { reviewActionBody } from '../lib/review-api.js'
 
 let client
 export const usePrototypeStore = defineStore('connected-frontend', {
@@ -30,10 +31,22 @@ export const usePrototypeStore = defineStore('connected-frontend', {
     monthlySession(org){if(!this.monthlySessions[org]){const s=createMonthlySession();s.draft.baseVersion='fixed';s.draft.compareVersion='latest';this.monthlySessions[org]=s}return this.monthlySessions[org]},
     comparisonItems(org){return this.items[org]||[]},
     async loadGap(org,type='실적 vs 계획'){const id=this.monthlyRequest?.request.id;if(!id){this.items[org]=[];return}const p=await this.api(`/api/v1/review-items?view=PLANNER&requestId=${id}&organizationId=${org}&comparison=${comparisons[type]}&tab=ALL`);this.items[org]=flattenGapTree(p.tree,type);const selected=this.items[org].filter(r=>r.status==='검토 완료');this.carts[org]=[...(this.carts[org]||[]).filter(r=>!this.items[org].some(n=>n.id===r.id)),...selected.map(r=>({...r,conditions:{...this.monthlySession(org).draft,type}}))];if(p.submission)this.currentSubmission=await this.api('/api/v1/submissions/'+p.submission.id)},
-    async reviewAction(org,rows,action,extra={}){await this.api('/api/v1/review-items/actions',{method:'POST',body:{action,items:rows.map(r=>({reviewItemId:r.id,expectedStateToken:r.stateToken})),...extra}});await this.loadGap(org,this.monthlySession(org).applied?.type)},
+    /** 실제 항목 ID·상태 토큰으로 검토 명령을 실행하고 최신 표를 조회한다.
+     * Args: org 조직 ID, rows 선택 항목, action 명령, extra 사유·기한·메시지.
+     * Returns: Promise<void>. Raises: 명령 검증·HTTP 오류. Side Effects: 검토 상태 변경·화면 갱신.
+     */
+    async reviewAction(org,rows,action,extra={}){await this.api('/api/v1/review-items/actions',{method:'POST',body:reviewActionBody(action,rows,extra)});await this.loadGap(org,this.monthlySession(org).applied?.type)},
     async addToCart(org,rows,conditions){await this.reviewAction(org,rows,'SELECT');const latest=this.items[org]||[];this.carts[org]=[...(this.carts[org]||[]).filter(r=>!rows.some(n=>n.id===r.id)),...latest.filter(r=>rows.some(n=>n.id===r.id)).map(r=>({...r,conditions:{...conditions}}))]},
-    async excludeItems(org,ids){await this.reviewAction(org,(this.items[org]||[]).filter(r=>ids.includes(r.id)),'EXCLUDE');this.carts[org]=(this.carts[org]||[]).filter(r=>!ids.includes(r.id))},
-    removeCartItem(org,id){return this.excludeItems(org,[id])},
+    /** 제외 사유를 보존하고 선택 항목을 검토 대상에서 제외한다.
+     * Args: org 조직 ID, ids 항목 ID 목록, note 사용자가 입력한 제외 사유.
+     * Returns: Promise<void>. Raises: 검증·HTTP 오류. Side Effects: 서버 검토 상태·작업공간 갱신.
+     */
+    async excludeItems(org,ids,note){await this.reviewAction(org,(this.items[org]||[]).filter(r=>ids.includes(r.id)),'EXCLUDE',{note});this.carts[org]=(this.carts[org]||[]).filter(r=>!ids.includes(r.id))},
+    /** 한 항목을 사유와 함께 제외한다.
+     * Args: org 조직 ID, id 항목 ID, note 제외 사유.
+     * Returns: Promise<void>. Raises: 검증·HTTP 오류. Side Effects: 제외 처리.
+     */
+    removeCartItem(org,id,note){return this.excludeItems(org,[id],note)},
     async sendExplanation(org,message,due){const rows=this.carts[org]||[];if(!rows.length)throw new Error('선택한 항목이 없습니다.');await this.reviewAction(org,rows,'REQUEST_EXPLANATION',{message,dueAt:new Date(due+':00+09:00').toISOString()});this.carts[org]=[];await this.loadMonthly();await this.refreshBadge();return true},
     async createRequest(type,organizationIds,due,message,year){const p=seoulPeriod();await this.api('/api/v1/submission-requests',{method:'POST',body:{type,year:year||p.year,month:type==='MONTHLY_ACTUAL'?p.month:null,organizationIds,dueAt:new Date(due+':00+09:00').toISOString(),message}});if(type==='MONTHLY_ACTUAL')await this.loadMonthly();else await this.loadAnnual(year)},
     async openDetail(id){this.activeReviewId=id;const r=await Promise.all([this.api('/api/v1/review-items/'+id),this.api('/api/v1/review-items/'+id+'/evidence'),this.api('/api/v1/review-items/'+id+'/versions')]);if(this.activeReviewId===id)[this.reviewDetail,this.evidence,this.versions]=r},
