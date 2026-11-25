@@ -131,7 +131,7 @@ PL_Management_Skala/
 | CI | GitHub Actions(`ci.yaml`, GitHub-hosted runner)가 backend·parser·ai·frontend 테스트와 linux/amd64 이미지 빌드를 확인한다. push는 하지 않는다 |
 | 이미지 저장소 | ECR `881490135253.dkr.ecr.ap-northeast-2.amazonaws.com/teams/p1-2/app` 하나. 태그는 `<서비스>-<main 커밋 해시 12자리>`(예: `backend-1af26bbcdbad`)이고 덮어쓸 수 없다(IMMUTABLE). 노드가 IAM으로 받으므로 `imagePullSecrets`를 쓰지 않는다. push는 캠퍼스 네트워크에서만 된다 |
 | CD | **main 기준.** develop → main PR이 머지되면 `deploy.yml`이 캠퍼스 PC의 self-hosted runner에서 돈다: GitHub OIDC로 Role `gha-p1-2`를 받아 → 서비스 3개를 빌드해 ECR에 push(같은 태그가 이미 있으면 생략) → `k8s/` 임시 복사본에 태그 적용 → `kubectl apply -k` → rollout 확인. 인증은 main 브랜치와 캠퍼스 IP에서만 허용된다. 지금 배포된 버전은 이미지 태그로 안다. Actions 탭에서 다시 실행(Re-run)하면 같은 커밋을 다시 배포한다 |
-| Runner | 캠퍼스 안 PC에 설치(repo → Settings → Actions → Runners). aws CLI v2·kubectl·docker가 있어야 하고, 배포할 때 켜져 있어야 한다. 저장소가 공개라 Settings → Actions → General에서 외부 기여자의 fork PR 워크플로는 승인 후에만 돌게 한다 |
+| Runner | 캠퍼스 안 PC에 설치(repo → Settings → Actions → Runners). aws CLI v2·kubectl·docker가 있어야 하고, 배포할 때 켜져 있어야 한다. 터미널 창을 닫아도 돌도록 `~/actions-runner`에서 `./svc.sh install && ./svc.sh start`로 서비스 등록한다. 잠자기에 들어가면 배포가 대기 상태로 멈추므로(화면만 꺼지는 것은 괜찮음) 전원 어댑터를 연결하고 "디스플레이가 꺼져 있을 때 자동으로 잠자기 방지"를 켠다. 캠퍼스 밖 네트워크에서는 AWS 인증이 거부된다. 저장소가 공개라 Settings → Actions → General에서 외부 기여자의 fork PR 워크플로는 승인 후에만 돌게 한다 |
 | Actions 로그 | 공개 저장소라 누구나 본다. 워크플로에서 Pod 로그·Secret·인증코드를 출력하지 않는다 |
 | Actions Role 권한 | Deployment·StatefulSet·Service·ConfigMap·Ingress·HPA·Job·CronJob 생성·수정. Secret·PVC·NetworkPolicy와 삭제는 안 되므로 그런 것은 `k8s/`의 kustomization 밖(`k8s/once/`)에 두고 개인 kubectl로 적용한다 |
 | 개인 kubectl | 포털 가이드 「kubectl 접속」 명령으로 `~/.kube/p1-2.yaml`을 만든다. 토큰은 매일 06:00 재발급(26시간 유효), 캠퍼스 네트워크에서만. p1-2 안의 Secret·PVC 생성·삭제, logs·exec·port-forward가 된다. AWS 자격 증명은 없어 ECR push는 Actions로만 한다 |
