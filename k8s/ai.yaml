@@ -9,15 +9,12 @@ spec:
   template:
     metadata: { labels: { app: ai } }
     spec:
-      serviceAccountName: s3-access
-      imagePullSecrets: [{ name: harbor-cred }]
       securityContext: { runAsNonRoot: true, runAsUser: 10001 }
       containers:
         - name: ai
-          image: skala-registry.skala-ai.com/p1-2/ai
+          image: ai-image   # kustomization.yaml images가 ECR 주소·태그로 바꾼다
           ports: [{ name: http, containerPort: 8000 }]
           envFrom:
-            - configMapRef: { name: s3-config }
             - secretRef: { name: app-secrets, optional: true }  # OPENAI_API_KEY, REPORT_AI_TOKEN
           env:
             - { name: TZ, value: Asia/Seoul }

@@ -1,0 +1,14 @@
+# report-ai(ai)는 backend만 부를 수 있게 한다. 네임스페이스 안의 다른 Pod(디버그용 kubectl run 등)는 ai:8000에 닿지 않는다.
+# 플랫폼 기본값은 Pod 사이 통신이 모두 열려 있다(NetworkPolicy 없음). 개인 kubectl로 한 번만 적용한다: kubectl apply -f k8s/once/
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-from-backend-only
+  namespace: p1-2
+  labels: { app.kubernetes.io/part-of: pl-management }
+spec:
+  podSelector: { matchLabels: { app: ai } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: backend } } }]
+      ports: [{ port: 8000, protocol: TCP }]

@@ -1,0 +1,100 @@
+# 운영 배포(skala-pg 클러스터, 네임스페이스 p1-2). main에 push되면 실행한다.
+# 플랫폼 안내(2026-11-25): AWS 인증은 GitHub OIDC로 Role을 받아 쓰고, main 브랜치·캠퍼스 네트워크에서만 허용된다.
+# 그래서 캠퍼스 PC의 self-hosted runner에서 돈다(GitHub-hosted runner는 캠퍼스 밖 IP라 거부됨).
+# 저장소가 공개라 Actions 로그도 공개다 — Pod 로그·Secret·인증코드를 출력하는 단계를 넣지 않는다.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "배포 후 체험 계정·조직 시드를 넣는다(빈 DB일 때 한 번)"
+        type: boolean
+        default: false
+
+# 배포는 한 번에 하나씩. 진행 중인 배포는 취소하지 않는다(중간에 끊기면 일부만 바뀐 상태가 남는다).
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-2
+  CLUSTER: skala-pg
+  NAMESPACE: p1-2
+  ECR_REPOSITORY: teams/p1-2/app
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::881490135253:role/gha-p1-2
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      # 태그는 <서비스>-<커밋 해시 12자리>. ECR 태그는 덮어쓸 수 없어서, 같은 커밋을 다시 배포하면(재실행) 이미 있는 이미지를 그대로 쓴다.
+      # 노드가 amd64라 linux/amd64로 빌드한다(runner가 Apple Silicon이어도).
+      - name: Build & push images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA::12}"
+          for service in backend ai frontend; do
+            tag="$service-$SHA"
+            if aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$tag" >/dev/null 2>&1; then
+              echo "▶ $tag 이미 있음 — 빌드 생략"
+              continue
+            fi
+            echo "▶ $tag 빌드·push"
+            docker buildx build --platform linux/amd64 --provenance=false \
+              -f "$service/Dockerfile" -t "$REGISTRY/$ECR_REPOSITORY:$tag" --push .
+          done
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+
+      # kubeconfig는 runner PC의 ~/.kube/config를 건드리지 않도록 작업 임시 폴더에 만든다.
+      # 태그는 k8s/ 임시 복사본에만 넣는다(저장소 파일은 그대로).
+      - name: Deploy
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+          aws eks update-kubeconfig --name "$CLUSTER" --region "$AWS_REGION" --kubeconfig "$KUBECONFIG" >/dev/null
+          work="$RUNNER_TEMP/k8s"
+          rm -rf "$work" && cp -R k8s "$work"
+          sed -i.bak -E "s/newTag: (backend|ai|frontend)-main/newTag: \1-$SHA/" "$work/kustomization.yaml"
+          rm -f "$work/kustomization.yaml.bak"
+          grep -c "newTag: .*-$SHA" "$work/kustomization.yaml" | grep -qx 3 || { echo "이미지 태그 치환 실패" >&2; exit 1; }
+          kubectl -n "$NAMESPACE" apply -k "$work"
+          for service in backend ai frontend; do
+            kubectl -n "$NAMESPACE" rollout status "deploy/$service" --timeout=8m
+          done
+          kubectl -n "$NAMESPACE" get pods
+
+      # 체험 계정·조직 시드(ON CONFLICT DO NOTHING이라 여러 번 넣어도 중복되지 않음). 테이블은 backend 기동 때 Flyway가 만든다.
+      # 팀 권한으로 Job을 지울 수 없어 끝나고 10분 뒤 쿠버네티스가 지운다(ttlSecondsAfterFinished). 그 안에 다시 실행하면 실패한다.
+      - name: Seed demo data
+        if: ${{ inputs.seed }}
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+          kubectl -n "$NAMESPACE" create configmap seed-demo-sql \
+            --from-file=seed.sql=backend/src/main/resources/db/local/R__local_seed.sql \
+            --dry-run=client -o yaml | kubectl -n "$NAMESPACE" apply -f -
+          kubectl -n "$NAMESPACE" apply -f k8s/jobs/seed-demo.yaml
+          kubectl -n "$NAMESPACE" wait --for=condition=complete job/seed-demo --timeout=3m
+
+      - name: Clean up
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/kubeconfig" "$RUNNER_TEMP/k8s"
