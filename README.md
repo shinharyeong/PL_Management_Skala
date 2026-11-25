@@ -33,6 +33,13 @@ Compose는 Vue 정적 프런트, Java 21·Python 3.11 백엔드, PostgreSQL을 �
 
 - [문서 목록](docs/README.md) — PRD·인프라 구성·로컬 실행 환경
 
+## 배포·운영
+
+- 서비스: https://p1-2.skala-ai.com (캠퍼스 네트워크에서만 접속)
+- 배포: develop → main PR이 머지되면 [`deploy.yml`](.github/workflows/deploy.yml)이 캠퍼스 PC의 self-hosted runner에서 이미지를 ECR에 올리고 SKALA EKS(`skala-pg`, 네임스페이스 `p1-2`)에 적용합니다. 배포할 때 runner PC가 켜져 있고(잠자기 X) 캠퍼스 네트워크·Docker가 준비돼 있어야 합니다.
+- 모니터링: https://p1-2.skala-ai.com/grafana/ (로그인 필요)
+- 수동 배포·되돌리기, 처음 한 번 만드는 리소스(Secret·PVC), 팀 권한 범위는 [인프라 구성](docs/infrastructure.md)의 4절을 봅니다.
+
 ## 협업 규칙
 
 브랜치 전략, 커밋·이슈·PR 규칙은 [CONTRIBUTING.md](CONTRIBUTING.md)를 따릅니다.
