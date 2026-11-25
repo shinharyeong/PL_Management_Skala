@@ -19,7 +19,7 @@ public record OrgReviewListResponse(BaselineResponse baseline, Progress progress
 
     /**
      * @param previous    재제출일 때 직전(반려된) 제출값. 재제출이 아니거나 값이 없으면 null
-     * @param answerState EMPTY / WRITTEN / INHERITED(값이 그대로라 지난 승인 소명을 이어받음)
+     * @param answerState NOT_REQUIRED(비교 기준 없는 최초 월간 제출의 조회 전용 항목) / EMPTY / WRITTEN / INHERITED(값이 그대로라 지난 승인 소명을 이어받음)
      */
     public record Item(String reviewItemId, String name, String sourceCell, String baseline, String previous,
                        String current, String rate, String answerState, String stateToken) {
