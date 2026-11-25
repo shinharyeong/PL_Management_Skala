@@ -40,7 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>쓸 수 있는 소명 회차:
  * <ul>
  *   <li>제출 전(DRAFT): 1회차 소명 대상(PENDING, 이어받은 것 아님)</li>
- *   <li>검토 대기(PENDING) 중 경영기획팀이 소명을 요청한 회차(2회차 이상, 판단 전): 답하면 '소명 회신' 알림</li>
+ *   <li>검토 대기(PENDING) 중 경영기획팀이 소명을 요청한 회차(회차 번호와 무관, 판단 전): 답하면 '소명 회신' 알림</li>
  * </ul>
  * 그 밖에는 EXPLANATION_LOCKED. 대상이 아니게 바뀌었으면 REVIEW_CONTEXT_CHANGED.
  */
@@ -66,7 +66,7 @@ public class ExplanationAnswerService {
         Writable target = writable(reviewItemId, user, expectedStateToken);
         OffsetDateTime now = OffsetDateTime.now(clock);
         target.explanation().answer(text.strip(), appUserRepository.getReferenceById(user.id()), now);
-        if (target.explanation().getRound() > ExplanationTargetService.ORG_ROUND) {
+        if (target.explanation().getRequestedAt() != null) {
             Submission submission = target.item().getSubmission();
             notificationRecorder.record(new NotificationEvent(NotificationType.REPLY,
                     "reply:" + target.explanation().getId() + ":" + target.explanation().getRound(),
@@ -152,7 +152,6 @@ public class ExplanationAnswerService {
             return new Writable(item, current);
         }
         boolean reply = submission.getStatus() == SubmissionStatus.PENDING && current != null
-                && current.getRound() > ExplanationTargetService.ORG_ROUND
                 && current.getVerdict() == ExplanationVerdict.PENDING && current.getRequestedAt() != null;
         if (!reply) {
             throw ReviewErrorCode.EXPLANATION_LOCKED.exception();

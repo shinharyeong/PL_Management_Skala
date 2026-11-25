@@ -102,6 +102,7 @@ function menuSelected(id) { return id === 'monthly' ? monthlyPages.includes(page
  * Raises: 라우터 오류. Side Effects: 브라우저 경로 변경.
  */
 function navigate(id) { router.push({ name: id }) }
+async function openWorkspace(org){store.activeOrg=org;if(await store.run(()=>store.loadGap(org,store.monthlySession(org).applied?.type)))navigate('workspace')}
 /** 건너뛰기 링크의 본문에 초점을 둔다.
  * Args: 없음. Returns: 없음.
  * Raises: 없음. Side Effects: DOM 초점 변경.
@@ -200,7 +201,7 @@ watch(page,async value=>{
             <span><span :data-copy-key="'pages.'+menu.id">{{ copy.pages[menu.id] || menu.label }}</span></span><span v-if="menu.id === 'notifications' && store.unread" class="nav-count">{{ store.unread }}</span>
           </a>
           <div v-if="menu.id === 'monthly' && store.workspaces.length" class="workspace-nav">
-            <button v-for="work in store.workspaces" :key="work.org" class="nav-link" :class="{ active: ['workspace','cell'].includes(page) && store.activeOrg === work.org }" @click="store.activeOrg = work.org; navigate('workspace')"><span>{{ work.name }}</span><span class="nav-count">{{ work.count }}</span></button>
+            <button v-for="work in store.workspaces" :key="work.org" class="nav-link" :class="{ active: ['workspace','cell'].includes(page) && store.activeOrg === work.org }" @click="openWorkspace(work.org)"><span>{{ work.name }}</span><span class="nav-count">{{ work.count }}</span></button>
           </div>
         </template>
       </nav>

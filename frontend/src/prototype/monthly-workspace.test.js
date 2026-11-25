@@ -24,6 +24,9 @@ test('calculation does not create a workspace, even when the server returns prev
   assert.equal(store.carts.F10[0].stateToken, 'fresh')
   tab = 'IN_PROGRESS'
   await store.loadGap('F10')
+  assert.equal(store.workspaces[0].count, 1)
+  tab='ACCEPTED'
+  await store.loadGap('F10')
   assert.deepEqual(store.workspaces, [])
 })
 

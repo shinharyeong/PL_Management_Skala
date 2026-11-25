@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -138,6 +139,12 @@ class GapReviewIntegrationTest extends PostgresIntegrationTest {
         long nov = monthly(11);
         long draft = draft(nov, "nov", List.of(line(10, value(11, "ACTUAL", "1300", "M10"))));
         validate(draft).andExpect(jsonPath("$.baseline.kind").value("NONE"));
+        mvc.perform(get("/api/v1/review-items").with(manager)
+                .param("view", "ORG").param("submissionId", String.valueOf(draft)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.progress.required").value(0))
+                .andExpect(jsonPath("$.groups[0].months[0].items[0].current").value("1300"))
+                .andExpect(jsonPath("$.groups[0].months[0].items[0].answerState").value("NOT_REQUIRED"))
+                .andExpect(jsonPath("$.groups[0].months[0].items[0].baseline").isEmpty());
         submit(draft).andExpect(status().isOk());
         Map<String, Object> gap = jdbc.queryForMap("""
                 select g.basis, g.baseline_amount, g.current_amount, g.gap_amount, g.exceeded, i.gap_exceeded
@@ -221,6 +228,19 @@ class GapReviewIntegrationTest extends PostgresIntegrationTest {
                 Long.parseLong(itemId))).isEqualTo("차이 원인을 적어 주세요.");
         act("EXCLUDE", itemId, requested.at("/items/0/stateToken").asText(), Map.of("note", "x"))
                 .andExpect(status().isConflict());
+
+        // 최초 소명 대상이 없던 항목은 요청 후에도 1회차다. 회차가 아닌 요청 여부로 회신을 허용한다.
+        mvc.perform(put("/api/v1/review-items/{id}/answer", itemId).with(manager)
+                .header("Idempotency-Key", key()).contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(Map.of("answer", "요청받은 첫 회차 소명 회신", "expectedStateToken", requested.at("/items/0/stateToken").asText()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.answerState").value("WRITTEN"));
+        assertThat(jdbc.queryForObject("select count(*) from notification where submission_id = ? and type = 'REPLY'", Integer.class, first)).isPositive();
+
+        mvc.perform(get("/api/v1/review-items").with(manager)
+                .param("view", "ORG").param("submissionId", String.valueOf(first)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.progress.required").value(1))
+                .andExpect(jsonPath("$.progress.answered").value(1));
 
         // 첫 제출본을 승인 버전(ver11.01)으로 두고, 값을 바꾼 새 초안을 올린다
         jdbc.update("update submission set status = 'APPROVED', approved_seq = 1, reviewed_by = ?, reviewed_at = now() where id = ?",
