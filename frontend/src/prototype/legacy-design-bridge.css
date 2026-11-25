@@ -1,0 +1,14 @@
+/* New report/upload components inherit the same visual language as the 14175 pages. */
+@layer app {
+  .p-component { font-family: inherit; font-size: 14px; }
+  .p-button { font-family: inherit; font-size: 13px; font-weight: 500; border-radius: 8px; min-height: 40px; padding: 10px 20px; }
+  .p-button:not(.p-button-secondary):not(.p-button-text):not(.p-button-outlined):not(.p-button-danger):not(.p-button-success):not(.p-button-warn) { background: var(--accent); border-color: var(--accent); color: white; }
+  .p-button-secondary.p-button-outlined { background: white; border-color: var(--line); color: var(--text); }
+  .p-inputtext,.p-textarea,.p-select { border-radius: 8px; border-color: var(--line); font-family: inherit; box-shadow: none; }
+  .p-datatable-thead>tr>th { background: var(--canvas); color: var(--muted); font-size: 12px; font-weight: 500; padding: 14px 12px; border-color: var(--line); }
+  .p-datatable-tbody>tr>td { padding: 14px 12px; border-color: var(--line); }
+  .p-panel { border: 1px solid var(--line); border-radius: 12px; background: white; box-shadow: none; }
+  .p-panel-header { padding: 20px 24px; }
+  .p-panel-content { padding: 0 24px 24px; }
+  .p-tag { border-radius: 7px; padding: 4px 9px; font-size: 12px; font-weight: 500; }
+}

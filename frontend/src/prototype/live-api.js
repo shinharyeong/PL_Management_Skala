@@ -34,12 +34,19 @@ export function createApiClient(credentials) {
 export const comparisons = { '실적 vs 계획': 'ACTUAL_VS_PLAN', '추정 vs 추정': 'ESTIMATE_VS_PREVIOUS', '추정 vs 계획': 'ESTIMATE_VS_PLAN' }
 export const stages = { NEEDS_REVIEW:'검토 필요', SELECTED:'검토 완료', IN_PROGRESS:'소명 진행중', RE_REVIEW:'재검토 필요', ACCEPTED:'소명 승인 완료', EXCLUDED:'제외됨' }
 export const status = value => ({ SUBMITTED:'제출 완료', OVERDUE:'기한 경과', WAITING:'회신 대기', PENDING:'검토 대기', APPROVED:'승인 완료', REJECTED:'반려', DRAFT:'초안', RESUBMIT_REQUESTED:'재제출 요청' })[value] || value || '—'
-export function flattenGapTree(tree, type) {
+export function flattenGapTree(tree, type, organizationName) {
   const result = []
+  const normalize = name => String(name || '').replace(/\s/g, '')
+  function classification(parents) {
+    const org = normalize(organizationName), root = normalize(parents[0])
+    // A selected organization's wrapper is context, not an account classification.
+    return org && (root === org || root === org+'합계') ? parents.slice(1) : parents
+  }
   function visit(nodes, parents = []) {
     for (const node of nodes || []) {
+      const path = classification(parents)
       if (node.reviewItemId) result.push({ id: node.reviewItemId, key:node.reviewItemId, stateToken:node.stateToken,
-        name:[parents.at(-1),node.name].filter(Boolean).join(' · '), major:parents[0] || '항목', group:parents[1] || parents[0] || '항목', category:parents.slice(2).join(' / ') || parents.at(-1) || '항목',
+        name:[path.at(-1),node.name].filter(Boolean).join(' · '), major:path[0] || '항목', group:path[1] || path[0] || '항목', category:path.slice(2).join(' / ') || path.at(-1) || '항목',
         cell:node.name, plan:node.plan, actual:node.actual, estimate:node.actual, previousEstimate:node.plan,
         baselineAmount:node.plan, currentAmount:node.actual, gapAmount:node.diff, gapRate:node.rate, status:stages[node.tab] || node.tab,
         conditions:{ type }, reportItemId:node.reportItemId })
