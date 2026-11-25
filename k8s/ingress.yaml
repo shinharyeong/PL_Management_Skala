@@ -5,9 +5,10 @@ metadata:
   name: web
   annotations:
     nginx.ingress.kubernetes.io/whitelist-source-range: "211.45.60.1/32,211.45.60.2/32,211.45.60.3/32,211.45.60.4/32,211.45.60.5/32"
+    # backend는 보고서 AI 응답을 최대 90초 기다린다(app.report-ai.timeout-seconds). 기본 60초면 Ingress가 먼저 끊는다.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
 spec:
   ingressClassName: public-nginx
-  tls: [{ hosts: [p1-2.skala-ai.com], secretName: team-tls }]
   rules:
     - host: p1-2.skala-ai.com
       http:

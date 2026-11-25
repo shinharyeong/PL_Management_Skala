@@ -71,18 +71,7 @@ docker compose cp "<양식 파일>.xlsb" backend:/data/templates/submission-temp
 
 스키마: `public`(업무 테이블), `report`(AI 보고서용 뷰), `ai`(AI 조회 DB, AI가 처음 적재할 때 생김).
 
-**클러스터 DB(prod, 공용 RDS)**: 외부에서 바로 접속되지 않으므로 캠퍼스 네트워크에서 중계 파드를 띄우고 port-forward 한다(플랫폼 가이드 "내 PC 에서 DB 도구로 붙기"). 운영 데이터라 조회만 하고, 수정은 하지 않는다.
-
-```bash
-kubectl run pg-tunnel --image=alpine/socat --restart=Never -- tcp-listen:5432,fork,reuseaddr tcp-connect:"$(kubectl get secret rds-credentials -o jsonpath='{.data.PGHOST}' | base64 -d)":5432
-kubectl wait --for=condition=Ready pod/pg-tunnel && kubectl port-forward pod/pg-tunnel 25432:5432
-```
-
-DBeaver: Host `127.0.0.1`, Port `25432`, Database·Username `p1_2`, SSL `require`(호스트 이름이 localhost라 인증서 검증은 끈다). 비밀번호는 플랫폼 포털 가이드의 RDS 표(또는 `kubectl get secret rds-credentials -o jsonpath='{.data.PGPASSWORD}' | base64 -d`)에서 확인하고 저장소·채팅에 남기지 않는다. 다 쓰면 중계 파드를 지운다.
-
-```bash
-kubectl delete pod pg-tunnel
-```
+**클러스터 DB(prod, 공용 RDS)**: 외부에서 바로 접속되지 않는다. 이전 클러스터에서는 중계 파드(`kubectl run pg-tunnel`)와 port-forward로 붙었지만, 새 클러스터(`skala-pg`)는 개인 kubeconfig가 없고 팀 권한으로 Pod를 직접 만들 수 없어 이 방법을 쓸 수 없다. 운영 데이터를 봐야 하면 포털에 조회 방법을 문의한다. 접속 계정은 캔버스 공지에 있고 저장소·채팅에 남기지 않는다.
 
 ## 파일
 
