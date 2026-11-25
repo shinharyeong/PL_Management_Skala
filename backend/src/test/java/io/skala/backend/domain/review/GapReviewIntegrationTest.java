@@ -139,6 +139,12 @@ class GapReviewIntegrationTest extends PostgresIntegrationTest {
         long nov = monthly(11);
         long draft = draft(nov, "nov", List.of(line(10, value(11, "ACTUAL", "1300", "M10"))));
         validate(draft).andExpect(jsonPath("$.baseline.kind").value("NONE"));
+        mvc.perform(get("/api/v1/review-items").with(manager)
+                .param("view", "ORG").param("submissionId", String.valueOf(draft)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.progress.required").value(0))
+                .andExpect(jsonPath("$.groups[0].months[0].items[0].current").value("1300"))
+                .andExpect(jsonPath("$.groups[0].months[0].items[0].answerState").value("NOT_REQUIRED"))
+                .andExpect(jsonPath("$.groups[0].months[0].items[0].baseline").isEmpty());
         submit(draft).andExpect(status().isOk());
         Map<String, Object> gap = jdbc.queryForMap("""
                 select g.basis, g.baseline_amount, g.current_amount, g.gap_amount, g.exceeded, i.gap_exceeded

@@ -74,7 +74,7 @@ public class ReviewItemQueryService {
     public OrgReviewListResponse listForOrg(Long submissionId, AuthenticatedUser user) {
         Submission submission = submissionAccess.loadForRead(submissionId, user);
         View view = reviewComparison.build(submission);
-        Map<Long, ReviewExplanation> round1 = reviewExplanationRepository.findAllBySubmissionId(submissionId).stream()
+        Map<Long, ReviewExplanation> currentExplanations = reviewExplanationRepository.findAllBySubmissionId(submissionId).stream()
                 .filter(e -> submission.getStatus() != SubmissionStatus.DRAFT
                         || e.getRound() == ExplanationTargetService.ORG_ROUND)
                 .collect(Collectors.toMap(e -> e.getReviewItem().getId(), Function.identity(),
@@ -84,12 +84,13 @@ public class ReviewItemQueryService {
         grouped.put(ReportItemKind.REVENUE, new TreeMap<>());
         grouped.put(ReportItemKind.COST, new TreeMap<>());
         List<ReviewItem> items = reviewItemRepository.findAllWithReportItemBySubmissionId(submissionId).stream()
-                .filter(i -> Boolean.TRUE.equals(i.getActive()) && round1.containsKey(i.getId()))
+                .filter(i -> Boolean.TRUE.equals(i.getActive()) && (currentExplanations.containsKey(i.getId())
+                        || (view.kind() == BaselineKind.NONE && view.request().getMonth() != null)))
                 .sorted(Comparator.comparing((ReviewItem i) -> i.getReportItem().getDisplayOrder())
                         .thenComparing(ReviewItem::getId))
                 .toList();
         for (ReviewItem item : items) {
-            ReviewExplanation explanation = round1.get(item.getId());
+            ReviewExplanation explanation = currentExplanations.get(item.getId());
             Key key = key(item);
             OrgReviewListResponse.Item row = new OrgReviewListResponse.Item(
                     String.valueOf(item.getId()),
@@ -99,7 +100,7 @@ public class ReviewItemQueryService {
                     view.kind() == BaselineKind.REJECTED ? Amounts.money(view.previousOf(key)) : null,
                     Amounts.money(item.getCurrentAmount()),
                     Amounts.rate(item.getCurrentAmount(), view.baselineOf(key)),
-                    answerState(explanation),
+                    explanation == null ? "NOT_REQUIRED" : answerState(explanation),
                     ReviewItemTokens.of(item, explanation, submission));
             grouped.computeIfAbsent(item.getReportItem().getKind(), k -> new TreeMap<>())
                     .computeIfAbsent(slot(item), k -> new ArrayList<>()).add(row);
@@ -120,7 +121,7 @@ public class ReviewItemQueryService {
         if (submission.getStatus() == SubmissionStatus.DRAFT) {
             progress = explanationTargetService.progress(submissionId);
         } else {
-            List<ReviewExplanation> requested = round1.values().stream()
+            List<ReviewExplanation> requested = currentExplanations.values().stream()
                     .filter(e -> e.getRequestedAt() != null).toList();
             progress = new ExplanationTargetService.Progress(
                     (int) requested.stream().filter(ReviewExplanation::isAnswered).count(), requested.size());

@@ -154,9 +154,9 @@ onBeforeUnmount(dispose)
 
 <template>
   <section class="panel current-reviews">
-    <div class="section-heading"><h2>변경 항목·소명</h2><span class="muted">{{submission.status === 'DRAFT' ? '소명' : '요청 소명'}} {{ progress?.answered ?? 0 }}/{{ progress?.required ?? items.length }} 작성</span></div>
+    <div class="section-heading"><h2>{{ comparisonBaseline?.kind === 'NONE' ? '제출 항목 확인' : '변경 항목·소명' }}</h2><span class="muted">{{submission.status === 'DRAFT' ? '소명' : '요청 소명'}} {{ progress?.answered ?? 0 }}/{{ progress?.required ?? items.length }} 작성</span></div>
     <p class="muted">비교 기준 · {{ baselineLabel(comparisonBaseline || submission.baseline) }}</p>
-    <p v-if="!comparisonBaseline || comparisonBaseline.kind === 'NONE'" class="first-submission-notice">이전 비교 제출본 없음 · 현재 제출값만 표시합니다. 이전 값과 차액·차이율은 —로 표시합니다.</p>
+    <p v-if="!loading && !error && comparisonBaseline?.kind === 'NONE'" class="first-submission-notice">이전 비교 제출본 없음 · 현재 제출값만 표시합니다. 이전 값과 차액·차이율은 —로 표시합니다.</p>
     <PMessage v-if="error" severity="error" :closable="false">{{ error }}</PMessage>
     <PMessage v-if="message" severity="success" :closable="false">{{ message }}</PMessage>
     <PMessage v-if="loading" severity="info" :closable="false">소명 항목을 불러오는 중…</PMessage>
@@ -168,7 +168,7 @@ onBeforeUnmount(dispose)
           <details v-for="period in group.months" :key="`${period.month}-${period.scenario}`" class="review-period" open>
             <summary>{{ period.month }}월 {{ scenarioLabel(period.scenario) }} <small>{{ period.items.length }}개 항목</small></summary>
             <PButton v-for="item in period.items" :key="item.reviewItemId" class="review-item" :class="{active:selectedId === item.reviewItemId}" :severity="selectedId === item.reviewItemId ? 'primary' : 'secondary'" :outlined="selectedId !== item.reviewItemId" :aria-pressed="selectedId === item.reviewItemId" :disabled="busy" @click="select(item.reviewItemId)">
-              <span class="review-item-content"><strong>{{ item.name }}</strong><small>{{ item.sourceCell || '원본 셀은 상세에서 확인' }}</small><span class="answer-state" :class="item.answerState">{{ {EMPTY:'미작성',WRITTEN:'작성 완료',INHERITED:'이전 소명 유지'}[item.answerState] || item.answerState }}</span></span>
+              <span class="review-item-content"><strong>{{ item.name }}</strong><small>{{ item.sourceCell || '원본 셀은 상세에서 확인' }}</small><span class="answer-state" :class="item.answerState">{{ {NOT_REQUIRED:'소명 작성 불필요',EMPTY:'미작성',WRITTEN:'작성 완료',INHERITED:'이전 소명 유지'}[item.answerState] || item.answerState }}</span></span>
             </PButton>
           </details>
         </details>
@@ -237,7 +237,7 @@ onBeforeUnmount(dispose)
 summary small {float:right;font-weight:400;}
 .review-period .review-item {margin-bottom:8px;}
 .answer-state {align-self:flex-start;font-size:12px;border-radius:6px;padding:2px 7px;background:#fff2d5;color:#8a5300;}
-.answer-state.WRITTEN,.answer-state.INHERITED {background:#e3f4eb;color:#226446;}
+.answer-state.NOT_REQUIRED,.answer-state.WRITTEN,.answer-state.INHERITED {background:#e3f4eb;color:#226446;}
 .previous-explanation {padding:16px;background:#f2f7f2;border:1px solid #d9e9dc;border-radius:10px;}
 .previous-explanation h4 {margin:0;}
 
