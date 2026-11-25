@@ -1,6 +1,5 @@
 # PR·develop·main마다 테스트 4종을 돌린다. 이미지 빌드(linux/amd64)는 그 이미지의 Dockerfile·의존성 파일이 바뀐 경우에만 한다.
-# Harbor push는 하지 않는다: 플랫폼 안내상 GitHub Actions에서 Harbor push가 막혀 있고(2026-11-19),
-# 클러스터 배포도 캠퍼스 네트워크에서만 된다. 배포는 scripts/deploy.sh로 한다(docs/infrastructure.md).
+# 여기서는 push하지 않는다(빌드 확인만). ECR push·클러스터 배포는 main push 때 deploy.yml이 캠퍼스 self-hosted runner에서 한다.
 name: ci
 
 on:

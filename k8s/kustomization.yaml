@@ -1,6 +1,5 @@
-# 배포: 캠퍼스 네트워크에서 main 기준으로 scripts/deploy.sh
-# 플랫폼이 미리 만들어 둔 것: Secret rds-credentials·harbor-cred·team-tls, ConfigMap s3-config, ServiceAccount s3-access
-# 팀이 kubectl로 직접 만드는 것(Git에 넣지 않음): Secret app-secrets
+# 배포: main에 push되면 .github/workflows/deploy.yml이 캠퍼스 self-hosted runner에서 이미지를 ECR에 올리고 kubectl apply -k로 적용한다.
+# 포털에 신청해 만드는 것(팀 권한으로 만들 수 없고, Git에 넣지 않음): Secret rds-credentials·app-secrets, PVC backend-data
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: p1-2
@@ -12,8 +11,8 @@ resources:
   - frontend.yaml
   - ingress.yaml
 images:
-  # 자리표시. scripts/deploy.sh가 임시 복사본에서 main 커밋 해시(또는 지금 배포된 태그)로 바꿔 적용한다.
-  # 이 파일은 배포할 때 바뀌지 않는다(배포 기록은 main 커밋 해시 = 이미지 태그).
-  - { name: skala-registry.skala-ai.com/p1-2/backend, newTag: "main" }
-  - { name: skala-registry.skala-ai.com/p1-2/ai, newTag: "main" }
-  - { name: skala-registry.skala-ai.com/p1-2/frontend, newTag: "main" }
+  # ECR 저장소는 teams/p1-2/app 하나이고 태그는 <서비스>-<커밋 해시>다(덮어쓰기 불가).
+  # 자리표시 태그 main은 배포할 때 deploy.yml이 임시 복사본에서 그 커밋 해시로 바꾼다(이 파일은 바뀌지 않는다).
+  - { name: backend-image, newName: 881490135253.dkr.ecr.ap-northeast-2.amazonaws.com/teams/p1-2/app, newTag: backend-main }
+  - { name: ai-image, newName: 881490135253.dkr.ecr.ap-northeast-2.amazonaws.com/teams/p1-2/app, newTag: ai-main }
+  - { name: frontend-image, newName: 881490135253.dkr.ecr.ap-northeast-2.amazonaws.com/teams/p1-2/app, newTag: frontend-main }
