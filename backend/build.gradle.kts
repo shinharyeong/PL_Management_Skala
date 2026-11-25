@@ -37,6 +37,8 @@ dependencies {
 	implementation("com.networknt:json-schema-validator:1.5.1")
 	runtimeOnly("org.flywaydb:flyway-database-postgresql")
 	runtimeOnly("org.postgresql:postgresql")
+	// 운영 모니터링: /actuator/prometheus (클러스터 Prometheus가 관리 포트로 수집)
+	runtimeOnly("io.micrometer:micrometer-registry-prometheus")
 
 	compileOnly("org.projectlombok:lombok")
 	annotationProcessor("org.projectlombok:lombok")

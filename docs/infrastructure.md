@@ -135,11 +135,13 @@ PL_Management_Skala/
 | Actions 로그 | 공개 저장소라 누구나 본다. 워크플로에서 Pod 로그·Secret·인증코드를 출력하지 않는다 |
 | Actions Role 권한 | Deployment·StatefulSet·Service·ConfigMap·Ingress·HPA·Job·CronJob 생성·수정. Secret·PVC·NetworkPolicy와 삭제는 안 되므로 그런 것은 `k8s/`의 kustomization 밖(`k8s/once/`)에 두고 개인 kubectl로 적용한다 |
 | 개인 kubectl | 포털 가이드 「kubectl 접속」 명령으로 `~/.kube/p1-2.yaml`을 만든다. 토큰은 매일 06:00 재발급(26시간 유효), 캠퍼스 네트워크에서만. p1-2 안의 Secret·PVC 생성·삭제, logs·exec·port-forward가 된다. AWS 자격 증명은 없어 ECR push는 Actions로만 한다 |
-| 처음 한 번(개인 kubectl) | `kubectl create secret generic app-secrets --from-literal=REPORT_AI_TOKEN="$(openssl rand -hex 32)"`(`OPENAI_API_KEY`·`SPRING_MAIL_*`은 선택) → `kubectl apply -f k8s/once/` → 배포 → `scripts/upload-template.sh <양식.xlsb>`. 빈 DB일 때만 `scripts/seed-demo.sh` |
+| 처음 한 번(개인 kubectl) | `kubectl create secret generic app-secrets --from-literal=REPORT_AI_TOKEN="$(openssl rand -hex 32)"`(`OPENAI_API_KEY`·`SPRING_MAIL_*`은 선택) → `kubectl create secret generic grafana-admin --from-literal=admin-user=admin --from-literal=admin-password="$(openssl rand -base64 24 \| tr -d '/+=')"` → `kubectl apply -f k8s/once/` → 배포 → `scripts/upload-template.sh <양식.xlsb>`. 빈 DB일 때만 `scripts/seed-demo.sh` |
 | 수동 배포 | runner가 없거나 매니페스트만 바꿨을 때, 되돌릴 때: `scripts/deploy.sh [커밋 해시 12자리]`. ECR에 있는 `<서비스>-<해시>` 이미지로 `kubectl apply -k`만 한다(빌드 없음) |
 | NetworkPolicy | `k8s/once/networkpolicy.yaml`(ai는 backend에서만). 2026-11-25 확인 결과 플랫폼이 NetworkPolicy를 강제하지 않아(frontend → ai 접속이 열려 있음) 지금은 효과가 없다. 대신 ai 계약 API는 `REPORT_AI_TOKEN`으로 막는다 |
 | 비용 | 포털 자원 관리에서 끄고 켠다. 끄지 않으면 밤·주말에도 비용이 쌓인다 |
-| 모니터링 | 플랫폼 팀 Grafana 없음. Pod 상태·로그로 확인 |
+| 모니터링 | 팀 네임스페이스에 Prometheus·Grafana를 둔다(`k8s/monitoring/`). Grafana는 https://p1-2.skala-ai.com/grafana/ (캠퍼스 IP, 로그인 필요). 관리자 비밀번호는 `kubectl get secret grafana-admin -o jsonpath='{.data.admin-password}' \| base64 -d \| pbcopy`로 복사해 쓰고 채팅에 남기지 않는다. 대시보드 「PL Management · 백엔드」는 `k8s/monitoring/dashboards/backend.json`에서 만들어지며 화면에서 고친 내용은 파드가 바뀌면 사라진다(고칠 때는 JSON을 내보내 이 파일을 바꾼다) |
+| 수집 범위 | backend의 `/actuator/prometheus`(HTTP 요청 수·응답 시간·상태 코드, JVM 메모리·GC·스레드, DB 커넥션 풀). prod에서는 actuator가 관리 포트 8081에만 열린다 — frontend nginx가 `/actuator`를 8080으로 넘기므로 같은 포트면 외부에 노출된다. 팀 권한에 Role 생성이 없어 쿠버네티스 자동 탐색·노드·파드 사용량 지표는 못 모은다(파드 CPU·메모리는 `kubectl top pods`). ai·frontend 지표는 아직 없다 |
+| 지표 보관 | PVC `prometheus-data` 5Gi(`k8s/once/`), 15일 또는 4GB 중 먼저 닿는 쪽까지 |
 
 ## 5. 확인 필요
 

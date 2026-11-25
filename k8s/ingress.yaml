@@ -1,4 +1,4 @@
-# 팀 도메인 하나를 경로로 나눈다: /api → backend, / → frontend. 캠퍼스 네트워크에서만 열린다(플랫폼 필수 주석).
+# 팀 도메인 하나를 경로로 나눈다: /api → backend, /grafana → grafana, / → frontend. 캠퍼스 네트워크에서만 열린다(플랫폼 필수 주석).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -15,4 +15,6 @@ spec:
       http:
         paths:
           - { path: /api, pathType: Prefix, backend: { service: { name: backend, port: { name: http } } } }
+          # 모니터링 대시보드(Grafana 로그인 필요). Prometheus는 열지 않는다.
+          - { path: /grafana, pathType: Prefix, backend: { service: { name: grafana, port: { name: http } } } }
           - { path: /, pathType: Prefix, backend: { service: { name: frontend, port: { name: http } } } }
