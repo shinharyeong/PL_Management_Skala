@@ -9,6 +9,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
 spec:
   ingressClassName: public-nginx
+  tls: [{ hosts: [p1-2.skala-ai.com], secretName: team-tls }]   # 플랫폼이 만들어 둔 인증서(Let's Encrypt, 자동 갱신)
   rules:
     - host: p1-2.skala-ai.com
       http:
