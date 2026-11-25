@@ -1,13 +1,20 @@
 <script setup>
 import copy from './ui-copy.json'
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import PButton from 'primevue/button'
+import PInputText from 'primevue/inputtext'
+import PDialog from 'primevue/dialog'
+import PMenu from 'primevue/menu'
+import PBadge from 'primevue/badge'
+import PMessage from 'primevue/message'
+import PProgressBar from 'primevue/progressbar'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePrototypeStore } from './live-store.js'
-import HomePanel from './LiveHomePanel.vue'
-import MonthlyPanel from './MonthlyPanel.vue'
-import OrgPanel from './LiveOrgPanel.vue'
-import ManagementPanels from './LiveManagementPanels.vue'
-import ReportPanel from './LiveReportPanel.vue'
+const HomePanel = defineAsyncComponent(() => import('./LiveHomePanel.vue'))
+const MonthlyPanel = defineAsyncComponent(() => import('./MonthlyPanel.vue'))
+const OrgPanel = defineAsyncComponent(() => import('./LiveOrgPanel.vue'))
+const ManagementPanels = defineAsyncComponent(() => import('./LiveManagementPanels.vue'))
+const ReportPanel = defineAsyncComponent(() => import('./LiveReportPanel.vue'))
 import { clockText } from './auth-demo.js'
 import { pageTitles } from './router.js'
 import NavIcon from './NavIcon.vue'
@@ -18,13 +25,17 @@ const route = useRoute(), router = useRouter()
 watch(()=>store.error,value=>{if(value&&store.toast?.message!==value)store.notify(value,'error')})
 const page = computed(() => String(route.name || 'login'))
 const email = ref(''), code = ref(''), authStep = ref('email'), authError = ref('')
-const logoutDialog = ref(null)
+const logoutVisible = ref(false)
 const sentAt = ref(null), now = ref(Date.now())
 const authResponse = ref(null)
 const challenge = computed(() => ({remaining: Math.max(0,Math.ceil((Date.parse(authResponse.value?.expiresAt)-now.value)/1000))||0, resendIn:Math.max(0,Math.ceil((Date.parse(authResponse.value?.resendAvailableAt)-now.value)/1000))||0, expired:authResponse.value && now.value >= Date.parse(authResponse.value.expiresAt)}))
 const authNotice = ref('')
 const localDevelopment = import.meta.env.DEV && ['localhost','127.0.0.1','[::1]'].includes(window.location.hostname)
 const localAccounts = import.meta.env.DEV ? [{email:'kim.plan@sk.com',name:'경영기획팀',hint:'김기획 매니저'}, ...['F10','F12','F20','F40','F39','F50','F16','F13','F25','F43','F42','F44','F73','F38','F66','F36','F37'].map((code,index)=>({email:code.toLowerCase()+'.test@sk.com',name:`사업부${index+1}`,hint:code+' · 조직 담당자'}))] : []
+/** 로컬 인증 서버에서 선택 계정의 세션을 발급한다.
+ * Args: account 로컬 계정. Returns: Promise<void>.
+ * Raises: 서버 오류는 store.run이 표시한다. Side Effects: 인증 요청과 화면 이동.
+ */
 async function localSignIn(account) {
   if (!localDevelopment || store.busy) return
   const ok = await store.run(async()=>{
@@ -37,6 +48,10 @@ async function localSignIn(account) {
   if (ok) navigate(store.actor.role==='planner'?'home':'org-requests')
 }
 const localAuthCode = ref(''), localCodeNotice = ref('')
+/** 개발 환경에서 발급한 인증코드를 조회한다.
+ * Args: response 발급 응답. Returns: Promise<void>.
+ * Raises: 없음; 실패 안내로 변환한다. Side Effects: 로컬 HTTP 조회와 안내 상태 변경.
+ */
 async function loadLocalCode(response) {
   if (!localDevelopment) return
   try {
@@ -52,9 +67,43 @@ onUnmounted(() => window.clearInterval(timer))
 const plannerMenus = [{ id: 'notifications', label: '알림 모아보기' }, { id: 'home', label: '전사 손익 현황' }, { id: 'monthly', label: '월간 시트 관리' }, { id: 'annual', label: '연간 계획 관리' }, { id: 'organizations', label: '조직별 현황' }, { id: 'reports', label: '보고서 생성' }]
 const orgMenus = [{ id: 'org-requests', label: '요청함', icon: 'inbox' }, { id: 'org-history', label: '제출 이력 관리', icon: 'history' }]
 const menus = computed(() => store.actor?.role === 'org' ? orgMenus : plannerMenus)
+const menuModel = computed(() => menus.value.flatMap(menu => [
+  { ...menu, label: copy.pages[menu.id] || menu.label, count: menu.id === 'notifications' ? store.unread : null },
+  ...(menu.id === 'monthly' ? store.workspaces.map(work => ({ id: 'workspace', org: work.org, label: work.name, count: work.count })) : []),
+]))
+
+/** 메인 메뉴 또는 조직 작업공간으로 이동한다.
+ * Args: item 메뉴 항목과 선택적 org 코드.
+ * Returns: 없음. Raises: 라우터 오류.
+ * Side Effects: 활성 조직을 갱신하고 라우트를 이동한다.
+ */
+function selectMenu(item) {
+  if (item.org) store.activeOrg = item.org
+  navigate(item.id)
+}
+
+/** 메뉴의 현재 페이지 여부를 반환한다.
+ * Args: item 메뉴 항목과 선택적 org 코드.
+ * Returns: boolean. Raises: 없음. Side Effects: 없음.
+ */
+function itemSelected(item) {
+  return item.org ? ['workspace', 'cell'].includes(page.value) && store.activeOrg === item.org : menuSelected(item.id)
+}
 const monthlyPages = ['monthly', 'monthly-request', 'calculator', 'workspace', 'cell']
-const menuSelected = id => id === 'monthly' ? monthlyPages.includes(page.value) : id === 'annual' ? page.value.startsWith('annual') : id === 'org-requests' ? ['org-requests', 'org-upload', 'org-explanation'].includes(page.value) : page.value === id
+/** 페이지 그룹에 속하는 메뉴인지 확인한다.
+ * Args: id 메뉴 ID. Returns: boolean.
+ * Raises: 없음. Side Effects: 없음.
+ */
+function menuSelected(id) { return id === 'monthly' ? monthlyPages.includes(page.value) : id === 'annual' ? page.value.startsWith('annual') : id === 'org-requests' ? ['org-requests', 'org-upload', 'org-explanation'].includes(page.value) : page.value === id }
+/** 지정한 이름의 화면으로 이동한다.
+ * Args: id 라우트 이름. Returns: 없음.
+ * Raises: 라우터 오류. Side Effects: 브라우저 경로 변경.
+ */
 function navigate(id) { router.push({ name: id }) }
+/** 건너뛰기 링크의 본문에 초점을 둔다.
+ * Args: 없음. Returns: 없음.
+ * Raises: 없음. Side Effects: DOM 초점 변경.
+ */
 function focusMain() { document.getElementById('main-content')?.focus() }
 watch(page, async value => {
   document.title = `${pageTitles[value] || '로그인'} · 경영팀을 부탁해`
@@ -64,16 +113,36 @@ watch(page, async value => {
   heading?.setAttribute('tabindex', '-1')
   heading?.focus({ preventScroll: true })
 }, { immediate: true })
+/** 입력 이메일로 인증코드를 요청하고 입력 단계로 전환한다.
+ * Args: 없음. Returns: Promise<void>.
+ * Raises: 없음; 화면 오류로 변환한다. Side Effects: 인증 요청과 입력·로딩·초점 상태 변경.
+ */
 async function requestCode() {
   if(store.busy)return
   store.busy=true; authError.value=''; localAuthCode.value=''; localCodeNotice.value=''
   try {authResponse.value=await store.requestCode(email.value.trim());now.value=Date.now();code.value='';authStep.value='code';await loadLocalCode(authResponse.value);authNotice.value='등록된 이메일로 발송한 인증코드를 입력해 주세요.';await nextTick();document.querySelector('#auth-code')?.focus()}
   catch(e){authError.value=e.message}finally{store.busy=false}
 }
+/** 재전송 대기 시간이 끝나면 새 코드를 요청한다.
+ * Args: 없음. Returns: Promise<void>.
+ * Raises: 없음. Side Effects: requestCode의 인증 요청과 상태 변경.
+ */
 async function resendCode(){if(!challenge.value.resendIn)await requestCode()}
+/** 이메일 입력 단계로 인증 상태를 초기화한다.
+ * Args: 없음. Returns: 없음.
+ * Raises: 없음. Side Effects: 인증 화면 메모리 상태 변경.
+ */
 function changeEmail(){authStep.value='email';code.value='';authResponse.value=null;localAuthCode.value='';localCodeNotice.value='';authError.value='';authNotice.value=''}
+/** 이메일과 인증코드로 로그인한다.
+ * Args: 없음. Returns: Promise<void>.
+ * Raises: 없음; store.run이 표시한다. Side Effects: 서버 세션 요청과 권한별 화면 이동.
+ */
 async function signIn(){if(await store.run(()=>store.login(authResponse.value.email,code.value)))navigate(store.actor.role==='planner'?'home':'org-requests');else authError.value=store.error}
-async function logout(){if(await store.run(()=>store.logout())){changeEmail();email.value='';logoutDialog.value.close();router.replace({name:'login'})}}
+/** 서버 세션을 해제하고 로그인 화면으로 돌아간다.
+ * Args: 없음. Returns: Promise<void>.
+ * Raises: 없음; store.run이 표시한다. Side Effects: 로그아웃 요청과 인증 상태·대화상자·경로 변경.
+ */
+async function logout(){if(await store.run(()=>store.logout())){changeEmail();email.value='';logoutVisible.value=false;router.replace({name:'login'})}}
 watch(()=>store.actor,actor=>{if(!actor)router.replace({name:'login'})})
 watch(page,async value=>{
   if(!store.actor)return
@@ -90,25 +159,25 @@ watch(page,async value=>{
   <div v-if="page === 'login'" class="auth-page">
     <a class="brand auth-brand" href="#/login">경영팀을 부탁해</a>
     <main class="auth-main">
-      <section v-if="localDevelopment" class="auth-form local-account-form"><h1>로컬 계정 선택</h1><p class="muted">접속할 계정을 선택해 주세요.</p><div class="local-account-list"><button v-for="account in localAccounts" :key="account.email" class="local-account-button" :disabled="store.busy" @click="localSignIn(account)"><strong>{{account.name}}</strong><span>{{account.hint}}</span></button></div><p v-if="store.busy" class="muted" role="status">선택한 계정으로 접속 중입니다.</p><p v-if="store.error" class="error" role="alert">{{store.error}}</p></section>
+      <section v-if="localDevelopment" class="auth-form local-account-form"><h1>로컬 계정 선택</h1><p class="muted">접속할 계정을 선택해 주세요.</p><div class="local-account-list"><PButton v-for="account in localAccounts" :key="account.email" class="local-account-button" severity="secondary" outlined :disabled="store.busy" @click="localSignIn(account)"><strong>{{account.name}}</strong><span>{{account.hint}}</span></PButton></div><p v-if="store.busy" class="muted" role="status">선택한 계정으로 접속 중입니다.</p><p v-if="store.error" class="error" role="alert">{{store.error}}</p></section>
       <form v-else class="auth-form" @submit.prevent="authStep === 'email' ? requestCode() : signIn()">
         <h1>{{ authStep === 'email' ? '로그인' : '인증코드 입력' }}</h1>
         <p class="muted auth-description">{{ authStep === 'email' ? '회사 이메일로 인증 메일을 받아\n로그인해 주세요.' : `${email}\n인증코드 6자리를 입력해 주세요.` }}</p>
         <div v-if="authStep === 'email'" class="field">
           <label for="company-email">{{ copy.login.emailLabel }}</label>
-          <input id="company-email" v-model="email" type="email" autocomplete="email" required placeholder="kim.plan@sk.com" :aria-invalid="!!authError" aria-describedby="auth-help auth-error" @input="authError = ''" />
+          <PInputText id="company-email" v-model="email" type="email" autocomplete="email" required placeholder="kim.plan@sk.com" :aria-invalid="!!authError" aria-describedby="auth-help auth-error" @input="authError = ''" />
           <small id="auth-help" class="muted">{{ copy.login.emailHelp }}</small>
         </div>
         <div v-else class="field">
           <div class="row-between"><label for="auth-code">인증코드</label><span class="muted">남은 시간 {{ clockText(challenge.remaining) }}</span></div>
-          <input id="auth-code" v-model="code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code" placeholder="6자리 인증코드" required :aria-invalid="!!authError" aria-describedby="auth-error auth-code-help" @input="authError = ''" />
+          <PInputText id="auth-code" v-model="code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code" placeholder="6자리 인증코드" required :aria-invalid="!!authError" aria-describedby="auth-error auth-code-help" @input="authError = ''" />
           <small id="auth-code-help" class="muted">{{ copy.login.codeHelp }}</small>
           <p v-if="challenge.expired" class="error" role="status">유효시간 3분이 지났습니다. 코드를 다시 받아 주세요.</p>
-          <div class="row-between"><button type="button" class="text-button" :disabled="challenge.resendIn > 0" @click="resendCode">{{ challenge.resendIn ? `${clockText(challenge.resendIn)} 후 재전송` : '인증코드 다시 받기' }}</button></div>
+          <div class="row-between"><PButton type="button" severity="secondary" variant="text" :disabled="challenge.resendIn > 0" @click="resendCode">{{ challenge.resendIn ? `${clockText(challenge.resendIn)} 후 재전송` : '인증코드 다시 받기' }}</PButton></div>
         </div>
         <p v-if="authError" id="auth-error" class="error" role="alert">{{ authError }}</p>
         <p v-if="authNotice && authStep === 'code'" class="muted" role="status">{{ authNotice }}</p>
-        <button class="btn primary auth-cta" type="submit" :disabled="store.busy || (authStep === 'code' && challenge.expired)">{{ authStep === 'email' ? '인증 메일 받기' : '로그인' }}</button>
+        <PButton class="auth-cta" type="submit" :disabled="store.busy || (authStep === 'code' && challenge.expired)">{{ authStep === 'email' ? '인증 메일 받기' : '로그인' }}</PButton>
         <p class="muted">{{ copy.login.loginHelp }}</p><aside v-if="localDevelopment" class="auth-demo"><strong>로컬 검증 환경</strong><p v-if="authStep === 'email'">인증 메일 받기를 누르면 발급된 인증코드가 여기에 표시됩니다.</p><p v-else-if="challenge.expired" role="status">인증코드가 만료되었습니다. 코드를 다시 받아 주세요.</p><p v-else-if="localAuthCode" role="status">발급된 인증코드 <strong class="local-auth-code">{{ localAuthCode }}</strong></p><p v-else role="status">{{ localCodeNotice || '인증코드를 확인하는 중입니다.' }}</p><p>경영기획팀 <code>kim.plan@sk.com</code></p><p>사업부15 담당자 <code>f66.test@sk.com</code></p></aside>
 
       </form>
@@ -121,22 +190,21 @@ watch(page,async value=>{
       <a class="brand" :href="store.actor.role === 'org' ? '#/org-requests' : '#/home'"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>경영팀을 부탁해</a>
       <p class="role-caption">{{ store.actor.role === 'org' ? '조직 담당자' : '경영기획팀' }}</p>
       <nav aria-label="주 메뉴">
-        <template v-for="menu in menus" :key="menu.id">
-          <a :href="`#/${menu.id}`" class="nav-link" :class="{ active: menuSelected(menu.id) }" :aria-current="menuSelected(menu.id) ? 'page' : undefined">
-            <img v-if="menu.icon" :src="`/assets/${menu.icon}${menuSelected(menu.id) ? '-active' : ''}.svg`" alt="" />
-            <NavIcon v-else :name="menu.id" />
-            <span>{{ copy.pages[menu.id] || menu.label }}</span><span v-if="menu.id === 'notifications' && store.unread" class="nav-count">{{ store.unread }}</span>
-          </a>
-          <div v-if="menu.id === 'monthly' && store.workspaces.length" class="workspace-nav">
-            <button v-for="work in store.workspaces" :key="work.org" class="nav-link" :class="{ active: ['workspace','cell'].includes(page) && store.activeOrg === work.org }" @click="store.activeOrg = work.org; navigate('workspace')"><span>{{ work.name }}</span><span class="nav-count">{{ work.count }}</span></button>
-          </div>
-        </template>
+        <PMenu :model="menuModel">
+          <template #item="{ item, props: itemProps }">
+            <a v-bind="itemProps.action" :href="`#/${item.id}`" :class="{active: itemSelected(item), 'workspace-item': item.org}" :aria-current="itemSelected(item) ? 'page' : undefined" @click.prevent="selectMenu(item)">
+              <img v-if="item.icon" :src="`/assets/${item.icon}${itemSelected(item) ? '-active' : ''}.svg`" alt="" />
+              <NavIcon v-else-if="!item.org" :name="item.id" />
+              <span>{{ item.label }}</span><PBadge v-if="item.count" :value="item.count" severity="info" />
+            </a>
+          </template>
+        </PMenu>
       </nav>
-      <div class="sidebar-user"><span class="user-avatar" aria-hidden="true">{{ store.actor.name.slice(0,1) }}</span><strong>{{ store.actor.name }}</strong><small>{{ store.actor.department }}</small><button class="text-button" @click="logoutDialog.showModal()">{{ copy.login.logout }}</button></div>
+      <div class="sidebar-user"><span class="user-avatar" aria-hidden="true">{{ store.actor.name.slice(0,1) }}</span><strong>{{ store.actor.name }}</strong><small>{{ store.actor.department }}</small><PButton severity="secondary" variant="text" @click="logoutVisible = true">{{ copy.login.logout }}</PButton></div>
     </aside>
     <div class="workspace-shell">
     <main id="main-content" class="main-content" tabindex="-1">
-      <p v-if="store.error" class="notice error" role="alert">{{ store.error }}</p><p v-if="store.busy" class="muted" role="status">처리 중…</p>
+      <PMessage v-if="store.error" severity="error" :closable="false">{{ store.error }}</PMessage><PProgressBar v-if="store.busy" mode="indeterminate" class="page-progress" aria-label="처리 중" />
       <HomePanel v-if="page === 'home'" @navigate="navigate" />
       <MonthlyPanel v-else-if="monthlyPages.includes(page)" :page="page" @navigate="navigate" />
       <OrgPanel v-else-if="page.startsWith('org-')" :page="page" @navigate="navigate" />
@@ -145,5 +213,8 @@ watch(page,async value=>{
     </main>
     </div>
   </div>
-  <dialog ref="logoutDialog" class="confirm-dialog" aria-labelledby="logout-title"><h2 id="logout-title">{{ copy.login.logoutTitle }}</h2><p class="muted">{{ copy.login.logoutHelp }}</p><div class="actions"><button class="btn" @click="logoutDialog.close()">{{ copy.login.cancel }}</button><button class="btn primary" @click="logout">{{ copy.login.logout }}</button></div></dialog>
+  <PDialog v-model:visible="logoutVisible" modal :header="copy.login.logoutTitle" :style="{width:'28rem'}" :closable="!store.busy" :close-on-escape="!store.busy">
+    <p>{{ copy.login.logoutHelp }}</p>
+    <template #footer><PButton severity="secondary" outlined :disabled="store.busy" @click="logoutVisible=false">{{ copy.login.cancel }}</PButton><PButton :loading="store.busy" @click="logout">{{ copy.login.logout }}</PButton></template>
+  </PDialog>
 </template>

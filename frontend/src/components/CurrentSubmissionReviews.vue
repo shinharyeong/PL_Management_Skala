@@ -5,13 +5,21 @@ import { dateTime, errorText, saveBlob } from '../lib/display'
 import { formatMoney } from '../lib/decimal-display'
 import { normalizeOrgReviewPage } from '../lib/submission-api'
 import { baselineLabel, reviewEvidencePath } from '../lib/review-api.js'
+import { evidenceFileSelection } from '../lib/org-upload.js'
+import PButton from 'primevue/button'
+import PTextarea from 'primevue/textarea'
+import PFileUpload from 'primevue/fileupload'
+import PDataTable from 'primevue/datatable'
+import PColumn from 'primevue/column'
+import PMessage from 'primevue/message'
+import PPanel from 'primevue/panel'
 
 const props = defineProps({ submission: { type: Object, required: true } })
 const emit = defineEmits(['changed', 'loaded'])
 const session = useSession()
 const items = ref([]), detail = ref(null), selectedId = ref(''), answer = ref(''), note = ref('')
 const loading = ref(false), busy = ref(false), error = ref(''), message = ref(''), attachments = ref([])
-const evidence = ref([]), comparisonBaseline = ref(null)
+const evidence = ref([]), comparisonBaseline = ref(null), attachmentFile = ref(null), attachmentInput = ref(null)
 const controller = new AbortController()
 let detailController = new AbortController(), generation = 0
 const keys = new Map()
@@ -43,6 +51,7 @@ async function load() {
 async function select(id) {
   const current = ++generation
   detailController.abort(); detailController = new AbortController()
+  attachmentFile.value = null
   selectedId.value = id; detail.value = null; attachments.value = []; evidence.value = []; answer.value = ''; note.value = ''; error.value = ''
   try {
     const result = await session.request(`/api/v1/review-items/${id}`, { signal: detailController.signal })
@@ -78,14 +87,29 @@ async function command(action) {
   finally { busy.value = false }
 }
 
-/** 현재 회차의 근거 파일을 16MiB 첨부 계약으로 전송한다.
- * Args: event 파일 선택 이벤트. Returns: Promise<void>. Raises: 없음(오류 표시).
+/** 선택한 근거 파일을 검증하고 첨부 전 상태에만 보관한다.
+ * Args: event PrimeVue FileUpload select 이벤트. Returns: 없음. Raises: 없음.
+ * Side Effects: 파일·오류 상태를 변경하며 서버에 전송하지 않는다.
+ */
+function chooseAttachment(event) {
+  const selected = evidenceFileSelection(event)
+  attachmentFile.value = selected.file
+  error.value = selected.error
+  if (selected.error) attachmentInput.value?.clear()
+}
+
+/** 아직 첨부하지 않은 근거 파일 선택을 해제한다.
+ * Args: 없음. Returns: 없음. Raises: 없음. Side Effects: 메모리 선택만 초기화한다.
+ */
+function clearAttachment() { attachmentFile.value = null }
+
+/** 첨부하기를 눌렀을 때 현재 회차의 근거 파일을 16MiB 계약으로 전송한다.
+ * Args: 없음. Returns: Promise<void>. Raises: 없음(오류 표시).
  * Side Effects: 첨부 업로드·목록 갱신. 제출 Excel의 20MiB 한도와 구분한다.
  */
-async function attach(event) {
-  const file = event.target.files?.[0]; event.target.value = ''
+async function attach() {
+  const file = attachmentFile.value
   if (!file || !editable.value || busy.value) return
-  if (!/\.(pdf|xlsx|png|jpe?g)$/i.test(file.name) || !file.size || file.size > 16 * 1024 * 1024) { error.value = 'PDF·XLSX·PNG·JPEG 형식의 비어 있지 않은 16MB 이하 파일을 선택해 주세요.'; return }
   const body = new FormData(); body.append('file', file); body.append('expectedStateToken', detail.value.stateToken)
   busy.value = true; error.value = ''
   try {
@@ -119,20 +143,60 @@ onBeforeUnmount(dispose)
   <section class="panel current-reviews">
     <div class="section-heading"><h2>변경 항목·소명</h2><span class="muted">{{ items.length }}개 항목</span></div>
     <p class="muted">비교 기준 · {{ baselineLabel(comparisonBaseline || submission.baseline) }}</p>
-    <p v-if="error" class="alert error" role="alert">{{ error }}</p><p v-if="message" class="notice" role="status">{{ message }}</p>
-    <p v-if="loading" role="status">소명 항목을 불러오는 중…</p>
-    <p v-else-if="!items.length" class="notice">현재 제출본에 소명 대상이 없습니다.</p>
+    <PMessage v-if="error" severity="error" :closable="false">{{ error }}</PMessage>
+    <PMessage v-if="message" severity="success" :closable="false">{{ message }}</PMessage>
+    <PMessage v-if="loading" severity="info" :closable="false">소명 항목을 불러오는 중…</PMessage>
+    <PMessage v-else-if="!items.length" severity="secondary" :closable="false">현재 제출본에 소명 대상이 없습니다.</PMessage>
     <div v-if="items.length" class="review-layout">
-      <aside class="review-list"><button v-for="item in items" :key="item.id" class="review-item" :class="{ active: selectedId === item.id }" :disabled="busy" @click="select(item.id)"><span>{{ item.reportItem.name }}</span><small>{{ item.month }}월 · {{ { PLAN: '계획', ACTUAL: '실적', ESTIMATE: '추정' }[item.scenario] }} · {{ { EMPTY: '미작성', WRITTEN: '작성 완료', INHERITED: '이전 소명 유지' }[item.answerState] }}</small></button></aside>
+      <aside class="review-list" aria-label="소명 항목 선택">
+        <PButton v-for="item in items" :key="item.id" class="review-item" :severity="selectedId === item.id ? 'primary' : 'secondary'" :outlined="selectedId !== item.id" :aria-pressed="selectedId === item.id" :disabled="busy" @click="select(item.id)">
+          <span class="review-item-content"><span>{{ item.reportItem.name }}</span><small>{{ item.month }}월 · {{ { PLAN: '계획', ACTUAL: '실적', ESTIMATE: '추정' }[item.scenario] }} · {{ { EMPTY: '미작성', WRITTEN: '작성 완료', INHERITED: '이전 소명 유지' }[item.answerState] }}</small></span>
+        </PButton>
+      </aside>
       <div v-if="detail" class="review-detail">
         <h3>{{ detail.path }}</h3>
-        <div class="table-scroll"><table><caption class="visually-hidden">원본 셀별 금액 비교 · 원</caption><thead><tr><th>원본 셀</th><th>기준</th><th v-if="detail.rows.some(row => row.previous !== null)">직전 반려 제출값</th><th>현재</th><th>차액</th><th>차이율</th></tr></thead><tbody><tr v-for="row in detail.rows" :key="row.sourceCell"><td>{{ row.sourceCell || '—' }}</td><td class="number">{{ formatMoney(row.baseline) }}</td><td v-if="detail.rows.some(row => row.previous !== null)" class="number">{{ formatMoney(row.previous) }}</td><td class="number">{{ formatMoney(row.current) }}</td><td class="number">{{ formatMoney(row.diff) }}</td><td>{{ row.rate === null ? '—' : row.rate + '%' }}</td></tr></tbody></table></div>
-        <p v-if="latest?.requestNote" class="notice preserve-lines">{{ latest.requestNote }}</p>
-        <details><summary>원천 근거 확인</summary><div class="table-scroll"><table><caption class="visually-hidden">선택한 소명 항목의 원천 근거 · 원</caption><thead><tr><th>원본 위치</th><th>계정</th><th>산출 근거</th><th>금액</th></tr></thead><tbody><tr v-for="(source,index) in evidence" :key="index"><td>{{ source.sourceSheet }}!{{ source.sourceCell }}</td><td>{{ source.account?.name || '—' }}</td><td>{{ source.description || '—' }}</td><td class="number">{{ formatMoney(source.amount) }}</td></tr><tr v-if="!evidence.length"><td colspan="4">조회 가능한 원천 근거가 없습니다.</td></tr></tbody></table></div></details>
-        <form v-if="editable" @submit.prevent="command('answer')"><label>소명 작성<textarea v-model="answer" rows="5" required maxlength="4000" :disabled="busy" /></label><label class="attachment-input">근거 파일 첨부<input type="file" accept=".pdf,.xlsx,.png,.jpg,.jpeg" :disabled="busy" @change="attach" /></label><button class="button primary" :disabled="busy || !answer.trim()">{{ busy ? '저장 중…' : '소명 저장' }}</button></form>
-        <div v-if="attachments.length" class="attachment-list"><button v-for="file in attachments" :key="file.id" class="text-button" :disabled="busy" @click="download(file)">{{ file.name }}</button></div>
-        <form v-if="canDecide" @submit.prevent="command('ACCEPT')"><label>경영기획 메모<textarea v-model="note" rows="3" maxlength="4000" :disabled="busy" /></label><div class="button-row"><button class="button" type="button" :disabled="busy || !note.trim()" @click="command('REQUEST_AGAIN')">소명 보완 요청</button><button class="button primary" :disabled="busy">소명 수락</button></div></form>
-        <details v-for="explanation in detail.explanations" :key="explanation.id" open><summary>{{ explanation.round }}회차 · {{ { PENDING: '검토 중', ACCEPTED: '수락', REQUESTED_AGAIN: '보완 요청' }[explanation.verdict] || explanation.verdict }}</summary><p class="preserve-lines">{{ explanation.answer || '아직 작성된 소명이 없습니다.' }}</p><small>{{ explanation.answeredBy?.name }} · {{ dateTime(explanation.answeredAt) }}</small><p v-if="explanation.reviewNote" class="preserve-lines">{{ explanation.reviewNote }}</p></details>
+        <PDataTable :value="detail.rows" stripedRows scrollable :tableStyle="{minWidth:'36rem'}" :pt="{table:{'aria-label':'원본 셀별 금액 비교 · 원'}}">
+          <PColumn header="원본 셀"><template #body="{data}">{{data.sourceCell || '—'}}</template></PColumn>
+          <PColumn header="기준" bodyClass="number"><template #body="{data}">{{formatMoney(data.baseline)}}</template></PColumn>
+          <PColumn v-if="detail.rows.some(row => row.previous !== null)" header="직전 반려 제출값" bodyClass="number"><template #body="{data}">{{formatMoney(data.previous)}}</template></PColumn>
+          <PColumn header="현재" bodyClass="number"><template #body="{data}">{{formatMoney(data.current)}}</template></PColumn>
+          <PColumn header="차액" bodyClass="number"><template #body="{data}">{{formatMoney(data.diff)}}</template></PColumn>
+          <PColumn header="차이율"><template #body="{data}">{{data.rate === null ? '—' : data.rate + '%'}}</template></PColumn>
+          <template #empty>비교할 원본 셀이 없습니다.</template>
+        </PDataTable>
+        <PMessage v-if="latest?.requestNote" severity="info" :closable="false" class="preserve-lines">{{latest.requestNote}}</PMessage>
+        <PPanel header="원천 근거 확인" toggleable :collapsed="true">
+          <PDataTable :value="evidence" stripedRows scrollable :tableStyle="{minWidth:'32rem'}" :pt="{table:{'aria-label':'선택한 소명 항목의 원천 근거 · 원'}}">
+            <PColumn header="원본 위치"><template #body="{data}">{{data.sourceSheet}}!{{data.sourceCell}}</template></PColumn>
+            <PColumn header="계정"><template #body="{data}">{{data.account?.name || '—'}}</template></PColumn>
+            <PColumn header="산출 근거"><template #body="{data}">{{data.description || '—'}}</template></PColumn>
+            <PColumn header="금액" bodyClass="number"><template #body="{data}">{{formatMoney(data.amount)}}</template></PColumn>
+            <template #empty>조회 가능한 원천 근거가 없습니다.</template>
+          </PDataTable>
+        </PPanel>
+        <form v-if="editable" @submit.prevent="command('answer')">
+          <label :for="`review-answer-${detail.id}`">소명 작성<PTextarea :id="`review-answer-${detail.id}`" v-model="answer" rows="5" autoResize required maxlength="4000" :disabled="busy" /></label>
+          <div class="attachment-input">
+            <strong>근거 파일 첨부</strong>
+            <span class="muted">PDF·XLSX·PNG·JPEG · 파일당 최대 16MB · 첨부하기를 누르면 전송됩니다.</span>
+            <div class="attachment-actions">
+              <PFileUpload :key="detail.id" ref="attachmentInput" mode="basic" customUpload :auto="false" :multiple="false" accept=".pdf,.xlsx,.png,.jpg,.jpeg" :maxFileSize="16*1024*1024" chooseLabel="근거 파일 선택" :disabled="busy" invalidFileTypeMessage="{0}: PDF·XLSX·PNG·JPEG 파일을 선택해 주세요." invalidFileSizeMessage="{0}: 16MB 이하 파일을 선택해 주세요." @select="chooseAttachment" @clear="clearAttachment" />
+              <PButton v-if="attachmentFile" type="button" label="선택 해제" severity="secondary" text :disabled="busy" @click="attachmentInput?.clear()" />
+              <PButton type="button" label="첨부하기" icon="pi pi-paperclip" severity="secondary" outlined :disabled="!attachmentFile || busy" @click="attach" />
+            </div>
+          </div>
+          <PButton type="submit" label="소명 저장" :loading="busy" :disabled="busy || !answer.trim()" class="review-save" />
+        </form>
+        <div v-if="attachments.length" class="attachment-list">
+          <PButton v-for="file in attachments" :key="file.id" :label="file.name" icon="pi pi-download" text :disabled="busy" @click="download(file)" />
+        </div>
+        <form v-if="canDecide" @submit.prevent="command('ACCEPT')">
+          <label :for="`review-note-${detail.id}`">경영기획 메모<PTextarea :id="`review-note-${detail.id}`" v-model="note" rows="3" autoResize maxlength="4000" :disabled="busy" /></label>
+          <div class="button-row"><PButton type="button" label="소명 보완 요청" severity="warn" outlined :disabled="busy || !note.trim()" @click="command('REQUEST_AGAIN')" /><PButton type="submit" label="소명 수락" :loading="busy" :disabled="busy" /></div>
+        </form>
+        <PPanel v-for="explanation in detail.explanations" :key="explanation.id" :header="`${explanation.round}회차 · ${{ PENDING: '검토 중', ACCEPTED: '수락', REQUESTED_AGAIN: '보완 요청' }[explanation.verdict] || explanation.verdict}`" toggleable>
+          <p class="preserve-lines">{{ explanation.answer || '아직 작성된 소명이 없습니다.' }}</p><small>{{ explanation.answeredBy?.name }} · {{ dateTime(explanation.answeredAt) }}</small><p v-if="explanation.reviewNote" class="preserve-lines">{{ explanation.reviewNote }}</p>
+        </PPanel>
       </div>
     </div>
     <slot name="footer" />
@@ -140,6 +204,17 @@ onBeforeUnmount(dispose)
 </template>
 
 <style scoped>
-.review-layout { display:grid; grid-template-columns:minmax(200px,1fr) minmax(0,3fr); gap:20px; }.review-list { max-height:600px; overflow:auto; border:1px solid var(--line); border-radius:8px; }.review-item { display:block; padding:12px; width:100%; border:0; border-bottom:1px solid var(--line); background:transparent; text-align:left; color:var(--ink); cursor:pointer; }.review-item small { display:block; margin-top:4px; color:var(--muted); }.review-item.active { background:#e8f0ff; box-shadow:inset 3px 0 #3b69d7; }.review-detail {
-  min-width: 0; display:flex; flex-direction:column; gap:16px; }.review-detail table { font-size:12px; min-width:550px; }.review-detail details { padding:12px; border:1px solid var(--line); border-radius:8px; }.review-detail details p { margin:10px 0; }.review-detail form { display:flex; flex-direction:column; gap:12px; }.attachment-list { display:flex; flex-wrap:wrap; gap:12px; }.attachment-input { font-size:12px; }.review-detail small { color:var(--muted); }@media(max-width:800px) { .review-layout { grid-template-columns:1fr; }.review-list { max-height:230px; } }
+.review-layout { display:grid; grid-template-columns:minmax(200px,1fr) minmax(0,3fr); gap:20px; }
+.review-list { display:flex; flex-direction:column; gap:8px; max-height:600px; overflow:auto; }
+.review-item { width:100%; justify-content:flex-start; text-align:left; }
+.review-item-content { display:flex; flex-direction:column; gap:4px; overflow-wrap:anywhere; }
+.review-item-content small { color:inherit; opacity:.8; }
+.review-detail { min-width:0; display:flex; flex-direction:column; gap:16px; }
+.review-detail form, .review-detail form > label, .attachment-input { display:flex; flex-direction:column; gap:12px; }
+.attachment-list, .attachment-actions, .button-row { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.attachment-list :deep(.p-button-label) { overflow-wrap:anywhere; }
+.button-row { justify-content:flex-end; }
+.review-save { align-self:flex-end; }
+.preserve-lines { white-space:pre-wrap; overflow-wrap:anywhere; }
+@media(max-width:800px) { .review-layout { grid-template-columns:1fr; }.review-list { max-height:230px; } }
 </style>

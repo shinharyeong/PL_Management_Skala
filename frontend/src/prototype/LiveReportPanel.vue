@@ -5,6 +5,20 @@ import { saveFile } from './live-api.js'
 import { seoulPeriod } from './domain.js'
 import { applyReportProposals, manualReport, reportCell, reportDefinition, reportRequest, reportRows } from './report-api.js'
 import { reportPng } from './report-export.js'
+import PButton from 'primevue/button'
+import PInputText from 'primevue/inputtext'
+import PInputNumber from 'primevue/inputnumber'
+import PSelect from 'primevue/select'
+import PSelectButton from 'primevue/selectbutton'
+import PTextarea from 'primevue/textarea'
+import PCheckbox from 'primevue/checkbox'
+import PFileUpload from 'primevue/fileupload'
+import PPanel from 'primevue/panel'
+import PCard from 'primevue/card'
+import PMessage from 'primevue/message'
+import PTag from 'primevue/tag'
+import ReportDataTable from '../components/ReportDataTable.vue'
+import ReportChart from '../components/ReportChart.vue'
 
 const store = usePrototypeStore()
 const steps = ['자료 틀 선택', '구성 확인', '데이터 선택', '소명 분류', '완성·편집']
@@ -20,6 +34,14 @@ const pdfInput = ref(null), controller = new AbortController()
 const dirty = computed(() => definition.value && JSON.stringify(definition.value) !== savedContent.value)
 const assignable = computed(() => categories.value.filter(item => item.assignable))
 const currentMonth = computed(() => periods.value?.months?.find(item => item.month === base.value.month))
+const stepOptions = computed(() => steps.map((label, value) => ({ label: `${value + 1}. ${label}`, value, disabled: busy.value || (value > 0 && !definition.value) })))
+const blockKinds = [{ label: '손익 표', value: 'metric_table' }, { label: '조직별 차트', value: 'chart' }, { label: '숫자 카드', value: 'numbercard' }, { label: '문장', value: 'paragraph' }]
+const metricOptions = ['매출', '영업비용', '영업이익'], unitOptions = ['억원', '백만원']
+const periodOptions = [{ label: '기준 월', value: 'base' }, { label: '기준 월에서 이동', value: 'base_offset' }]
+const comparisonOptions = [{ label: '실적 vs 계획', value: 'ACTUAL_VS_PLAN' }, { label: '추정 vs 계획', value: 'ESTIMATE_VS_PLAN' }, { label: '추정 vs 직전 추정', value: 'ESTIMATE_VS_PREVIOUS' }]
+const monthOptions = computed(() => (periods.value?.months || []).map(month => ({ label: `${month.month}월 · ${{ CONFIRMED: '확정', PROVISIONAL: '잠정', NONE: '데이터 없음' }[month.state]}`, value: month.month })))
+const categoryOptions = computed(() => [{ label: '미분류', value: '' }, ...assignable.value.map(category => ({ label: category.name, value: category.id }))])
+
 
 /** 연결이 끝난 화면의 응답을 차단하는 인증 요청을 보낸다.
  * Args: path 공개 API 경로, options 전송 옵션.
@@ -123,12 +145,13 @@ async function refreshJob() {
 }
 
 /** 선택한 PDF를 업로드하고 비동기 분석 상태를 조회한다.
- * Args: event 파일 선택 이벤트. Returns: Promise<void>. Raises: run에서 처리.
+ * Args: event PrimeVue FileUpload select 이벤트. Returns: Promise<void>. Raises: run에서 처리.
  * Side Effects: 서버 PDF 작업 생성과 화면 상태 변경.
  */
 async function uploadPdf(event) {
-  const file = event.target.files?.[0]; event.target.value = ''
+  const file = event.files?.[0]
   if (!file) return
+  pdfInput.value?.clear()
   await run(async () => { clearImages(); job.value = await reportRequest(api, 'pdf', { file }); await refreshJob() })
 }
 
@@ -137,6 +160,36 @@ async function uploadPdf(event) {
  * Side Effects: 화면의 계산 결과·제안 초기화.
  */
 function invalidate() { results.value = null; editResult.value = null }
+
+/** 확인이 필요한 추출 블록을 사용자가 확인했음을 반영한다.
+ * Args: block 확인할 블록. Returns: 없음. Raises: 없음.
+ * Side Effects: 확인 목록과 오래된 결과를 초기화한다.
+ */
+function acknowledgeBlock(block) { block.needs_review = []; invalidate() }
+
+/** 기준 월 변경에 맞춰 이전 조회 결과를 비운다.
+ * Args: month 선택한 월 숫자. Returns: 없음. Raises: 없음.
+ * Side Effects: 기준 월과 데이터·소명·질문 결과를 변경한다.
+ */
+function changeMonth(month) { base.value.month = month; invalidate(); explanations.value = null; queryResult.value = null }
+
+/** 선택한 기간 관계를 서버의 기준 월 규칙으로 변환한다.
+ * Args: block 편집할 블록, rule base 또는 base_offset. Returns: 없음. Raises: 없음.
+ * Side Effects: 블록 기간과 오래된 결과를 변경한다.
+ */
+function changePeriod(block, rule) { block.period = rule === 'base' ? { rule: 'base' } : { rule: 'base_offset', offset: -1 }; invalidate() }
+
+/** 월 이동 값을 반영하고 0은 기준 월로 정규화한다.
+ * Args: block 편집할 블록, offset 이동할 개월 수. Returns: 없음. Raises: 없음.
+ * Side Effects: 유효한 정수이면 블록 기간·오래된 결과를 변경하고, 아니면 오류만 표시한다.
+ */
+function changeOffset(block, offset) {
+  const months = offset ?? 0
+  if (!Number.isInteger(months) || months < -24 || months > 24) { error.value = '월 이동 값은 -24부터 24까지의 정수로 입력해 주세요.'; return }
+  block.period = months ? { rule: 'base_offset', offset: months } : { rule: 'base' }
+  invalidate()
+}
+
 
 /** 사용자가 고른 종류의 빈 보고 블록을 추가한다.
  * Args: 없음. Returns: 없음. Raises: Error 잘못된 정의.
@@ -171,6 +224,17 @@ function changeBlock(id, direction) {
  * Side Effects: 서버 조회와 오래된 결과 초기화.
  */
 async function changeYear() { periods.value = await reportRequest(api, 'periods', base.value); invalidate(); explanations.value = null; queryResult.value = null }
+
+/** InputNumber가 확정한 연도로 조회 가능 월을 갱신한다.
+ * Args: year 확정한 연도 숫자. Returns: Promise<boolean>. Raises: 없음(화면 오류로 표시).
+ * Side Effects: 2000~9999 정수 연도만 변경·조회하며, 아니면 오류만 표시한다. blur 이후 모델 갱신을 사용한다.
+ */
+function changeYearValue(year) {
+  if (!Number.isInteger(year) || year < 2000 || year > 9999) { error.value = '연도는 2000부터 9999까지의 정수로 입력해 주세요.'; return Promise.resolve(false) }
+  base.value.year = year
+  return run(changeYear)
+}
+
 
 /** 선택한 기준 월의 승인 소명과 분류 후보를 읽는다.
  * Args: 없음. Returns: Promise<void>. Raises: HTTP 오류.
@@ -332,64 +396,130 @@ function blockStyle(block) {
   <section class="report-panel">
     <h1>보고서 생성</h1>
     <p class="muted">기존 PDF나 저장한 틀을 바탕으로 보고서를 만들고, 확인한 데이터로 채웁니다.</p>
-    <p v-if="error" role="alert" class="error">{{ error }}</p>
-    <p v-if="notice" role="status" class="notice">{{ notice }}</p>
-    <nav class="report-steps" aria-label="보고서 작성 단계">
-      <button v-for="(label, index) in steps" :key="label" class="btn" :class="{primary:step===index}" :aria-current="step===index?'step':undefined" :disabled="busy || (index>0 && !definition)" @click="step=index">{{index+1}}. {{label}}</button>
-    </nav>
-    <p v-if="busy" role="status" class="muted">처리 중입니다…</p>
-    <fieldset :disabled="busy" class="report-body">
-    <div v-if="step===0" class="report-grid">
-      <section class="card"><h2>PDF에서 시작</h2><p>숫자를 가린 PDF를 분석해 자료 구성을 추출합니다. 최대 30MB입니다.</p><input ref="pdfInput" type="file" accept=".pdf,application/pdf" :disabled="busy" aria-label="분석할 PDF" @change="uploadPdf" /><p v-if="job">분석 상태: {{ {RUNNING:'진행 중',SUCCEEDED:'완료',FAILED:'실패'}[job.status] || job.status }}</p><button v-if="job" class="btn" :disabled="busy" @click="run(refreshJob)">분석 상태 새로고침</button></section>
-      <section class="card"><h2>직접 만들기</h2><label>자료 틀 이름<input v-model="draftName" maxlength="120" /></label><button class="btn primary" :disabled="busy || !draftName.trim()" @click="run(startManual)">새 보고서 만들기</button></section>
-      <section class="card report-wide"><h2>저장한 자료 틀</h2><ul class="report-template-list"><li v-for="item in templates" :key="item.id"><strong>{{item.name}}</strong><span>{{item.latestVersion}}버전</span><button class="btn" :disabled="busy" @click="run(()=>loadTemplate(item.id))">불러오기</button></li></ul><p v-if="!templates.length" class="muted">저장된 자료 틀이 없습니다.</p><button v-if="cursor" class="btn" :disabled="busy" @click="run(()=>loadTemplates())">더 보기</button></section>
-    </div>
+    <PMessage v-if="error" severity="error" :closable="false">{{error}}</PMessage>
+    <PMessage v-if="notice" severity="info" :closable="false">{{notice}}</PMessage>
+    <PSelectButton v-model="step" :options="stepOptions" optionLabel="label" optionValue="value" optionDisabled="disabled" :allowEmpty="false" :disabled="busy" class="report-steps" aria-label="보고서 작성 단계" />
+    <PMessage v-if="busy" severity="info" :closable="false">처리 중입니다…</PMessage>
+    <fieldset :disabled="busy" :aria-busy="busy" class="report-body">
+      <div v-if="step===0" class="report-grid">
+        <PPanel header="PDF에서 시작" class="report-card">
+          <p>숫자를 가린 PDF를 분석해 자료 구성을 추출합니다. 최대 30MB입니다.</p>
+          <PFileUpload ref="pdfInput" mode="basic" customUpload :auto="false" :multiple="false" accept=".pdf,application/pdf" :maxFileSize="30*1024*1024" chooseLabel="PDF 선택·분석" :disabled="busy" invalidFileTypeMessage="{0}: PDF 파일을 선택해 주세요." invalidFileSizeMessage="{0}: 30MB 이하 파일을 선택해 주세요." :pt="{input:{'aria-label':'분석할 PDF'}}" @select="uploadPdf" />
+          <p v-if="job">분석 상태: <PTag :value="{RUNNING:'진행 중',SUCCEEDED:'완료',FAILED:'실패'}[job.status] || job.status" :severity="job.status==='FAILED'?'danger':job.status==='SUCCEEDED'?'success':'info'" /></p>
+          <PButton v-if="job" label="분석 상태 새로고침" severity="secondary" outlined :disabled="busy" @click="run(refreshJob)" />
+        </PPanel>
+        <PPanel header="직접 만들기" class="report-card">
+          <label for="report-draft-name">자료 틀 이름<PInputText id="report-draft-name" v-model="draftName" maxlength="120" :disabled="busy" /></label>
+          <PButton label="새 보고서 만들기" :disabled="busy || !draftName.trim()" @click="run(startManual)" />
+        </PPanel>
+        <PPanel header="저장한 자료 틀" class="report-card report-wide">
+          <ul class="report-template-list"><li v-for="item in templates" :key="item.id"><strong>{{item.name}}</strong><PTag :value="`${item.latestVersion}버전`" severity="secondary" /><PButton label="불러오기" severity="secondary" outlined :disabled="busy" @click="run(()=>loadTemplate(item.id))" /></li></ul>
+          <PMessage v-if="!templates.length" severity="secondary" :closable="false">저장된 자료 틀이 없습니다.</PMessage>
+          <PButton v-if="cursor" label="더 보기" severity="secondary" text :disabled="busy" @click="run(()=>loadTemplates())" />
+        </PPanel>
+      </div>
 
-    <template v-else-if="definition">
-      <section v-if="step===1" class="card">
-        <label>자료 틀 이름<input v-model="definition.name" :disabled="busy || !!saved" maxlength="120" @input="invalidate" /></label>
-        <div v-if="pageImages.length" class="report-pages"><figure v-for="page in pageImages" :key="page.no"><img :src="page.url" :alt="`숫자를 가린 원본 ${page.no}쪽`" /><figcaption>원본 {{page.no}}쪽</figcaption></figure></div>
-        <p class="muted">추출된 제목·표·차트를 확인하고, 확인이 필요한 항목의 지표와 기간을 다음 단계에서 지정해 주세요.</p>
-        <article v-for="block in definition.blocks" :key="block.id" class="report-block-editor">
-          <div class="row-between"><strong>{{block.title || block.kind}} · {{block.id}}</strong><div class="actions"><button class="btn" :disabled="busy" @click="changeBlock(block.id,'up')" :aria-label="`${block.id} 위로`">↑</button><button class="btn" :disabled="busy" @click="changeBlock(block.id,'down')" :aria-label="`${block.id} 아래로`">↓</button><button class="btn danger" :disabled="busy" @click="changeBlock(block.id,'remove')">삭제</button></div></div>
-          <p v-if="block.needs_review?.length" class="notice">원본과 비교해 항목 구성을 확인해 주세요.</p>
-          <label v-if="['title','paragraph','text','footnote'].includes(block.kind)">본문<textarea v-model="block.text" :disabled="busy" @input="invalidate" /></label>
-          <label v-else>제목<input v-model="block.title" :disabled="busy" @input="invalidate" /></label>
-          <label v-if="block.needs_review?.length"><input type="checkbox" :disabled="busy" @change="block.needs_review=[];invalidate()" /> 이 항목을 확인했습니다</label>
-        </article>
-        <div class="actions"><label>추가할 항목<select v-model="addedKind"><option value="metric_table">손익 표</option><option value="chart">조직별 차트</option><option value="numbercard">숫자 카드</option><option value="paragraph">문장</option></select></label><label v-if="addedKind!=='paragraph'">지표<select v-model="addedMetric"><option>매출</option><option>영업비용</option><option>영업이익</option></select></label><button class="btn" :disabled="busy" @click="addBlock">항목 추가</button></div>
-      </section>
+      <template v-else-if="definition">
+        <PPanel v-if="step===1" header="자료 구성 확인" class="report-card">
+          <label for="report-definition-name">자료 틀 이름<PInputText id="report-definition-name" v-model="definition.name" :disabled="busy || !!saved" maxlength="120" @update:modelValue="invalidate" /></label>
+          <div v-if="pageImages.length" class="report-pages"><figure v-for="page in pageImages" :key="page.no"><img :src="page.url" :alt="`숫자를 가린 원본 ${page.no}쪽`" /><figcaption>원본 {{page.no}}쪽</figcaption></figure></div>
+          <p class="muted">추출된 제목·표·차트를 확인하고, 확인이 필요한 항목의 지표와 기간을 다음 단계에서 지정해 주세요.</p>
+          <PPanel v-for="block in definition.blocks" :key="block.id" :header="`${block.title || block.kind} · ${block.id}`" class="report-block-editor" toggleable>
+            <template #icons><div class="actions"><PButton icon="pi pi-arrow-up" severity="secondary" text :disabled="busy" :aria-label="`${block.id} 위로`" @click="changeBlock(block.id,'up')" /><PButton icon="pi pi-arrow-down" severity="secondary" text :disabled="busy" :aria-label="`${block.id} 아래로`" @click="changeBlock(block.id,'down')" /><PButton label="삭제" icon="pi pi-trash" severity="danger" text :disabled="busy" @click="changeBlock(block.id,'remove')" /></div></template>
+            <PMessage v-if="block.needs_review?.length" severity="warn" :closable="false">원본과 비교해 항목 구성을 확인해 주세요.</PMessage>
+            <label v-if="['title','paragraph','text','footnote'].includes(block.kind)" :for="`report-text-${block.id}`">본문<PTextarea :id="`report-text-${block.id}`" v-model="block.text" rows="3" autoResize :disabled="busy" @update:modelValue="invalidate" /></label>
+            <label v-else :for="`report-title-${block.id}`">제목<PInputText :id="`report-title-${block.id}`" v-model="block.title" :disabled="busy" @update:modelValue="invalidate" /></label>
+            <label v-if="block.needs_review?.length" :for="`report-reviewed-${block.id}`" class="report-check"><PCheckbox :inputId="`report-reviewed-${block.id}`" :modelValue="false" binary :disabled="busy" @update:modelValue="acknowledgeBlock(block)" /><span>이 항목을 확인했습니다</span></label>
+          </PPanel>
+          <div class="actions"><label for="report-added-kind">추가할 항목<PSelect inputId="report-added-kind" v-model="addedKind" :options="blockKinds" optionLabel="label" optionValue="value" :disabled="busy" /></label><label v-if="addedKind!=='paragraph'" for="report-added-metric">지표<PSelect inputId="report-added-metric" v-model="addedMetric" :options="metricOptions" :disabled="busy" /></label><PButton label="항목 추가" icon="pi pi-plus" severity="secondary" outlined :disabled="busy" @click="addBlock" /></div>
+        </PPanel>
 
-      <section v-if="step===2" class="card">
-        <h2>기준 기간과 데이터</h2><div class="actions"><label>연도<input v-model.number="base.year" type="number" min="2000" max="9999" :disabled="busy" @change="run(changeYear)" /></label><label>기준 월<select v-model.number="base.month" :disabled="busy" @change="invalidate();explanations=null;queryResult=null"><option v-for="month in periods?.months || []" :key="month.month" :value="month.month">{{month.month}}월 · {{ {CONFIRMED:'확정',PROVISIONAL:'잠정',NONE:'데이터 없음'}[month.state] }}</option></select></label></div>
-        <p class="notice">{{currentMonth?.state==='PROVISIONAL'?'잠정 자료는 승인된 조직만 포함할 수 있습니다.':currentMonth?.state==='CONFIRMED'?'확정 마스터를 기준으로 조회합니다.':'선택한 월의 데이터가 없습니다.'}}</p>
-        <article v-for="block in definition.blocks.filter(item=>!['title','paragraph','text','footnote'].includes(item.kind))" :key="block.id" class="report-block-editor"><strong>{{block.title || block.kind}}</strong><label>금액 표시 단위<select v-model="block.unit" @change="invalidate"><option value="억원">억원</option><option value="백만원">백만원</option></select></label><label>기준 월과의 관계<select :value="block.period?.rule || 'base'" @change="block.period=$event.target.value==='base'?{rule:'base'}:{rule:'base_offset',offset:-1};invalidate()"><option value="base">기준 월</option><option value="base_offset">기준 월에서 이동</option></select></label><label v-if="block.period?.rule==='base_offset'">이동할 개월 수<input v-model.number="block.period.offset" type="number" min="-24" max="24" @change="if(!block.period.offset)block.period={rule:'base'};invalidate()" /></label></article>
-        <h3>등록된 지표 추가</h3><div class="actions"><button v-for="metric in metrics" :key="metric.id" class="btn" :disabled="busy" @click="addMetric(metric.id)">{{metric.name}} 추가</button><span v-if="!metrics.length" class="muted">등록된 지표가 없습니다.</span></div>
-        <form class="report-question" @submit.prevent="run(ask)"><label>데이터에 질문하기<input v-model="question" @input="queryResult=null" maxlength="1000" placeholder="계획 대비 영업이익 차이가 큰 조직을 알려줘" required /></label><button class="btn" :disabled="busy || !question.trim()">조회</button></form>
-        <section v-if="queryResult" class="report-answer"><p>{{queryResult.explanation || queryResult.clarifyQuestion || queryResult.message || queryResult.status}}</p><div class="actions"><button v-for="option in queryResult.clarifyOptions || []" :key="String(option)" class="btn" @click="clarifyQuestion(option)">{{typeof option==='string'?option:option.label}}</button></div><div v-if="queryResult.preview" class="report-table"><table><tbody><tr v-for="(row,i) in reportRows({table:queryResult.preview})" :key="i"><component :is="i===0?'th':'td'" v-for="(cell,j) in row" :key="j">{{reportCell(cell)}}</component></tr></tbody></table></div><form v-if="queryResult.status==='OK' && queryResult.sql" class="actions" @submit.prevent="run(registerMetric)"><label>지표 코드<input v-model="metricCode" pattern="[A-Z][A-Z0-9_]{1,79}" placeholder="OP_BY_ORG" required /></label><label>지표 이름<input v-model="metricName" maxlength="200" required /></label><button class="btn" :disabled="busy">확인한 조회를 지표로 저장·추가</button></form></section>
-      </section>
+        <PPanel v-if="step===2" header="기준 기간과 데이터" class="report-card">
+          <div class="actions"><label for="report-year">연도<PInputNumber inputId="report-year" :modelValue="base.year" :maxFractionDigits="0" :min="2000" :max="9999" :useGrouping="false" :allowEmpty="false" :disabled="busy" @update:modelValue="changeYearValue" /></label><label for="report-month">기준 월<PSelect inputId="report-month" :modelValue="base.month" :options="monthOptions" optionLabel="label" optionValue="value" :disabled="busy" @update:modelValue="changeMonth" /></label></div>
+          <PMessage severity="info" :closable="false">{{currentMonth?.state==='PROVISIONAL'?'잠정 자료는 승인된 조직만 포함할 수 있습니다.':currentMonth?.state==='CONFIRMED'?'확정 마스터를 기준으로 조회합니다.':'선택한 월의 데이터가 없습니다.'}}</PMessage>
+          <PPanel v-for="block in definition.blocks.filter(item=>!['title','paragraph','text','footnote'].includes(item.kind))" :key="block.id" :header="block.title || block.kind" class="report-block-editor" toggleable>
+            <div class="actions"><label :for="`report-unit-${block.id}`">금액 표시 단위<PSelect :inputId="`report-unit-${block.id}`" v-model="block.unit" :options="unitOptions" :disabled="busy" @update:modelValue="invalidate" /></label><label :for="`report-period-${block.id}`">기준 월과의 관계<PSelect :inputId="`report-period-${block.id}`" :modelValue="block.period?.rule || 'base'" :options="periodOptions" optionLabel="label" optionValue="value" :disabled="busy" @update:modelValue="value=>changePeriod(block,value)" /></label><label v-if="block.period?.rule==='base_offset'" :for="`report-offset-${block.id}`">이동할 개월 수<PInputNumber :inputId="`report-offset-${block.id}`" :modelValue="block.period.offset" :maxFractionDigits="0" :min="-24" :max="24" :useGrouping="false" :disabled="busy" @update:modelValue="value=>changeOffset(block,value)" /></label></div>
+          </PPanel>
+          <h3>등록된 지표 추가</h3><div class="actions"><PButton v-for="metric in metrics" :key="metric.id" :label="`${metric.name} 추가`" icon="pi pi-plus" severity="secondary" outlined :disabled="busy" @click="addMetric(metric.id)" /><span v-if="!metrics.length" class="muted">등록된 지표가 없습니다.</span></div>
+          <form class="report-question" @submit.prevent="run(ask)"><label for="report-question">데이터에 질문하기<PInputText id="report-question" v-model="question" maxlength="1000" placeholder="계획 대비 영업이익 차이가 큰 조직을 알려줘" required :disabled="busy" @update:modelValue="queryResult=null" /></label><PButton type="submit" label="조회" icon="pi pi-search" :disabled="busy || !question.trim()" /></form>
+          <PPanel v-if="queryResult" header="질문 결과" class="report-answer">
+            <p>{{queryResult.explanation || queryResult.clarifyQuestion || queryResult.message || queryResult.status}}</p>
+            <div class="actions"><PButton v-for="option in queryResult.clarifyOptions || []" :key="String(option)" :label="typeof option==='string'?option:option.label" severity="secondary" outlined :disabled="busy" @click="clarifyQuestion(option)" /></div>
+            <ReportDataTable v-if="queryResult.preview" :data="{table:queryResult.preview}" />
+            <form v-if="queryResult.status==='OK' && queryResult.sql" class="actions" @submit.prevent="run(registerMetric)"><label for="report-metric-code">지표 코드<PInputText id="report-metric-code" v-model="metricCode" pattern="[A-Z][A-Z0-9_]{1,79}" placeholder="OP_BY_ORG" required :disabled="busy" /></label><label for="report-metric-name">지표 이름<PInputText id="report-metric-name" v-model="metricName" maxlength="200" required :disabled="busy" /></label><PButton type="submit" label="확인한 조회를 지표로 저장·추가" :disabled="busy" /></form>
+          </PPanel>
+        </PPanel>
 
-      <section v-if="step===3" class="card">
-        <h2>승인 소명 분류</h2><div class="actions"><label>비교 기준<select v-model="comparison" :disabled="busy" @change="explanations=null"><option value="ACTUAL_VS_PLAN">실적 vs 계획</option><option value="ESTIMATE_VS_PLAN">추정 vs 계획</option><option value="ESTIMATE_VS_PREVIOUS">추정 vs 직전 추정</option></select></label><button class="btn" :disabled="busy" @click="run(loadExplanations)">소명 불러오기</button></div>
-        <template v-if="explanations"><p>Gap 합계 {{explanations.gapTotal}}원 · 분류 합계 {{explanations.classifiedTotal}}원</p><p class="notice">{{explanations.matchesGapTotal?'분류 합계가 Gap과 일치합니다.':'아직 분류되지 않았거나 검토 중인 소명이 있습니다.'}}</p><article v-for="item in explanations.items" :key="item.explanationId" class="report-block-editor"><strong>{{item.organization.name}} · {{item.item}}</strong><p>{{item.answer}}</p><p>차이 {{item.gapAmount}}원</p><label>사유 유형<select :value="item.categoryId || ''" :disabled="busy" @change="run(()=>classify(item,$event.target.value))"><option value="">미분류</option><option v-for="category in assignable" :key="category.id" :value="category.id">{{category.name}}</option></select></label><button v-if="item.suggestedCategoryId && item.suggestedCategoryId!==item.categoryId" class="btn" :disabled="busy" @click="run(()=>classify(item,item.suggestedCategoryId))">제안 분류 적용 · {{categories.find(c=>c.id===item.suggestedCategoryId)?.name}}</button></article><p v-if="!explanations.items?.length" class="muted">분류할 승인 소명이 없습니다.</p><ul><li v-for="(item,i) in explanations.reviewing || []" :key="i">검토 중 · {{item.organization.name}} · {{item.item}}</li></ul></template>
-      </section>
+        <PPanel v-if="step===3" header="승인 소명 분류" class="report-card">
+          <div class="actions"><label for="report-comparison">비교 기준<PSelect inputId="report-comparison" v-model="comparison" :options="comparisonOptions" optionLabel="label" optionValue="value" :disabled="busy" @update:modelValue="explanations=null" /></label><PButton label="소명 불러오기" severity="secondary" outlined :disabled="busy" @click="run(loadExplanations)" /></div>
+          <template v-if="explanations">
+            <p>Gap 합계 {{explanations.gapTotal}}원 · 분류 합계 {{explanations.classifiedTotal}}원</p>
+            <PMessage :severity="explanations.matchesGapTotal?'success':'warn'" :closable="false">{{explanations.matchesGapTotal?'분류 합계가 Gap과 일치합니다.':'아직 분류되지 않았거나 검토 중인 소명이 있습니다.'}}</PMessage>
+            <PPanel v-for="item in explanations.items" :key="item.explanationId" :header="`${item.organization.name} · ${item.item}`" class="report-block-editor" toggleable>
+              <p class="preserve-lines">{{item.answer}}</p><p>차이 {{item.gapAmount}}원</p>
+              <label :for="`report-category-${item.explanationId}`">사유 유형<PSelect :inputId="`report-category-${item.explanationId}`" :modelValue="item.categoryId || ''" :options="categoryOptions" optionLabel="label" optionValue="value" :disabled="busy" @update:modelValue="value=>run(()=>classify(item,value))" /></label>
+              <PButton v-if="item.suggestedCategoryId && item.suggestedCategoryId!==item.categoryId" :label="`제안 분류 적용 · ${categories.find(c=>c.id===item.suggestedCategoryId)?.name}`" severity="secondary" outlined :disabled="busy" @click="run(()=>classify(item,item.suggestedCategoryId))" />
+            </PPanel>
+            <PMessage v-if="!explanations.items?.length" severity="secondary" :closable="false">분류할 승인 소명이 없습니다.</PMessage>
+            <ul><li v-for="(item,i) in explanations.reviewing || []" :key="i">검토 중 · {{item.organization.name}} · {{item.item}}</li></ul>
+          </template>
+        </PPanel>
 
-      <section v-if="step===4" class="card">
-        <div class="row-between"><h2>{{definition.name}}</h2><button class="btn primary" :disabled="busy || !definition.blocks.length" @click="run(fill)">현재 데이터로 채우기</button></div>
-        <p v-if="results" class="notice">{{base.year}}년 {{base.month}}월 · {{ {CONFIRMED:'확정 자료',PROVISIONAL:'잠정 자료',NONE:'조회할 데이터 없음'}[results.dataStatus] || results.dataStatus }}</p>
-        <div class="report-preview"><article v-for="block in definition.blocks" :key="block.id" class="report-output" :style="blockStyle(block)"><h3>{{blockTitle(block)}}</h3><template v-for="data in results?.blocks?.filter(item=>item.id===block.id) || []" :key="data.id"><p v-if="data.text && block.kind!=='title'">{{data.text}}</p><p v-if="data.missing" class="notice">일부 데이터가 없습니다. {{(data.why || data.reasons || []).join(' · ')}}</p><div v-if="reportRows(data).length" class="report-table"><table><tbody><tr v-for="(row,i) in reportRows(data)" :key="i"><template v-for="(cell,j) in row" :key="j"><component v-if="!cell?.hide" :is="cell?.hdr || i < (data.header_rows || 1)?'th':'td'" :colspan="cell?.colspan || 1" :rowspan="cell?.rowspan || 1">{{reportCell(cell)}}</component></template></tr></tbody></table></div><dl v-if="data.cards" class="report-cards"><div v-for="(card,i) in data.cards" :key="i"><dt>{{card.label}}</dt><dd>{{card.value ?? '데이터 없음'}} {{card.value==null?'':card.unit}}</dd><small>{{card.delta}}</small></div></dl><div v-if="block.kind==='chart' && Array.isArray(data.rows)" class="report-chart" role="img" :aria-label="block.title || block.metric || '차트'"><div v-for="(row,i) in data.rows" :key="i" class="report-chart-row"><span>{{row.name}}</span><span class="report-bar" :style="{width:`${Math.min(100,Math.abs(Number(row.won)||0)/Math.max(1,...data.rows.map(item=>Math.abs(Number(item.won)||0)))*100)}%`}"></span><strong>{{row.text}}</strong></div></div><ul v-if="data.items"><li v-for="(item,i) in data.items" :key="i">{{reportCell(item)}}</li></ul></template><p v-if="!results && block.kind!=='title'" class="muted">{{block.text || '데이터를 채우면 내용을 확인할 수 있습니다.'}}</p></article></div>
-        <form class="report-question" @submit.prevent="run(requestEdit)"><label>AI로 구성 편집<input v-model="instruction" maxlength="1000" placeholder="영업이익 차트를 추가해 줘" required /></label><button class="btn" :disabled="busy || !instruction.trim()">편집안 받기</button></form>
-        <aside v-if="editResult" class="report-answer"><p>{{editResult.message}}</p><ul><li v-for="(proposal,i) in editResult.proposals || []" :key="i">{{proposal.description}}</li></ul><div class="actions"><button v-if="editResult.status==='EDIT' && editResult.proposals?.length" class="btn primary" :disabled="busy" @click="run(acceptEdit)">확인한 편집안 적용</button><button class="btn" :disabled="busy" @click="editResult=null">닫기</button></div></aside>
-        <div class="actions"><button v-if="undo" class="btn" :disabled="busy" @click="undoEdit">마지막 AI 편집 되돌리기</button><button class="btn primary" :disabled="busy || !dirty" @click="run(saveTemplate)">{{saved?'새 버전 저장':'자료 틀 저장'}}</button><button class="btn" :disabled="busy || !saved || dirty" @click="run(exportExcel)">XLSX 내보내기</button><button class="btn" :disabled="busy || !results" @click="run(exportPng)">내용 PNG</button><button class="btn" :disabled="busy || !results" @click="run(printReport)">인쇄 · PDF 저장</button><span class="muted">{{saved?`저장 버전 ${saved.version}${dirty?' · 저장하지 않은 변경 있음':''}`:'XLSX 내보내기 전에 자료 틀을 저장해 주세요.'}}</span></div>
-      </section>
-      <div class="actions report-step-actions"><button class="btn" :disabled="busy || step===0" @click="step--">이전</button><button v-if="step<4" class="btn primary" :disabled="busy" @click="step++">다음</button></div>
-    </template>
+        <PPanel v-if="step===4" :header="definition.name" class="report-card">
+          <PButton label="현재 데이터로 채우기" icon="pi pi-refresh" :disabled="busy || !definition.blocks.length" @click="run(fill)" />
+          <PMessage v-if="results" severity="info" :closable="false">{{base.year}}년 {{base.month}}월 · {{ {CONFIRMED:'확정 자료',PROVISIONAL:'잠정 자료',NONE:'조회할 데이터 없음'}[results.dataStatus] || results.dataStatus }}</PMessage>
+          <div class="report-preview">
+            <article v-for="block in definition.blocks" :key="block.id" class="report-output" :style="blockStyle(block)">
+              <h3>{{blockTitle(block)}}</h3>
+              <template v-for="data in results?.blocks?.filter(item=>item.id===block.id) || []" :key="data.id">
+                <p v-if="data.text && block.kind!=='title'">{{data.text}}</p>
+                <PMessage v-if="data.missing" severity="warn" :closable="false">일부 데이터가 없습니다. {{(data.why || data.reasons || []).join(' · ')}}</PMessage>
+                <ReportDataTable v-if="reportRows(data).length" :data="data" />
+                <div v-if="data.cards" class="report-cards"><PCard v-for="(card,i) in data.cards" :key="i"><template #title>{{card.label}}</template><template #content><p class="report-card-value">{{card.value ?? '데이터 없음'}} {{card.value==null?'':card.unit}}</p><small>{{card.delta}}</small></template></PCard></div>
+                <ReportChart v-if="block.kind==='chart' && Array.isArray(data.rows)" :block="{...block,...data}" />
+                <ul v-if="data.items"><li v-for="(item,i) in data.items" :key="i">{{reportCell(item)}}</li></ul>
+              </template>
+              <p v-if="!results && block.kind!=='title'" class="muted">{{block.text || '데이터를 채우면 내용을 확인할 수 있습니다.'}}</p>
+            </article>
+          </div>
+          <form class="report-question" @submit.prevent="run(requestEdit)"><label for="report-edit-instruction">AI로 구성 편집<PInputText id="report-edit-instruction" v-model="instruction" maxlength="1000" placeholder="영업이익 차트를 추가해 줘" required :disabled="busy" /></label><PButton type="submit" label="편집안 받기" :disabled="busy || !instruction.trim()" /></form>
+          <PPanel v-if="editResult" header="AI 편집안 확인" class="report-answer"><p>{{editResult.message}}</p><ul><li v-for="(proposal,i) in editResult.proposals || []" :key="i">{{proposal.description}}</li></ul><div class="actions"><PButton v-if="editResult.status==='EDIT' && editResult.proposals?.length" label="확인한 편집안 적용" :disabled="busy" @click="run(acceptEdit)" /><PButton label="닫기" severity="secondary" outlined :disabled="busy" @click="editResult=null" /></div></PPanel>
+          <div class="actions"><PButton v-if="undo" label="마지막 AI 편집 되돌리기" icon="pi pi-undo" severity="secondary" outlined :disabled="busy" @click="undoEdit" /><PButton :label="saved?'새 버전 저장':'자료 틀 저장'" icon="pi pi-save" :disabled="busy || !dirty" @click="run(saveTemplate)" /><PButton label="XLSX 내보내기" icon="pi pi-file-excel" severity="secondary" outlined :disabled="busy || !saved || dirty" @click="run(exportExcel)" /><PButton label="내용 PNG" icon="pi pi-image" severity="secondary" outlined :disabled="busy || !results" @click="run(exportPng)" /><PButton label="인쇄 · PDF 저장" icon="pi pi-print" severity="secondary" outlined :disabled="busy || !results" @click="run(printReport)" /><span class="muted">{{saved?`저장 버전 ${saved.version}${dirty?' · 저장하지 않은 변경 있음':''}`:'XLSX 내보내기 전에 자료 틀을 저장해 주세요.'}}</span></div>
+        </PPanel>
+        <div class="actions report-step-actions"><PButton label="이전" icon="pi pi-arrow-left" severity="secondary" outlined :disabled="busy || step===0" @click="step--" /><PButton v-if="step<4" label="다음" icon="pi pi-arrow-right" iconPos="right" :disabled="busy" @click="step++" /></div>
+      </template>
     </fieldset>
   </section>
 </template>
 
 <style scoped>
-.report-body{border:0;padding:0;margin:0;min-width:0}
-@media print{:global(body.report-printing *){visibility:hidden}:global(body.report-printing .report-preview),:global(body.report-printing .report-preview *){visibility:visible}:global(body.report-printing .report-preview){position:absolute;left:0;top:0;width:100%;border:0;margin:0;padding:12mm}:global(body.report-printing .report-table){overflow:visible}}
-.report-panel{display:grid;gap:16px}.report-panel h1,.report-panel h2,.report-panel h3{margin:0 0 12px}.report-steps,.report-step-actions{display:flex;gap:8px;flex-wrap:wrap}.report-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.report-wide{grid-column:1/-1}.report-panel .card{padding:24px}.report-panel label{display:grid;gap:6px;margin:8px 0;font-size:14px}.report-panel input:not([type=checkbox]),.report-panel select,.report-panel textarea{border:1px solid #cbd5e1;border-radius:6px;padding:9px;font:inherit;max-width:100%;background:white}.report-panel textarea{min-height:84px;resize:vertical}.report-panel input[type=checkbox]{width:auto}.report-template-list{padding:0;list-style:none}.report-template-list li{display:flex;gap:16px;align-items:center;border-bottom:1px solid #e2e8f0;padding:12px 0}.report-template-list strong{flex:1}.report-block-editor{border:1px solid #e2e8f0;padding:16px;margin:12px 0;border-radius:8px}.report-block-editor .actions{flex-shrink:0}.report-pages{display:flex;overflow:auto;gap:16px}.report-pages figure{margin:0;min-width:200px}.report-pages img{max-height:240px;max-width:100%;border:1px solid #cbd5e1}.report-question{display:flex;gap:12px;align-items:end;margin-top:24px}.report-question label{flex:1}.report-question button{margin-bottom:8px}.report-answer{padding:16px;background:#f8fafc;border:1px solid #dbe4ed;border-radius:8px}.report-table{overflow:auto}.report-table table{border-collapse:collapse;width:100%}.report-table th,.report-table td{border:1px solid #dbe4ed;padding:8px;white-space:pre-wrap;text-align:left}.report-table th{background:#f1f5f9}.report-preview{background:white;border:1px solid #dbe4ed;padding:24px;margin:16px 0}.report-output{margin:0 0 24px;break-inside:avoid}.report-output p{white-space:pre-wrap}.report-cards{display:flex;gap:12px;flex-wrap:wrap}.report-cards>div{padding:16px;background:#f8fafc;border-radius:8px}.report-cards dd{font-size:24px;margin:8px 0}.report-chart-row{display:grid;grid-template-columns:120px 1fr 90px;align-items:center;gap:8px;margin:8px 0}.report-bar{height:18px;min-width:1px;background:#3064df;border-radius:3px}.report-panel .actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.report-step-actions{justify-content:flex-end}@media(max-width:760px){.report-grid{grid-template-columns:1fr}.report-question{display:block}.report-panel .card{padding:16px}.report-template-list li{flex-wrap:wrap}.report-chart-row{grid-template-columns:80px 1fr 70px}}
+.report-body { border:0; padding:0; margin:0; min-width:0; }
+.report-panel { display:grid; gap:16px; }
+.report-panel h1, .report-panel h2, .report-panel h3 { margin:0 0 12px; }
+.report-steps { display:flex; flex-wrap:wrap; }
+.report-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.report-wide { grid-column:1/-1; }
+.report-panel label { display:grid; gap:6px; margin:8px 0; font-size:14px; }
+.report-panel .report-check { display:flex; align-items:center; gap:8px; }
+.report-template-list { padding:0; list-style:none; }
+.report-template-list li { display:flex; gap:16px; align-items:center; border-bottom:1px solid var(--p-content-border-color); padding:12px 0; }
+.report-template-list strong { flex:1; }
+.report-block-editor { margin:12px 0; }
+.report-block-editor :deep(.p-panel-header-actions) { flex-wrap:wrap; }
+.report-pages { display:flex; overflow:auto; gap:16px; }
+.report-pages figure { margin:0; min-width:200px; }
+.report-pages img { max-height:240px; max-width:100%; border:1px solid var(--p-content-border-color); }
+.report-question { display:flex; gap:12px; align-items:end; margin-top:24px; }
+.report-question label { flex:1; }
+.report-question > .p-button { margin-bottom:8px; }
+.report-answer { margin:16px 0; }
+.report-preview { background:var(--p-content-background); border:1px solid var(--p-content-border-color); padding:24px; margin:16px 0; }
+.report-output { margin:0 0 24px; break-inside:avoid; }
+.report-output p, .preserve-lines { white-space:pre-wrap; overflow-wrap:anywhere; }
+.report-cards { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0; }
+.report-card-value { font-size:24px; margin:8px 0; }
+.report-panel .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+.report-step-actions { margin-top:16px; justify-content:flex-end; }
+@media(max-width:760px) { .report-grid { grid-template-columns:1fr; }.report-question { display:block; }.report-template-list li { flex-wrap:wrap; }.report-preview { padding:12px; } }
+@media print { :global(body.report-printing *) { visibility:hidden; }:global(body.report-printing .report-preview), :global(body.report-printing .report-preview *) { visibility:visible; }:global(body.report-printing .report-preview) { position:absolute; left:0; top:0; width:100%; border:0; margin:0; padding:12mm; }:global(body.report-printing .report-table), :global(body.report-printing .p-datatable-table-container) { overflow:visible; } }
 </style>

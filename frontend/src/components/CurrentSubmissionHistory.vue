@@ -4,9 +4,15 @@ import { useSession } from '../stores/session.js'
 import { normalizeSubmission } from '../lib/submission-api.js'
 import { baselineLabel } from '../lib/review-api.js'
 import { dateTime, errorText, saveBlob } from '../lib/display.js'
+import PButton from 'primevue/button'
+import PDataTable from 'primevue/datatable'
+import PColumn from 'primevue/column'
+import PMessage from 'primevue/message'
+import PPanel from 'primevue/panel'
+import PTag from 'primevue/tag'
 
 const props = defineProps({ submissionId: { type: String, required: true } })
-const session = useSession(), detail = ref(null), error = ref(''), loading = ref(false)
+const session = useSession(), detail = ref(null), error = ref(''), loading = ref(false), downloading = ref(false)
 let controller = new AbortController()
 
 /** HIST-02의 제출·소명·반려·처리 이력을 한 응답으로 읽는다.
@@ -29,10 +35,14 @@ async function load(id) {
  * Side Effects: HTTP 조회·브라우저 다운로드. 원본 파일을 수정하지 않는다.
  */
 async function download() {
+  if (downloading.value || !detail.value) return
+  const filename = detail.value.originalFilename, signal = controller.signal
+  downloading.value = true
   try {
-    const blob = await session.request(`/api/v1/submissions/${props.submissionId}/file`, { blob: true, signal: controller.signal })
-    saveBlob(blob, detail.value.originalFilename)
-  } catch (cause) { if (cause.name !== 'AbortError') error.value = errorText(cause) }
+    const blob = await session.request(`/api/v1/submissions/${props.submissionId}/file`, { blob: true, signal })
+    if (!signal.aborted) saveBlob(blob, filename)
+  } catch (cause) { if (!signal.aborted) error.value = errorText(cause) }
+  finally { downloading.value = false }
 }
 
 /** 서버 이벤트 이름을 사용자용 처리 상태로 표시한다.
@@ -52,28 +62,42 @@ onBeforeUnmount(dispose)
 
 <template>
   <section class="submission-history" aria-label="제출본 상세 이력">
-    <p v-if="loading" role="status">제출본 이력을 불러오는 중입니다.</p>
-    <p v-if="error" class="error" role="alert">{{ error }}</p>
+    <PMessage v-if="loading" severity="info" :closable="false">제출본 이력을 불러오는 중입니다.</PMessage>
+    <PMessage v-if="error" severity="error" :closable="false">{{ error }}</PMessage>
     <template v-if="detail">
       <h3>{{ detail.requestTitle }} · {{ detail.label }}</h3>
       <p>비교 기준 · {{ baselineLabel(detail.baseline) }}</p>
-      <p v-if="detail.reviewComment" class="preserve-lines">경영기획 코멘트 · {{ detail.reviewComment }}</p>
-      <button class="btn" @click="download">{{ detail.originalFilename }} 다운로드</button>
-      <h4>작성한 소명</h4>
-      <article v-for="item in detail.explanations" :key="item.reviewItemId"><strong>{{ item.item }} · {{ item.month }}월</strong><p class="preserve-lines">{{ item.answer }}</p></article>
-      <p v-if="!detail.explanations.length" class="muted">이 제출본에서 작성한 소명이 없습니다.</p>
-      <h4>이어받은 소명</h4>
-      <article v-for="item in detail.inheritedExplanations" :key="item.id"><strong>{{ item.approvedLabel || '수락된 소명' }} · {{ item.round }}회차</strong><p class="preserve-lines">{{ item.answer }}</p></article>
-      <p v-if="!detail.inheritedExplanations.length" class="muted">이어받은 소명이 없습니다.</p>
-      <h4>재제출 요청 항목</h4>
-      <article v-for="item in detail.rejectedItems" :key="item.reviewItemId"><strong>{{ item.item }} · {{ item.sourceCell || '위치 확인 필요' }}</strong><p class="preserve-lines">{{ item.reason }}</p><p v-if="item.previousExplanation?.answer">이전 소명 · {{ item.previousExplanation.answer }}</p></article>
-      <p v-if="!detail.rejectedItems.length" class="muted">지정된 재제출 요청 항목이 없습니다.</p>
-      <h4>처리 이력</h4>
-      <ol><li v-for="(event,index) in detail.history" :key="index">{{ dateTime(event.at) }} · {{ eventLabel(event.event) }} · {{ event.label }} · {{ event.actor?.name || '—' }}</li></ol>
+      <PMessage v-if="detail.reviewComment" severity="warn" :closable="false" class="preserve-lines">경영기획 코멘트 · {{ detail.reviewComment }}</PMessage>
+      <PButton :label="`${detail.originalFilename} 다운로드`" icon="pi pi-download" severity="secondary" outlined :loading="downloading" :disabled="downloading" class="history-download" @click="download" />
+      <PPanel header="작성한 소명" toggleable>
+        <article v-for="item in detail.explanations" :key="item.reviewItemId"><strong>{{ item.item }} · {{ item.month }}월</strong><p class="preserve-lines">{{ item.answer }}</p></article>
+        <p v-if="!detail.explanations.length" class="muted">이 제출본에서 작성한 소명이 없습니다.</p>
+      </PPanel>
+      <PPanel header="이어받은 소명" toggleable>
+        <article v-for="item in detail.inheritedExplanations" :key="item.id"><strong>{{ item.approvedLabel || '수락된 소명' }} · {{ item.round }}회차</strong><p class="preserve-lines">{{ item.answer }}</p></article>
+        <p v-if="!detail.inheritedExplanations.length" class="muted">이어받은 소명이 없습니다.</p>
+      </PPanel>
+      <PPanel header="재제출 요청 항목" toggleable>
+        <article v-for="item in detail.rejectedItems" :key="item.reviewItemId"><strong>{{ item.item }} · {{ item.sourceCell || '위치 확인 필요' }}</strong><p class="preserve-lines">{{ item.reason }}</p><p v-if="item.previousExplanation?.answer">이전 소명 · {{ item.previousExplanation.answer }}</p></article>
+        <p v-if="!detail.rejectedItems.length" class="muted">지정된 재제출 요청 항목이 없습니다.</p>
+      </PPanel>
+      <PPanel header="처리 이력" toggleable>
+        <PDataTable :value="detail.history" stripedRows scrollable :tableStyle="{minWidth:'32rem'}" :pt="{table:{'aria-label':'제출본 처리 이력'}}">
+          <PColumn header="처리 시각"><template #body="{data}">{{dateTime(data.at)}}</template></PColumn>
+          <PColumn header="처리"><template #body="{data}"><PTag :value="eventLabel(data.event)" :severity="data.event==='APPROVED'?'success':data.event==='RESUBMIT_REQUESTED'?'warn':'info'" /></template></PColumn>
+          <PColumn field="label" header="제출 버전" />
+          <PColumn header="처리자"><template #body="{data}">{{data.actor?.name || '—'}}</template></PColumn>
+          <template #empty>등록된 처리 이력이 없습니다.</template>
+        </PDataTable>
+      </PPanel>
     </template>
   </section>
 </template>
 
 <style scoped>
-.submission-history { display: grid; gap: 12px; text-align: left; }.submission-history article { border-left: 3px solid #d4d9df; padding-left: 12px; }.submission-history p { white-space: pre-wrap; }.submission-history ol { padding-left: 24px; }
+.submission-history { display:grid; gap:12px; text-align:left; min-width:0; }
+.submission-history article + article { margin-top:16px; }
+.submission-history p { white-space:pre-wrap; overflow-wrap:anywhere; }
+.history-download { justify-self:start; max-width:100%; }
+.history-download :deep(.p-button-label) { overflow-wrap:anywhere; }
 </style>
