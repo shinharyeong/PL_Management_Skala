@@ -1,4 +1,4 @@
-import copy from './ui-copy.json' with { type: 'json' }
+import copy from './copy-text.js'
 import { createRouter } from 'vue-router'
 
 export const pageTitles = copy.pages
@@ -10,7 +10,7 @@ export function createPrototypeRouter(history, store) {
     { path: '/:pathMatch(.*)*', redirect: '/login' },
   ] })
   router.beforeEach(to => {
-    if (to.name === 'login') return true
+    if (to.name === 'login') return store.actor ? { name: store.actor.role === 'org' ? 'org-requests' : 'home', replace: true } : true
     if (!store.actor) return { name: 'login', replace: true }
     const isOrgPage = String(to.name).startsWith('org-')
     if (store.actor.role === 'org' && !isOrgPage) return { name: 'org-requests', replace: true }
@@ -22,7 +22,9 @@ export function createPrototypeRouter(history, store) {
         return { name: 'org-requests', replace: true }
       }
     }
+    if (to.name === 'calculator' && store.live && !store.activeOrg) return { name: 'monthly', replace: true }
     if (to.name === 'workspace' && !store.carts[store.activeOrg]?.length) return { name: 'monthly', replace: true }
+    if (to.name === 'cell' && store.live && !store.carts[store.activeOrg]?.some(item => item.id === store.monthlySession(store.activeOrg).activeCell)) return { name: store.carts[store.activeOrg]?.length ? 'workspace' : 'monthly', replace: true }
     if ((to.name === 'cell' || (to.name === 'calculator' && !store.live)) && !store.items[store.activeOrg]?.length) return { name: 'monthly', replace: true }
   })
   return router
