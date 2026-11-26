@@ -21,7 +21,8 @@ const step = ref(0), busy = ref(false), error = ref(''), notice = ref('')
 const definition = ref(null), draftName = ref('새 경영 보고서'), templates = ref([]), cursor = ref(null), metrics = ref([])
 const saved = ref(null), savedContent = ref(''), job = ref(null), pageImages = ref([])
 const periods = ref(null), base = ref(seoulPeriod())
-const categories = ref([]), comparison = ref('ACTUAL_VS_PLAN'), explanations = ref(null)
+const categories = ref([]), explanations = ref(null)
+const COMPARISON = 'ACTUAL_VS_PLAN'   // 소명은 기준 월에 쌓인 승인 소명을 모두 쓴다. 비교 기준은 화면에서 고르지 않는다.
 const results = ref(null), question = ref(''), queryResult = ref(null), metricCode = ref(''), metricName = ref('')
 const instruction = ref(''), editResult = ref(null), editSource = ref(''), undo = ref(null)
 const addedKind = ref('metric_table'), addedMetric = ref('영업이익')
@@ -151,7 +152,9 @@ async function uploadPdf(event) {
 async function pollJob() {
   for (let i = 0; i < 40 && job.value?.status === 'RUNNING' && step.value === 0 && !controller.signal.aborted; i++) {
     await new Promise(resolve => setTimeout(resolve, 3000))
-    if (job.value?.status === 'RUNNING' && step.value === 0 && !controller.signal.aborted) await run(refreshJob)
+    if (job.value?.status !== 'RUNNING' || step.value !== 0 || controller.signal.aborted) break
+    try { job.value = await reportRequest(api, 'job', { id: job.value.id }) } catch { continue }   // 진행 중에는 조용히 조회(화면을 잠그지 않는다)
+    if (job.value?.status !== 'RUNNING') await run(refreshJob)
   }
 }
 
@@ -240,7 +243,7 @@ function changeYearValue(year) {
  * Args: 없음. Returns: Promise<void>. Raises: HTTP 오류.
  * Side Effects: 서버 조회와 소명 목록 갱신.
  */
-async function loadExplanations() { explanations.value = await reportRequest(api, 'explanations', { ...base.value, comparison: comparison.value }) }
+async function loadExplanations() { explanations.value = await reportRequest(api, 'explanations', { ...base.value, comparison: COMPARISON }) }
 
 /** 소명 분류를 사용자가 선택한 값으로 저장한다.
  * Args: item 소명 카드, categoryId 분류 ID 또는 빈 문자열.
@@ -248,7 +251,7 @@ async function loadExplanations() { explanations.value = await reportRequest(api
  * Side Effects: 서버 분류 저장 후 최신 합계 조회.
  */
 async function classify(item, categoryId) {
-  await reportRequest(api, 'classify', { id: item.explanationId, categoryId, comparison: comparison.value })
+  await reportRequest(api, 'classify', { id: item.explanationId, categoryId, comparison: COMPARISON })
   await loadExplanations()
 }
 
@@ -380,11 +383,7 @@ function printReport() {
 function goto(next) {
   if (busy.value || (next > 0 && !definition.value)) return
   step.value = next
-  if (next === 3) {                                  // 비교 기준은 선택한 기준 월 상태에서 자동: 확정 월 = 실적 vs 계획, 잠정 월 = 추정 vs 계획
-    const auto = periods.value?.months?.find(item => item.month === base.value.month)?.state === 'CONFIRMED' ? 'ACTUAL_VS_PLAN' : 'ESTIMATE_VS_PLAN'
-    if (comparison.value !== auto) { comparison.value = auto; explanations.value = null }
-    if (!explanations.value) run(loadExplanations)
-  }
+  if (next === 3 && !explanations.value) run(loadExplanations)   // 소명 분류 단계에 처음 들어오면 쌓인 승인 소명을 불러온다
 }
 </script>
 
@@ -442,13 +441,13 @@ function goto(next) {
         <template v-else-if="step === 3">
           <div class="rs-bar"><div class="rs-bar-acts"><button type="button" class="rs-btn ghost" :disabled="busy" @click="goto(2)">← 데이터 선택</button></div>
             <div class="rs-bar-acts"><button type="button" class="rs-btn" :disabled="busy" @click="run(fill)">보고서 생성 →</button></div></div>
-          <ReportClassify :explanations="explanations" :categories="assignable" :comparison="comparison" :busy="busy"
+          <ReportClassify :explanations="explanations" :categories="assignable" :busy="busy"
             @classify="(item, id) => run(() => classify(item, id))" @load="run(loadExplanations)" />
         </template>
 
         <ReportStudio v-else :definition="definition" :results="results" :base="base" :busy="busy" :canUndo="!!undo" :editResult="editResult" :saved="saved" :dirty="!!dirty"
           @back="goto(3)" @fill="run(fill)" @undo="undoEdit" @png="run(exportPng)" @print="run(printReport)" @save="run(saveTemplate)" @xlsx="run(exportExcel)"
-          @reorder="definition.blocks = $event" @remove="changeBlock($event, 'remove')" @add="addedKind = $event.kind; addedMetric = $event.metric; addBlock()"
+          @reorder="definition.blocks = $event" @edited="invalidate" @remove="changeBlock($event, 'remove')" @add="addedKind = $event.kind; addedMetric = $event.metric; addBlock()"
           @edit="instruction = $event; run(requestEdit)" @accept="run(acceptEdit)" @dismiss="editResult = null" />
       </template>
     </fieldset>

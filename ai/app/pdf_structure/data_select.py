@@ -177,7 +177,7 @@ UNIT = contextvars.ContextVar("report_unit", default="억원")
 SCOPE_ORG = contextvars.ContextVar("report_scope_org", default=None)
 SCOPE_ORGS = contextvars.ContextVar("report_scope_orgs", default=[])
 UNIT_DIV = {"원": Decimal(1), "천원": Decimal(10) ** 3, "만원": Decimal(10) ** 4, "백만원": Decimal(10) ** 6, "억원": Decimal(10) ** 8, "조원": Decimal(10) ** 12}
-UNIT_DIGITS = {"원": "1", "천원": "1", "만원": "1", "백만원": "0.1", "억원": "0.1", "조원": "0.01"}    # 표시 소수 자리(원·천원·만원은 정수)
+UNIT_DIGITS = {"원": "1", "천원": "1", "만원": "1", "백만원": "1", "억원": "0.1", "조원": "0.01"}    # 표시 소수 자리(원·천원·만원은 정수)
 
 
 def eok(won, *, diff: bool = False, plain_sign: bool = True) -> str:

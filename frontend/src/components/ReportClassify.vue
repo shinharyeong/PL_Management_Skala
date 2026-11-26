@@ -3,18 +3,15 @@ import { computed, ref } from 'vue'
 import { eok } from '../lib/report-studio.js'
 
 /** 보고서 만들기 4단계(소명 분류): 승인된 소명을 사유 분류함으로 끌어 놓는다. 서버 호출은 하지 않고 이벤트로 알린다.
- * Props: explanations 서버의 소명 목록·합계, categories 분류 후보(assignable), comparison 비교 기준, busy.
- * Emits: classify(item, categoryId 또는 ''), load. 비교 기준은 부모가 기준 월 상태로 정해 준다. */
+ * Props: explanations 서버의 소명 목록·합계, categories 분류 후보(assignable), busy.
+ * Emits: classify(item, categoryId 또는 ''), load. */
 const props = defineProps({
   explanations: { type: Object, default: null },
   categories: { type: Array, default: () => [] },
-  comparison: { type: String, default: 'ACTUAL_VS_PLAN' },
   busy: { type: Boolean, default: false },
 })
 const emit = defineEmits(['classify', 'load'])
 const dragId = ref(null), overBin = ref(null)
-const LABELS = { ACTUAL_VS_PLAN: '실적 vs 계획', ESTIMATE_VS_PLAN: '추정 vs 계획', ESTIMATE_VS_PREVIOUS: '추정 vs 직전 추정' }
-const label = computed(() => LABELS[props.comparison] || props.comparison)
 const items = computed(() => props.explanations?.items || [])
 const loose = computed(() => items.value.filter(item => !item.categoryId))
 const inBin = id => items.value.filter(item => item.categoryId === id)
@@ -34,10 +31,10 @@ function drop(categoryId) {
   <div>
     <div class="rs-cbanner">승인된 소명을 오른쪽 분류함에 끌어 놓으세요. 분류 합계가 Gap 합계와 같아지면 보고서에 그대로 쓸 수 있습니다.</div>
     <div class="rs-row" style="padding:0 32px 12px">
-      <span class="rs-cap">비교 기준(데이터 단계의 기준 월에 따라 자동)</span><span class="rs-tagok">{{ label }}</span>
+      <span class="rs-cap">기준 월에 쌓인 승인 소명을 불러옵니다.</span>
       <button type="button" class="rs-btn ghost" :disabled="busy" @click="emit('load')">새로고침</button>
     </div>
-    <div v-if="!explanations" class="rs-msg info">비교 기준을 고르고 “소명 불러오기”를 누르면 승인된 소명이 나타납니다.</div>
+    <div v-if="!explanations" class="rs-msg info">승인된 소명을 불러오는 중입니다. 나타나지 않으면 “새로고침”을 눌러 주세요.</div>
     <div v-else class="rs-cls">
       <section class="rs-panel">
         <b>분류할 소명 <small class="rs-cap">{{ loose.length }}건</small></b>

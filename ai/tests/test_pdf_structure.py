@@ -665,7 +665,7 @@ def test_fill_chart_types_numbercard_and_unit_are_code_computed(monkeypatch):
     assert sum(Decimal(r["won"]) for r in wf[1:-1]) == Decimal(wf[-1]["won"]) - Decimal(wf[0]["won"])                # 증감의 합 = 실적 − 계획
     assert by["n1"]["cards"][0]["value"] == "10.0" and by["n1"]["cards"][1]["missing"] is True
     rows = by["t1"]["rows"]
-    assert rows[0][0]["text"] == "지표 (백만원)" and rows[1][1]["text"] == "1,000.0"
+    assert rows[0][0]["text"] == "지표 (백만원)" and rows[1][1]["text"] == "1,000"   # 백만원은 정수(백엔드 DisplayUnitAdvice와 같음)
 
 
 def test_vlm_table_with_missing_header_row_is_replaced_by_pdf_table_and_flagged():

@@ -17,7 +17,7 @@ const shown = computed(() => props.templates.filter(item => !query.value.trim() 
 const jobLabel = computed(() => ({ RUNNING: '분석 중', SUCCEEDED: '완료', FAILED: '실패' }[props.job?.status] || props.job?.status || ''))
 const jobClass = computed(() => ({ RUNNING: 'rs-tagrun', SUCCEEDED: 'rs-tagok', FAILED: 'rs-tagbad' }[props.job?.status] || 'rs-tagrun'))
 
-/** 고른 파일을 PDF 여부만 확인하고 올린다(30MB 한도는 요청 단계에서 한 번 더 검사한다). */
+/** 고른 파일을 올린다. 형식·30MB 한도 검사는 요청 단계에서 한다. */
 function take(file) { if (file && !props.busy) emit('pick', file) }
 function onDrop(event) { over.value = false; take(event.dataTransfer?.files?.[0]) }
 function onFile(event) { take(event.target.files?.[0]); event.target.value = '' }

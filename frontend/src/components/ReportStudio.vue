@@ -19,7 +19,7 @@ const props = defineProps({
   saved: { type: Object, default: null },
   dirty: { type: Boolean, default: false },
 })
-const emit = defineEmits(['back', 'fill', 'undo', 'png', 'print', 'save', 'xlsx', 'reorder', 'remove', 'add', 'edit', 'accept', 'dismiss'])
+const emit = defineEmits(['back', 'fill', 'undo', 'png', 'print', 'save', 'xlsx', 'reorder', 'remove', 'add', 'edit', 'accept', 'dismiss', 'edited'])
 
 const selected = ref(null), editing = ref(null), highlight = ref(true)
 const dragId = ref(null), dropMark = ref(null), docEl = ref(null), message = ref(''), sent = ref([])
@@ -123,9 +123,9 @@ function send(text) {
             <span class="bt"><button type="button" :disabled="busy" :aria-label="`${block.id} 빼기`" title="빼기" @click.stop="emit('remove', block.id)">✕</button></span>
             <span class="rz" role="separator" title="끌어서 너비 조절" @pointerdown.stop.prevent="resizeStart($event, block)"></span>
 
-            <textarea v-if="editing === block.id" v-model="block.text" class="rs-ed" rows="3" @blur="editing = null" @keydown.esc="editing = null"></textarea>
+            <textarea v-if="editing === block.id" v-model="block.text" class="rs-ed" rows="3" @input="emit('edited')" @blur="editing = null" @keydown.esc="editing = null"></textarea>
             <template v-else>
-              <h3 v-if="block.kind === 'title'"><template v-for="(part, i) in highlightParts(titleOf(block))" :key="i"><span v-if="part.kind !== 'plain'" :class="part.kind === 'val' ? 'rs-dv' : 'rs-mv'">{{ part.text }}</span><template v-else>{{ part.text }}</template></template></h3>
+              <h3 v-if="block.kind === 'title'"><template v-for="(part, i) in highlightParts(titleOf(block))" :key="i"><span v-if="part.kind !== 'plain' && results" :class="part.kind === 'val' ? 'rs-dv' : 'rs-mv'">{{ part.text }}</span><template v-else>{{ part.text }}</template></template></h3>
               <p v-else-if="isTextual(block)"><template v-for="(part, i) in highlightParts(textOf(block))" :key="i"><span v-if="part.kind !== 'plain' && results" :class="part.kind === 'val' ? 'rs-dv' : 'rs-mv'">{{ part.text }}</span><template v-else>{{ part.text }}</template></template><span v-if="!textOf(block)" class="rs-cap">(빈 문장 — 더블클릭해서 입력)</span></p>
               <template v-else>
                 <h3 v-if="titleOf(block)">{{ titleOf(block) }}</h3>
