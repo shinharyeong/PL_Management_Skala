@@ -130,7 +130,7 @@ async function addSelected() {
   activeCell.value = chosen[0].id; detailSource.value = 'cart'
   selection.value = []; emit('navigate','cell')
 }
-async function excludeSelected(){if(await store.run(()=>store.excludeItems(store.activeOrg,selection.value,exclusionReason.value))){selection.value=[];exclusionReason.value=''}}
+async function excludeSelected(){if(await store.run(()=>store.excludeItems(store.activeOrg,selection.value,'')))selection.value=[]}
 function openDetail(item){if(!cart.value.some(row=>row.id===item.id))return;activeCell.value=item.id;detailSource.value='cart';emit('navigate','cell')}
 function openCalculator(org) {store.activeOrg=org;emit('navigate','calculator')}
 async function sendRequest() {
@@ -171,7 +171,6 @@ watch(() => props.page, async page => {
 }, { immediate: true })
 
 
-const exclusionReason = ref('')
 const pipelineSeverities = ['warn','info','danger','success']
 const expandedOrganizationRows = computed(() => expandedOrg.value == null ? {} : { [expandedOrg.value]: true })
 const allRecipientsSelected = computed(() => requestRecipients.value.length > 0 && requestRecipients.value.every(org => recipientIds.value.includes(org.id)))
@@ -254,7 +253,7 @@ function downloadMonthlySubmission(org) { return store.run(() => store.downloadS
       <div v-if="!applied" class="empty-state calculator-empty"><h3><span data-copy-key="monthlyText.text048">{{ copy.monthlyText.text048 }}</span></h3></div>
       <div v-else-if="!rows.length" class="empty-state"><h3><span data-copy-key="monthlyText.text049">{{ copy.monthlyText.text049 }}</span></h3><p><span data-copy-key="monthlyText.text050">{{ copy.monthlyText.text050 }}</span></p></div>
       <LiveGapTable v-else v-model:column-widths="columnWidths" grouped-statuses :rows="rows" :selected="selection" :unit="unit" :type="applied.type" :editable="store.currentSubmission?.status==='PENDING'" @select="toggle" @all="selectVisible" />
-      <div v-if="applied" class="calculator-actions-space" :style="{height:(actionBarHeight+24)+'px'}" aria-hidden="true" /><div v-if="applied" ref="actionBarElement" class="selection-bar calculator-actions-dock" :style="actionBarStyle" role="region" aria-label="선택 항목 처리"><strong>{{ selection.length }}<span data-copy-key="monthlyText.text051">{{ copy.monthlyText.text051 }}</span></strong><label class="field">제외 사유<input v-model="exclusionReason" maxlength="4000" placeholder="제외할 때 입력해 주세요" /></label><div class="actions"><button class="btn text" :disabled="!selection.length" @click="selection = []"><span data-copy-key="monthly.clearSelection">{{ copy.monthly.clearSelection }}</span></button><button class="btn" :disabled="!selection.length || store.busy || !exclusionReason.trim()" @click="excludeSelected"><span data-copy-key="monthly.exclude">{{ copy.monthly.exclude }}</span></button><button class="btn primary" :disabled="!selection.length || store.busy" @click="addSelected"><span data-copy-key="monthly.reviewSelected">{{ copy.monthly.reviewSelected }}</span></button></div></div>
+      <div v-if="applied" class="calculator-actions-space" :style="{height:(actionBarHeight+24)+'px'}" aria-hidden="true" /><div v-if="applied" ref="actionBarElement" class="selection-bar calculator-actions-dock" :style="actionBarStyle" role="region" aria-label="선택 항목 처리"><strong>{{ selection.length }}<span data-copy-key="monthlyText.text051">{{ copy.monthlyText.text051 }}</span></strong><div class="actions"><button class="btn text" :disabled="!selection.length" @click="selection = []"><span data-copy-key="monthly.clearSelection">{{ copy.monthly.clearSelection }}</span></button><button class="btn" :disabled="!selection.length || store.busy" @click="excludeSelected"><span data-copy-key="monthly.exclude">{{ copy.monthly.exclude }}</span></button><button class="btn primary" :disabled="!selection.length || store.busy" @click="addSelected"><span data-copy-key="monthly.reviewSelected">{{ copy.monthly.reviewSelected }}</span></button></div></div>
 
     </template>
 
