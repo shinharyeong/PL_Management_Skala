@@ -4,7 +4,7 @@ import { usePrototypeStore } from './live-store.js'
 import { saveFile } from './live-api.js'
 import { seoulPeriod } from './domain.js'
 import { applyReportProposals, manualReport, reportDefinition, reportRequest } from './report-api.js'
-import { reportPng } from './report-export.js'
+import { reportPngOf } from './report-export.js'
 import StructureReview from '../components/StructureReview.vue'
 import ReportStart from '../components/ReportStart.vue'
 import ReportDataSelect from '../components/ReportDataSelect.vue'
@@ -12,7 +12,7 @@ import ReportClassify from '../components/ReportClassify.vue'
 import ReportStudio from '../components/ReportStudio.vue'
 import ReportDataTable from '../components/ReportDataTable.vue'
 import { pageSizes } from '../lib/structure-review.js'
-import { STEP_LABELS } from '../lib/report-studio.js'
+import { STEP_LABELS, isTextual } from '../lib/report-studio.js'
 import '../styles/report-studio.css'
 
 const store = usePrototypeStore()
@@ -22,7 +22,13 @@ const definition = ref(null), draftName = ref('새 경영 보고서'), templates
 const saved = ref(null), savedContent = ref(''), job = ref(null), pageImages = ref([])
 const periods = ref(null), base = ref(seoulPeriod())
 const categories = ref([]), explanations = ref(null)
-const COMPARISON = 'ACTUAL_VS_PLAN'   // 소명은 기준 월에 쌓인 승인 소명을 모두 쓴다. 비교 기준은 화면에서 고르지 않는다.
+/** 3단계에서 고른 금액 단위 중 가장 많이 쓴 단위(없으면 억원). 4단계 소명 금액을 이 단위로 보여 준다. */
+const reportUnit = computed(() => {
+  const count = {}
+  for (const block of definition.value?.blocks || []) if (!isTextual(block)) count[block.unit || '억원'] = (count[block.unit || '억원'] || 0) + 1
+  return Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0] || '억원'
+})
+const COMPARISONS = ['ACTUAL_VS_PLAN', 'ESTIMATE_VS_PLAN']   // 실적 비교(기준 월 항목)와 추정 비교(기준 월+1 항목)를 모두 불러와 한 목록으로 쓴다. 화면에서 고르지 않는다.
 const results = ref(null), question = ref(''), queryResult = ref(null), metricCode = ref(''), metricName = ref('')
 const instruction = ref(''), editResult = ref(null), editSource = ref(''), undo = ref(null)
 const addedKind = ref('metric_table'), addedMetric = ref('영업이익')
@@ -156,6 +162,7 @@ async function pollJob() {
     try { job.value = await reportRequest(api, 'job', { id: job.value.id }) } catch { continue }   // 진행 중에는 조용히 조회(화면을 잠그지 않는다)
     if (job.value?.status !== 'RUNNING') await run(refreshJob)
   }
+  if (job.value?.status === 'RUNNING' && step.value === 0 && !controller.signal.aborted) notice.value = 'PDF 분석이 평소보다 오래 걸리고 있습니다. 잠시 뒤 “상태 새로고침”을 눌러 확인해 주세요.'
 }
 
 /** 편집한 정의의 이전 데이터·AI 제안을 무효화한다.
@@ -239,11 +246,22 @@ function changeYearValue(year) {
 }
 
 
-/** 선택한 기준 월의 승인 소명과 분류 후보를 읽는다.
- * Args: 없음. Returns: Promise<void>. Raises: HTTP 오류.
+/** 선택한 기준 월의 승인 소명을 실적·추정 비교 모두 읽어 한 목록으로 합친다.
+ * 소명마다 어느 비교에서 왔는지(comparison)를 달아 두어 분류를 저장할 때 그 비교로 보낸다. 합계는 두 비교의 합이다.
+ * Args: 없음. Returns: Promise<void>. Raises: 두 비교 모두 실패하면 HTTP 오류.
  * Side Effects: 서버 조회와 소명 목록 갱신.
  */
-async function loadExplanations() { explanations.value = await reportRequest(api, 'explanations', { ...base.value, comparison: COMPARISON }) }
+async function loadExplanations() {
+  const settled = await Promise.allSettled(COMPARISONS.map(comparison => reportRequest(api, 'explanations', { ...base.value, comparison })))
+  const got = settled.map((result, i) => ({ comparison: COMPARISONS[i], result })).filter(entry => entry.result.status === 'fulfilled')
+  if (!got.length) throw settled[0].reason
+  const total = key => got.reduce((sum, entry) => sum + (Number(entry.result.value[key]) || 0), 0)
+  const seen = new Set()
+  const items = got.flatMap(entry => (entry.result.value.items || []).map(item => ({ ...item, comparison: entry.comparison })))
+    .filter(item => !seen.has(item.explanationId) && seen.add(item.explanationId))
+  explanations.value = { ...got[0].result.value, items, reviewing: got.flatMap(entry => entry.result.value.reviewing || []),
+    gapTotal: total('gapTotal'), classifiedTotal: total('classifiedTotal'), matchesGapTotal: got.every(entry => entry.result.value.matchesGapTotal) }
+}
 
 /** 소명 분류를 사용자가 선택한 값으로 저장한다.
  * Args: item 소명 카드, categoryId 분류 ID 또는 빈 문자열.
@@ -251,7 +269,7 @@ async function loadExplanations() { explanations.value = await reportRequest(api
  * Side Effects: 서버 분류 저장 후 최신 합계 조회.
  */
 async function classify(item, categoryId) {
-  await reportRequest(api, 'classify', { id: item.explanationId, categoryId, comparison: COMPARISON })
+  await reportRequest(api, 'classify', { id: item.explanationId, categoryId, comparison: item.comparison || COMPARISONS[0] })
   await loadExplanations()
 }
 
@@ -362,7 +380,7 @@ async function exportExcel() {
  * Side Effects: 메모리 캔버스와 사용자 브라우저 다운로드.
  */
 async function exportPng() {
-  saveFile(await reportPng(definition.value, results.value, base.value), `보고서_${base.value.year}-${String(base.value.month).padStart(2, '0')}.png`)
+  saveFile(await reportPngOf(definition.value, results.value, base.value), `보고서_${base.value.year}-${String(base.value.month).padStart(2, '0')}.png`)
 }
 
 /** 미리보기 영역만 브라우저 인쇄·PDF 저장 대화상자에 표시한다.
@@ -441,7 +459,7 @@ function goto(next) {
         <template v-else-if="step === 3">
           <div class="rs-bar"><div class="rs-bar-acts"><button type="button" class="rs-btn ghost" :disabled="busy" @click="goto(2)">← 데이터 선택</button></div>
             <div class="rs-bar-acts"><button type="button" class="rs-btn" :disabled="busy" @click="run(fill)">보고서 생성 →</button></div></div>
-          <ReportClassify :explanations="explanations" :categories="assignable" :busy="busy"
+          <ReportClassify :explanations="explanations" :categories="assignable" :unit="reportUnit" :busy="busy"
             @classify="(item, id) => run(() => classify(item, id))" @load="run(loadExplanations)" />
         </template>
 

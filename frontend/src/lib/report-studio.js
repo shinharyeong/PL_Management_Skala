@@ -8,15 +8,20 @@ const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
 export function circled(n) { return n >= 1 && n <= 20 ? CIRCLED[n - 1] : String(n) }
 
 /** 원 단위 값(문자열·숫자)을 억원 한 자리로 표시한다. sign=true 면 +/−를 붙인다. 값이 없으면 '—'. 표시 전용(원 단위 정밀 값은 서버 문자열을 그대로 쓴다). */
-export function eok(won, { sign = false } = {}) {
+export function eok(won, { sign = false, unit = '억원' } = {}) {
   if (won === null || won === undefined || won === '') return '—'
-  const v = Number(won) / 100000000
-  if (!Number.isFinite(v)) return '—'
-  const r = Math.round(Math.abs(v) * 10) / 10
-  const body = r.toFixed(1)
-  if (!sign) return `${v < 0 && r !== 0 ? '−' : ''}${body}억`
-  return `${r === 0 ? '' : v < 0 ? '−' : '+'}${body}억`
+  const n = Number(won)
+  if (!Number.isFinite(n)) return '—'
+  let u = UNIT_SIZE[unit] ? unit : '억원'
+  let r = roundTo(Math.abs(n) / UNIT_SIZE[u].div, UNIT_SIZE[u].digits)
+  if (r === 0 && n !== 0 && u !== '원' && u !== '천원' && u !== '만원') { u = '만원'; r = roundTo(Math.abs(n) / UNIT_SIZE[u].div, 0) }   // 고른 단위로 0이 되는 작은 금액은 만원으로 보여 준다
+  const body = r.toLocaleString('en-US', { minimumFractionDigits: UNIT_SIZE[u].digits, maximumFractionDigits: UNIT_SIZE[u].digits })
+  const suffix = u === '억원' ? '억' : u
+  const mark = r === 0 ? '' : n < 0 ? '−' : sign ? '+' : ''
+  return `${mark}${body}${suffix}`
 }
+const UNIT_SIZE = { 원: { div: 1, digits: 0 }, 천원: { div: 1e3, digits: 0 }, 만원: { div: 1e4, digits: 0 }, 백만원: { div: 1e6, digits: 0 }, 억원: { div: 1e8, digits: 1 }, 조원: { div: 1e12, digits: 2 } }
+const roundTo = (value, digits) => { const k = 10 ** digits; return Math.round(value * k) / k }
 
 /** 기준 월 칸의 표시: { cls: 'none'|'def'|'prov'|'', label }. state 는 NONE·CONFIRMED·PROVISIONAL. */
 export function monthCell(month) {

@@ -10,7 +10,12 @@ test('amounts are shown in 억원 with one decimal and a sign when asked', () =>
   assert.equal(eok('-74000000'), '−0.7억')
   assert.equal(eok(null), '—')
   assert.equal(eok('x'), '—')
-  assert.equal(eok(4000000, { sign: true }), '+0.0억'.replace('+', ''))     // 0.04억은 0.0으로 반올림되어 부호 없음
+  assert.equal(eok(4000000, { sign: true }), '+400만원')     // 0.04억은 0.0억이 되므로 만원 단위로 보여 준다
+  assert.equal(eok(123456789, { unit: '백만원' }), '123백만원')
+  assert.equal(eok(-123456789, { sign: true, unit: '천원' }), '−123,457천원')
+  assert.equal(eok(123456789, { unit: '원' }), '123,456,789원')
+  assert.equal(eok(1234567890000, { unit: '조원' }), '1.23조원')
+  assert.equal(eok(123456789, { unit: '없는단위' }), '1.2억')
 })
 
 test('month cells follow the master state', () => {

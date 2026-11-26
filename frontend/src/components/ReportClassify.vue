@@ -3,12 +3,13 @@ import { computed, ref } from 'vue'
 import { eok } from '../lib/report-studio.js'
 
 /** 보고서 만들기 4단계(소명 분류): 승인된 소명을 사유 분류함으로 끌어 놓는다. 서버 호출은 하지 않고 이벤트로 알린다.
- * Props: explanations 서버의 소명 목록·합계, categories 분류 후보(assignable), busy.
+ * Props: explanations 서버의 소명 목록·합계, categories 분류 후보(assignable), unit 금액 표시 단위(3단계에서 고른 단위), busy.
  * Emits: classify(item, categoryId 또는 ''), load. */
 const props = defineProps({
   explanations: { type: Object, default: null },
   categories: { type: Array, default: () => [] },
   busy: { type: Boolean, default: false },
+  unit: { type: String, default: '억원' },
 })
 const emit = defineEmits(['classify', 'load'])
 const dragId = ref(null), overBin = ref(null)
@@ -16,7 +17,7 @@ const items = computed(() => props.explanations?.items || [])
 const loose = computed(() => items.value.filter(item => !item.categoryId))
 const inBin = id => items.value.filter(item => item.categoryId === id)
 const nameOf = id => props.categories.find(category => category.id === id)?.name || ''
-const money = value => eok(value, { sign: true })
+const money = value => eok(value, { sign: true, unit: props.unit })
 const tone = value => (Number(value) >= 0 ? 'rs-pos' : 'rs-neg')
 
 function start(event, item) { dragId.value = item.explanationId; event.dataTransfer?.setData('text/plain', String(item.explanationId)); if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move' }
