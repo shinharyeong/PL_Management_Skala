@@ -35,18 +35,28 @@ const challenge = computed(() => ({remaining: Math.max(0,Math.ceil((Date.parse(a
 const authNotice = ref('')
 const developmentEntry = isDevelopmentEntry(window.location.pathname)
 const localAccounts=ref([]), devAccountsError=ref('')
-onMounted(async()=>{
-  if(!developmentEntry) return
-  try { localAccounts.value=await store.api('/api/v1/dev/accounts'); if(!localAccounts.value.length) devAccountsError.value='등록된 개발 계정이 없습니다. 서버의 계정 및 허용 이메일 목록을 확인해 주세요.' }
-  catch(e) { devAccountsError.value='개발용 계정 목록을 불러오지 못했습니다. 서버의 개발 도구 활성화 설정을 확인해 주세요.' }
-})
+// 배포 환경은 접근 키가 있어야 계정 목록·로그인이 열린다(로컬은 키 없이 열림). 키는 메모리에만 둔다.
+const devAccessKey=ref(''), devKeyRequired=ref(false)
+async function loadDevAccounts() {
+  devAccountsError.value=''
+  try {
+    localAccounts.value=await store.developmentAccounts(devAccessKey.value.trim())
+    devKeyRequired.value=false
+    if(!localAccounts.value.length) devAccountsError.value='DB에 활성 계정이 없습니다.'
+  } catch(e) {
+    localAccounts.value=[]
+    if(e.status===403) { devKeyRequired.value=true; if(devAccessKey.value) devAccountsError.value='접근 키가 맞지 않습니다.' }
+    else devAccountsError.value='개발용 계정 목록을 불러오지 못했습니다. 서버의 개발 도구 활성화 설정을 확인해 주세요.'
+  }
+}
+onMounted(()=>{ if(developmentEntry) loadDevAccounts() })
 /** 로컬 인증 서버에서 선택 계정의 세션을 발급한다.
  * Args: account 로컬 계정. Returns: Promise<void>.
  * Raises: 서버 오류는 store.run이 표시한다. Side Effects: 인증 요청과 화면 이동.
  */
 async function localSignIn(account) {
   if(!developmentEntry || store.busy) return
-  if(await store.run(()=>store.developmentLogin(account.email))) navigate(store.actor.role==='planner'?'home':'org-requests')
+  if(await store.run(()=>store.developmentLogin(account.email,devAccessKey.value.trim()))) navigate(store.actor.role==='planner'?'home':'org-requests')
 }
 
 let timer
@@ -150,7 +160,7 @@ watch(page,async value=>{
   <div v-if="page === 'login'" class="auth-page">
     <a class="brand auth-brand" href="#/login"><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span></a>
     <main class="auth-main">
-      <section v-if="developmentEntry && authStep === 'email'" class="auth-form local-account-form"><h1><span data-copy-key="shellText.text003">{{ copy.shellText.text003 }}</span></h1><p class="muted"><span data-copy-key="shellText.text004">{{ copy.shellText.text004 }}</span></p><p class="muted">등록된 개발 계정을 선택하면 이메일 인증 없이 로그인합니다.</p><p v-if="devAccountsError" class="error" role="alert">{{devAccountsError}}</p><p v-if="authError" class="error" role="alert">{{authError}}</p><div class="local-account-list"><button v-for="account in localAccounts" :key="account.email" class="local-account-button" :disabled="store.busy" @click="localSignIn(account)"><strong>{{account.name}}</strong><span>{{account.hint}}</span></button></div><p v-if="store.busy" class="muted" role="status"><span data-copy-key="shellText.text005">{{ copy.shellText.text005 }}</span></p><p v-if="store.error" class="error" role="alert">{{store.error}}</p></section>
+      <section v-if="developmentEntry && authStep === 'email'" class="auth-form local-account-form"><h1><span data-copy-key="shellText.text003">{{ copy.shellText.text003 }}</span></h1><p class="muted"><span data-copy-key="shellText.text004">{{ copy.shellText.text004 }}</span></p><p class="muted">DB에 있는 계정을 선택하면 이메일 인증 없이 로그인합니다.</p><form v-if="devKeyRequired" class="dev-access-key" @submit.prevent="loadDevAccounts"><label for="dev-access-key">접근 키</label><input id="dev-access-key" v-model="devAccessKey" type="password" autocomplete="off" required><button class="btn primary" type="submit" :disabled="!devAccessKey.trim()">확인</button></form><p v-if="devAccountsError" class="error" role="alert">{{devAccountsError}}</p><p v-if="authError" class="error" role="alert">{{authError}}</p><div class="local-account-list"><button v-for="account in localAccounts" :key="account.email" class="local-account-button" :disabled="store.busy" @click="localSignIn(account)"><strong>{{account.name}}</strong><span>{{account.hint}}</span></button></div><p v-if="store.busy" class="muted" role="status"><span data-copy-key="shellText.text005">{{ copy.shellText.text005 }}</span></p><p v-if="store.error" class="error" role="alert">{{store.error}}</p></section>
       <form v-else class="auth-form" @submit.prevent="authStep === 'email' ? requestCode() : signIn()">
         <h1>{{ authStep === 'email' ? '로그인' : '인증코드 입력' }}</h1>
         <p class="muted auth-description">{{ authStep === 'email' ? '회사 이메일로 인증 메일을 받아\n로그인해 주세요.' : `${email}\n인증코드 6자리를 입력해 주세요.` }}</p>

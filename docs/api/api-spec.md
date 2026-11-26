@@ -316,11 +316,11 @@ report-ai app은 상태를 저장하지 않는다. 저장·권한·감사는 bac
 
 `/dev`와 `/dev/`는 프론트 SPA 진입점이며 로컬·배포 빌드에서 동일하게 사용한다. 내부 화면은 기존 hash 라우팅(`/dev#/monthly`)으로 이동한다. URL은 접근 제한 수단이 아니다.
 
-- `GET /api/v1/dev/accounts`: 개발 도구가 켜져 있을 때 DB의 활성 사용자 중 허용 이메일 목록에 있는 계정만 `[{email,name,hint}]`로 반환한다. 비로그인 조회 가능.
-- `POST /api/v1/dev/sessions`: `{email}`을 받아 허용된 활성 계정의 기존 AUTH 로그인 응답 `{token,expiresAt,me}`를 반환한다(201). 이메일 인증은 생략하지만 서버의 역할·소속·API 권한 검사는 유지한다. 비허용/비활성 계정은 403.
+- `GET /api/v1/dev/accounts`: 개발 도구가 켜져 있을 때 DB의 활성 사용자 전체를 `[{email,name,hint}]`로 반환한다(경영기획팀 먼저, 조직 코드·이메일 순). 헤더 `X-Dev-Access-Key`가 서버의 접근 키와 같아야 한다(다르거나 없으면 403). 로그인 세션은 필요 없다.
+- `POST /api/v1/dev/sessions`: `{email}`과 헤더 `X-Dev-Access-Key`를 받아 DB의 활성 계정에 기존 AUTH 로그인 응답 `{token,expiresAt,me}`를 반환한다(201). 이메일 인증은 생략하지만 서버의 역할·소속·API 권한 검사는 유지한다. 접근 키 불일치·없는 계정·비활성 계정은 403.
 - `GET /api/v1/ui-copy`: `[{key,value,revision,updatedAt}]`. 모든 사용자 화면이 읽는 공통 문구 수정값이며 비로그인 조회 가능. 원본 JSON을 기본값으로 쓰고 알려진 문자열 키만 병합한다. no-store.
 - `PUT /api/v1/dev/ui-copy`: `{key,value,expectedRevision}`. 개발 도구가 켜져 있고 허용 계정으로 인증해야 한다. 최초 수정 revision=0, 이후 현재 revision을 보낸다. 성공은 수정값과 증가한 revision을 반환하고, 동시 수정은 409 RESOURCE_CHANGED, 잘못된 키/빈 값/1만 자 초과는 400이다. 서버 DB에 저장하므로 일반 화면·다른 사용자·재배포 후에도 유지된다.
 
-`app.dev-tools.enabled` 기본 false. 꺼지면 계정 조회·개발 로그인·문구 쓰기는 404이며 공통 문구 읽기는 유지한다. 현재 로컬 프로필과 캠퍼스 IP 제한 배포 ConfigMap에서 true로 설정했다. 개발 도구가 켜진 배포에 접근하는 사람은 지정된 계정으로 이메일 인증 없이 로그인할 수 있으므로 테스트 종료 후 플래그를 끈다. `APP_DEV_TOOLS_ALLOWED_EMAILS`는 쉼표 구분 목록이며 기본값은 현행 테스트용 경영기획팀/17개 사업부 이메일이다. 사용자·조직을 자동 생성하지 않는다.
+`app.dev-tools.enabled` 기본 false. 꺼지면 계정 조회·개발 로그인·문구 쓰기는 404이며 공통 문구 읽기는 유지한다. 켜져 있으면 `app.dev-tools.access-key`(`APP_DEV_TOOLS_ACCESS_KEY`, `app-secrets`)와 같은 `X-Dev-Access-Key`가 있어야 계정 조회·개발 로그인이 된다. 키를 설정하지 않으면 켜도 모두 403이다. 로컬 프로필만 `require-access-key: false`로 키 없이 쓴다. 운영 ConfigMap은 꺼 두며 켜는 절차는 `docs/infrastructure.md` 4절 「개발 도구」를 따른다. 사용자·조직을 자동 생성하지 않는다.
 
 Flyway `V20261125_1800__shared_ui_copy.sql`: `ui_copy_override` 테이블. 기존 업무 테이블과 금액 데이터는 변경하지 않는다.

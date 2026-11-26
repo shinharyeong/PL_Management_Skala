@@ -23,9 +23,15 @@ public class DevToolsController {
     public record Login(@NotBlank @Email String email) {}
     public record Change(@NotBlank @Size(max=200) String key,@NotBlank @Size(max=10000) String value,@PositiveOrZero long expectedRevision) {}
     @GetMapping("/api/v1/dev/accounts")
-    public ResponseEntity<List<DevToolsService.Account>> accounts() { return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(tools.accounts()); }
+    public ResponseEntity<List<DevToolsService.Account>> accounts(
+            @RequestHeader(value = DevToolsService.ACCESS_KEY_HEADER, required = false) String accessKey) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(tools.accounts(accessKey));
+    }
     @PostMapping("/api/v1/dev/sessions")
-    public ResponseEntity<LoginResponse> login(@Valid @RequestBody Login input) { return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(tools.login(input.email())); }
+    public ResponseEntity<LoginResponse> login(@Valid @RequestBody Login input,
+            @RequestHeader(value = DevToolsService.ACCESS_KEY_HEADER, required = false) String accessKey) {
+        return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore()).body(tools.login(input.email(), accessKey));
+    }
     @GetMapping("/api/v1/ui-copy")
     public ResponseEntity<List<SharedCopyService.Item>> read() { return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(copy.read()); }
     @PutMapping("/api/v1/dev/ui-copy")

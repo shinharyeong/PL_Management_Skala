@@ -3,9 +3,9 @@ spring:
   flyway:
     locations: classpath:db/migration,classpath:db/local
 app:
+  # /dev 계정 선택 로그인·공통 문구 편집. 로컬은 접근 키 없이 쓴다(배포는 기본 꺼짐, 켤 때 접근 키 필수).
   dev-tools:
     enabled: true
+    require-access-key: false
   auth:
     dev-log-code: true
-
-# Local /dev uses the same opt-in account-selector API as the test deployment.
