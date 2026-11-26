@@ -198,6 +198,39 @@
   .app-layout .main-content:not(.home-overview) .report-upload-limit { display:block; font-size:12px; margin-bottom:8px; }
   .app-layout .main-content:not(.home-overview) .report-panel .report-question { margin-top:12px; }
   .app-layout .main-content:not(.home-overview) .report-panel .report-step-actions { margin-top:12px; }
+
+  /* PR #114's five report stages keep their controls and generated document styles. */
+  .app-layout .main-content .rs { --rs-bg:var(--canvas); --rs-line:var(--line); --rs-ink:var(--text); --rs-blue:var(--accent); border-radius:10px; }
+  .app-layout .main-content .rs-top { min-height:48px; padding:10px 14px; gap:8px 12px; }
+  .app-layout .main-content .rs-brand { gap:8px; flex-wrap:wrap; }
+  .app-layout .main-content .rs-brand b { font-size:18px; }
+  .app-layout .main-content .rs-brand span { font-size:12px; }
+  .app-layout .main-content .rs-steps { gap:4px; }
+  .app-layout .main-content .rs-step { padding:5px 9px; font-size:12px; border-radius:6px; }
+  .app-layout .main-content .rs-btn { height:34px; padding:0 12px; border-radius:7px; font-size:13px; }
+  .app-layout .main-content .rs-start { max-width:none; padding:14px; gap:12px; }
+  .app-layout .main-content .rs-card { padding:14px 16px; gap:10px; border-radius:10px; }
+  .app-layout .main-content .rs-card h2 { margin:2px 0 4px; }
+  .app-layout .main-content .rs-drop { min-height:130px; padding:12px; gap:6px; }
+  .app-layout .main-content .rs-saved { padding:8px 10px; }
+  .app-layout .main-content .rs-bar { padding:8px 14px; gap:8px; }
+  .app-layout .main-content :is(.rs-work,.rs-dsel,.rs-rep) { padding:14px; gap:12px; }
+  .app-layout .main-content .rs-work { grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(240px,.85fr); }
+  .app-layout .main-content .rs-dsel { grid-template-columns:300px minmax(0,1fr); }
+  .app-layout .main-content .rs-rep { grid-template-columns:minmax(0,1fr) 290px; }
+  .app-layout .main-content .rs-panel { padding:12px; gap:8px; border-radius:9px; }
+  .app-layout .main-content .rs-mgrid { gap:6px; }
+  .app-layout .main-content .rs-mbtn { padding:7px 5px; font-size:15px; }
+  .app-layout .main-content .rs-picked { padding:8px 12px; }
+  .app-layout .main-content .rs-picked .m { font-size:24px; }
+  .app-layout .main-content .rs-extra { margin:0 14px 14px; }
+  .app-layout .main-content .rs-cbanner { margin:10px 14px; padding:8px 12px; }
+  .app-layout .main-content .rs-cls { padding:0 14px 14px; gap:12px; }
+  .app-layout .main-content .rs-bin { min-height:64px; padding:10px 12px; }
+  .app-layout .main-content .rs-fbar { padding:8px 14px; gap:8px; }
+  .app-layout .main-content .rs-msg { margin:10px 14px 0; padding:8px 12px; }
+  .app-layout .main-content .rs-foot { padding:0 14px 14px; }
+  .app-layout .main-content .rs-ai { height:clamp(320px,calc(100dvh - 270px),700px); }
 }
 
 /* Request recipients and message fields share a row when there is enough width. */
@@ -216,6 +249,9 @@
 }
 
 @media(max-width:1100px) {
+  .app-layout .main-content .rs-work { grid-template-columns:minmax(0,1fr); }
+  .app-layout .main-content :is(.rs-dsel,.rs-rep) { grid-template-columns:minmax(0,1fr); }
+  .app-layout .main-content .rs-ai { height:360px; }
   .app-layout .main-content:not(.home-overview) { padding-inline:18px; }
   .app-layout .main-content:not(.home-overview) .version-controls { grid-template-columns:1fr 1fr; }
   .app-layout .main-content:not(.home-overview) .version-controls > select { grid-column:1/-1; }
@@ -226,6 +262,8 @@
   .app-layout .main-content:not(.home-overview) :is(.org-item-list,.current-reviews .review-list) { max-height:240px; }
 }
 @media(max-width:760px) {
+  .app-layout .main-content .rs-btn { height:auto; min-height:40px; white-space:normal; }
+  .app-layout .main-content :is(.rs-start,.rs-cls) { grid-template-columns:minmax(0,1fr); }
   .app-layout .sidebar { padding:12px; gap:8px; }
   .app-layout .sidebar nav { gap:4px; }
   .app-layout .sidebar-user { flex-direction:row; align-items:center; padding-top:8px; gap:6px; }

@@ -219,7 +219,7 @@ onBeforeUnmount(dispose)
           <label :for="`review-note-${detail.id}`">경영기획 메모<PTextarea :id="`review-note-${detail.id}`" v-model="note" rows="3" autoResize maxlength="4000" :disabled="busy" /></label>
           <div class="button-row"><PButton type="button" label="소명 보완 요청" severity="warn" outlined :disabled="busy || !note.trim()" @click="command('REQUEST_AGAIN')" /><PButton type="submit" label="소명 수락" :loading="busy" :disabled="busy" /></div>
         </form>
-        <PPanel v-for="explanation in detail.explanations" :key="explanation.id" :header="`${explanation.round}회차 · ${{ PENDING: '검토 중', ACCEPTED: '승인', REJECTED: '소명 보완 요청', REQUESTED_AGAIN: '보완 요청' }[explanation.verdict] || explanation.verdict}`" toggleable :collapsed="explanation.id !== latest?.id">
+        <PPanel v-for="explanation in detail.explanations" :key="explanation.id" :header="`${explanation.round}회차 · ${{ PENDING: '검토 중', ACCEPTED: '승인', REJECTED: '소명 보완 요청', REQUESTED_AGAIN: '보완 요청' }[explanation.verdict] || explanation.verdict}`" toggleable>
           <p class="preserve-lines">{{ explanation.answer || '아직 작성된 소명이 없습니다.' }}</p><small>{{ explanation.answeredBy?.name }} · {{ dateTime(explanation.answeredAt) }}</small><p v-if="explanation.reviewNote" class="preserve-lines">{{ explanation.reviewNote }}</p>
         </PPanel>
       </div>

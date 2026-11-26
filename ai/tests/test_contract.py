@@ -52,6 +52,8 @@ def test_pdf_job_accepts_then_reports_a_draft_template(monkeypatch):
     d = body["definition"]
     assert d["schema_version"] == 1 and d["name"] == "월보고" and d["blocks"] and all(b["id"] and b["kind"] for b in d["blocks"])
     assert body["pages"][0]["no"] == 1 and base64.b64decode(body["pages"][0]["imagePng"])[:4] == b"\x89PNG"
+    ep = d["extraction"]["pages"][0]                                           # 쪽 크기(pt)와 블록 bbox 가 같은 좌표계
+    assert ep["no"] == 1 and ep["width"] > 0 and ep["height"] > 0 and all(0 <= b["bbox"][0] < b["bbox"][2] <= ep["width"] + 1 and 0 <= b["bbox"][1] < b["bbox"][3] <= ep["height"] + 1 for b in d["blocks"] if b.get("bbox"))
     client.post("/v1/pdf-jobs", data={"jobId": "43"}, files={"file": ("x.pdf", b"not a pdf", "application/pdf")})
     assert sent[1][1]["status"] == "FAILED" and sent[1][1]["error"]["code"] == "PDF_UNREADABLE" and sent[1][1]["definition"] is None
 

@@ -54,3 +54,48 @@ export async function reportPng(definition, result, base) {
   lines.forEach((line, index) => context.fillText(line, padding, padding + index * lineHeight))
   return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('PNG를 만들지 못했습니다.')), 'image/png'))
 }
+
+const STRIP = '.hd, .bt, .rz'   // 편집용 손잡이·빼기·크기 조절 표시는 그림에 넣지 않는다.
+
+/** 5단계 미리보기 요소를 화면 모양(서식·너비·나란히 배치) 그대로 PNG로 만든다. 의존 라이브러리 없이 SVG foreignObject 를 쓴다.
+ * Args: element 미리보기 요소(.report-preview), scale 배율(기본 2).
+ * Returns: PNG Blob Promise. Raises: Error 렌더링 실패(호출자가 글자판 PNG로 대신한다).
+ * Side Effects: 메모리의 복제본만 만든다. 화면은 바꾸지 않는다. */
+export async function elementPng(element, scale = 2) {
+  const { width, height } = element.getBoundingClientRect()
+  if (!width || !height) throw new Error('미리보기 크기를 알 수 없습니다.')
+  if (height * scale > 28000) throw new Error('PNG 한 장으로 만들기에는 내용이 많습니다. XLSX 또는 인쇄·PDF 저장을 사용해 주세요.')
+  const clone = element.cloneNode(true)
+  inlineStyles(element, clone)
+  clone.querySelectorAll(STRIP).forEach(node => node.remove())
+  clone.querySelectorAll('.rs-rb').forEach(node => { node.style.borderColor = 'transparent'; node.style.background = 'none'; node.style.opacity = '1' })
+  clone.style.margin = '0'; clone.style.width = `${width}px`; clone.style.height = `${height}px`; clone.style.border = '0'; clone.style.borderRadius = '0'
+  const xhtml = new XMLSerializer().serializeToString(clone)
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><foreignObject x="0" y="0" width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml">${xhtml}</div></foreignObject></svg>`
+  const image = new Image()
+  await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = () => reject(new Error('미리보기를 그림으로 바꾸지 못했습니다.')); image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` })
+  const canvas = document.createElement('canvas'); canvas.width = Math.ceil(width * scale); canvas.height = Math.ceil(height * scale)
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('이 브라우저에서 PNG를 만들 수 없습니다.')
+  context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height); context.scale(scale, scale); context.drawImage(image, 0, 0, width, height)
+  return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('PNG를 만들지 못했습니다.')), 'image/png'))
+}
+
+/** 원본과 복제본의 같은 위치 요소에 계산된 스타일을 그대로 복사한다. */
+function inlineStyles(source, target) {
+  const computed = getComputedStyle(source)
+  let text = ''
+  for (const name of computed) text += `${name}:${computed.getPropertyValue(name)};`
+  target.setAttribute('style', text)
+  for (let i = 0; i < source.children.length; i++) inlineStyles(source.children[i], target.children[i])
+}
+
+/** 화면의 미리보기가 있으면 그 모양대로, 없거나 실패하면 글자판으로 PNG를 만든다. */
+export async function reportPngOf(definition, result, base) {
+  const element = typeof document !== 'undefined' ? document.querySelector('.report-preview') : null
+  if (element) {
+    element.classList.add('exporting')
+    try { return await elementPng(element) } catch (cause) { if (/한 장으로/.test(cause.message)) throw cause } finally { element.classList.remove('exporting') }
+  }
+  return reportPng(definition, result, base)
+}
