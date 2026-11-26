@@ -106,7 +106,7 @@
 .app-layout .main-content:not(.home-overview) .gap-controls > .actions .btn { min-width:0; }
 .app-layout .main-content:not(.home-overview) .gap-amount-units { padding:2px; gap:2px; }
 .app-layout .main-content:not(.home-overview) .gap-amount-units button { padding:3px 7px; min-height:26px; }
-.app-layout .main-content:not(.home-overview) .status-tabs { gap:5px; }
+.app-layout .main-content:not(.home-overview) .status-tabs { grid-template-columns:repeat(5,minmax(0,1fr)); gap:5px; }
 .app-layout .main-content:not(.home-overview) .status-tabs button { min-height:36px; padding:5px 10px; border-radius:7px; font-size:13px; }
 .app-layout .main-content:not(.home-overview) .calculator-pipeline { padding:0 4px; gap:6px; }
 .app-layout .main-content:not(.home-overview) .result-toolbar { padding:7px 10px; gap:8px 12px; border-radius:8px; }
