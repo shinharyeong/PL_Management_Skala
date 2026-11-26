@@ -1,11 +1,12 @@
 // Money stays in decimal strings. This transport never supplies example data on failure.
 export function createApiClient(credentials) {
   const pendingKeys = new Map()
-  return async function request(path, { method = 'GET', body, signal, blob = false } = {}) {
+  return async function request(path, { method = 'GET', body, signal, blob = false, headers: extraHeaders } = {}) {
     if (!path.startsWith('/api/v1/')) throw new Error('지원하지 않는 API 경로입니다.')
     const token = credentials.token()
     const headers = new Headers()
     if (token) headers.set('Authorization', `Bearer ${token}`)
+    for (const [name, value] of Object.entries(extraHeaders || {})) if (value) headers.set(name, value)
     const multipart = body instanceof FormData
     const encoded = body == null ? undefined : multipart ? body : JSON.stringify(body)
     if (encoded && !multipart) headers.set('Content-Type', 'application/json')
@@ -22,7 +23,7 @@ export function createApiClient(credentials) {
       const problem = await response.json().catch(() => ({}))
       if (response.status === 401 && token && token === credentials.token()) credentials.clear()
       const error = new Error(problem.detail || `요청 실패 (${response.status})`)
-      error.code = problem.code; error.requestId = problem.requestId
+      error.code = problem.code; error.requestId = problem.requestId; error.status = response.status
       throw error
     }
     if (token && token !== credentials.token()) throw new DOMException('인증 정보가 변경되었습니다.', 'AbortError')

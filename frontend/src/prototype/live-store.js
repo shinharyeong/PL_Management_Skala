@@ -28,6 +28,8 @@ export const usePrototypeStore = defineStore('connected-frontend', {
     requestCode(email){return this.api('/api/v1/auth/codes',{method:'POST',body:{email}})},
     syncSession(session){const m=session.actor;this.token=session.token;this.actor={id:m.id,name:m.name,email:m.email,role:m.role==='PLANNER'?'planner':'org',orgId:m.organization?.id,orgCode:m.organization?.code,department:m.organization?.name||'경영기획팀'}},
     async restoreLogin(){const session=useSession();if(!await session.restore())return false;this.syncSession(session);return true},
+    developmentAccounts(accessKey){return this.api('/api/v1/dev/accounts',{headers:{'X-Dev-Access-Key':accessKey}})},
+    async developmentLogin(email,accessKey){const result=await this.api('/api/v1/dev/sessions',{method:'POST',body:{email},headers:{'X-Dev-Access-Key':accessKey}});const session=useSession();const saved=session.accept(result);this.syncSession(session);if(!saved)this.notify('이 브라우저에서는 새로고침 후 다시 계정을 선택해야 합니다.','error')},
     async login(email,code){const r=await this.api('/api/v1/auth/sessions',{method:'POST',body:{email,code}});const session=useSession();const saved=session.accept(r);this.syncSession(session);if(!saved)this.notify('이 브라우저에서는 로그인 유지 정보를 저장할 수 없습니다. 새로고침하면 다시 로그인해야 합니다.','error')},
     async logout(){await this.api('/api/v1/auth/session',{method:'DELETE'});this.clear()},
     async refreshBadge(){if(this.actor?.role==='planner'){const r=await this.api('/api/v1/me/badges');this.unreadCount=r.unreadNotifications}},

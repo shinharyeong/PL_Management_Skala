@@ -1,5 +1,4 @@
 import { copyEditorPlugin } from './scripts/copy-editor-plugin.js'
-import { localAuthCodePlugin } from './scripts/local-auth-code-plugin.js'
 import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
@@ -8,7 +7,7 @@ import { defineConfig, loadEnv } from 'vite'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   return {
-  plugins: [vue(), copyEditorPlugin(), localAuthCodePlugin({logPath: env.LOCAL_AUTH_LOG, apiTarget: env.API_PROXY_TARGET})],
+  plugins: [vue(), copyEditorPlugin()],
   build: {
     rollupOptions: {
       input: {
