@@ -30,3 +30,8 @@ export function mergeNotificationGroups(current,incoming) {
   return [...groups.values()].sort((a,b)=>b.date.localeCompare(a.date))
 }
 export const statusTone = label => /기한 경과|반려/.test(label)?'red':/소명|회신 대기|검토 대기/.test(label)?'purple':/승인|제출 완료|확정|수락/.test(label)?'blue':'gray'
+
+/** 서버 제출본 라벨(연-월-차수)을 화면 버전명(ver월.차수)으로 바꾼다.
+ * Args: label 서버 라벨(예: 2026-11-01). Returns: 표시 문자열(예: ver11.01), 형식이 다르면 원래 값. Raises: 없음.
+ */
+export function versionLabel(label){const m=/^\d{4}-(\d{2})-(\d{2})$/.exec(label||'');return m?`ver${Number(m[1])}.${m[2]}`:label}

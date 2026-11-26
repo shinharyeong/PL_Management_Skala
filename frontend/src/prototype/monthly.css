@@ -359,3 +359,11 @@
 @media(min-width:761px){body:has(.calculator-actions-dock) .copy-editor-bar{max-width:220px}}
 @media(max-width:1000px){.monthly-panel .calculator-actions-dock{flex-wrap:wrap;gap:10px;padding:12px}.monthly-panel .calculator-actions-dock>.field{min-width:180px}.monthly-panel .calculator-actions-dock>.actions{width:100%;justify-content:flex-end}.monthly-panel .calculator-actions-dock .btn{min-height:40px}}
 @media(max-width:600px){.monthly-panel .calculator-actions-dock>.actions{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:6px}.monthly-panel .calculator-actions-dock .btn{min-width:0;padding:8px;font-size:12px}.monthly-panel .calculator-actions-dock .btn.primary{min-width:0}.monthly-panel .calculator-actions-dock>.field{min-width:0}body:has(.calculator-actions-dock) .copy-editor-bar{top:8px;bottom:auto;max-width:calc(100vw - 20px)}body:has(.calculator-actions-dock) .copy-editor-bar p{display:none}}
+/* 와이어프레임 4-2: 탭 6개(상태 5 + 전체), 조직 선택, 확정 단계 */
+.monthly-panel .status-tabs{grid-template-columns:repeat(6,1fr)}
+.monthly-panel .org-context select{min-width:180px}
+.monthly-panel .monthly-heading-actions h2{margin:0}
+.monthly-panel .monthly-confirm{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding:16px 20px}
+.monthly-panel .monthly-confirm-info{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.monthly-panel .monthly-confirm-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.monthly-panel .monthly-confirm-actions input{min-width:240px;padding:8px 12px;border:1px solid var(--line,#e5e8ed);border-radius:8px;font:inherit}
