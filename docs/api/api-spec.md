@@ -321,6 +321,6 @@ report-ai app은 상태를 저장하지 않는다. 저장·권한·감사는 bac
 - `GET /api/v1/ui-copy`: `[{key,value,revision,updatedAt}]`. 모든 사용자 화면이 읽는 공통 문구 수정값이며 비로그인 조회 가능. 원본 JSON을 기본값으로 쓰고 알려진 문자열 키만 병합한다. no-store.
 - `PUT /api/v1/dev/ui-copy`: `{key,value,expectedRevision}`. 개발 도구가 켜져 있고 활성 계정으로 인증해야 한다. 최초 수정 revision=0, 이후 현재 revision을 보낸다. 성공은 수정값과 증가한 revision을 반환하고, 동시 수정은 409 RESOURCE_CHANGED, 잘못된 키/빈 값/1만 자 초과는 400이다. 서버 DB에 저장하므로 일반 화면·다른 사용자·재배포 후에도 유지된다.
 
-`app.dev-tools.enabled` 기본 false. 꺼지면 계정 조회·개발 로그인·문구 쓰기는 404이며 공통 문구 읽기는 유지한다. 켜져 있으면 `app.dev-tools.access-key`(`APP_DEV_TOOLS_ACCESS_KEY`, `app-secrets`)와 같은 `X-Dev-Access-Key`가 있어야 계정 조회·개발 로그인이 된다. 키를 설정하지 않으면 켜도 모두 403이다. 로컬 프로필만 `require-access-key: false`로 키 없이 쓴다. 배포 ConfigMap(개발·시연 클러스터)은 켜 두며 접근 키 설정은 `docs/infrastructure.md` 4절 「개발 도구」를 따른다. 사용자·조직을 자동 생성하지 않는다.
+`app.dev-tools.enabled` 기본 false. 꺼지면 계정 조회·개발 로그인·문구 쓰기는 404이며 공통 문구 읽기는 유지한다. 켜져 있으면 `app.dev-tools.access-key`(`APP_DEV_TOOLS_ACCESS_KEY`, `app-secrets`)와 같은 `X-Dev-Access-Key`가 있어야 계정 조회·개발 로그인이 된다. 키를 설정하지 않으면 켜도 모두 403이다. 로컬 프로필과 배포 ConfigMap(개발·시연 클러스터)은 `require-access-key: false`로 키 없이 쓴다(`docs/infrastructure.md` 4절 「개발 도구」). 사용자·조직을 자동 생성하지 않는다.
 
 Flyway `V20261125_1800__shared_ui_copy.sql`: `ui_copy_override` 테이블. 기존 업무 테이블과 금액 데이터는 변경하지 않는다.

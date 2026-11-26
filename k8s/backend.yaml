@@ -10,10 +10,10 @@ data:
   # 1차 배포: SMTP 없이 인증코드를 로그로 확인한다(Pod 로그에서 인증코드 확인).
   # 로그를 읽을 수 있는 사람(팀·반 계정)이 코드를 볼 수 있으므로, SMTP(SPRING_MAIL_*)를 app-secrets에 넣으면 "false"로 바꾼다.
   APP_AUTH_DEV_LOG_CODE: "true"
-  # /dev 계정 선택 로그인(이메일 인증 없음)·공통 문구 편집. 이 클러스터는 개발·시연 서버라 켜 둔다.
-  # 캠퍼스 IP 제한은 캠퍼스 전체가 함께 쓰는 IP라, 접근 키 APP_DEV_TOOLS_ACCESS_KEY(app-secrets)가 맞아야 계정 목록·로그인이 열린다.
-  # 키가 없으면 켜져 있어도 아무도 못 들어온다. 키 넣기·전달은 docs/infrastructure.md 4절 「개발 도구」.
+  # /dev 계정 선택 로그인(이메일 인증 없음)·공통 문구 편집. 이 클러스터는 개발·시연 서버라 켜 두고 접근 키도 받지 않는다.
+  # 캠퍼스 IP(캠퍼스 공용)에서 /dev에 들어오는 누구나 DB 계정으로 로그인할 수 있다. 실제 사용자가 쓰는 운영으로 바뀌면 끈다.
   APP_DEV_TOOLS_ENABLED: "true"
+  APP_DEV_TOOLS_REQUIRE_ACCESS_KEY: "false"
   # 실제 배포 양식은 .xlsb다. 파일은 PVC /data/templates/에 둔다.
   APP_SUBMISSION_TEMPLATE_FILENAME: 제출양식.xlsb
   SUBMISSION_TEMPLATE_LOCATION: file:/data/templates/submission-template.xlsb
