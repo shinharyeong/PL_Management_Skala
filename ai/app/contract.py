@@ -85,7 +85,8 @@ def analyze_pdf(pdf: bytes, filename: str | None, mask_numbers: bool, settings: 
         name = (PurePath(filename).stem if filename else "") or "PDF 자료 틀"
         # 저장 봉투(schema_version·name·blocks[].id·kind) 모양. 추출이 블록마다 id·kind 를 붙이고, backend 가 저장(RPT-04) 때 다시 검사한다
         definition = {"schema_version": 1, "name": name[:120], "source": "pdf", "blocks": r["blocks"],
-                      "extraction": {"stats": r.get("stats"), "vlm": r.get("vlm")}}
+                      "extraction": {"stats": r.get("stats"), "vlm": r.get("vlm"),
+                                       "pages": [{"no": p["page"], "width": p["width"], "height": p["height"]} for p in r["pages"]]}}      # 쪽 크기(pt): 블록 bbox 는 이 크기 기준이라 화면이 박스를 그림 위에 올릴 때 쓴다(backend 의 pages 응답에는 크기가 없다)
         return {"status": "SUCCEEDED", "definition": definition, "pages": _pages(pdf, r, mask_numbers), "error": None}
     except ValueError as e:
         return {"status": "FAILED", "definition": None, "pages": [], "error": {"code": "PDF_UNREADABLE", "message": str(e)[:500]}}

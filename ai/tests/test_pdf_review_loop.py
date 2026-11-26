@@ -288,3 +288,15 @@ def test_config_default_is_two_rounds_and_zero_turns_it_off(monkeypatch):
     assert get_settings().ai_review_max_rounds == 2
     monkeypatch.setenv("AI_REVIEW_MAX_ROUNDS", "0")
     assert get_settings().ai_review_max_rounds == 0
+
+
+def test_table_cells_given_as_objects_are_read_as_their_text():
+    """모델이 머리 칸을 {"text": ..., "meaning": null} 로 돌려줘도 파이썬 딕셔너리 글자가 칸에 들어가지 않는다."""
+    ls = _lines(_two_zone_pdf())
+    out = _fake_out([{"kind": "table", "lines": [1, 2, 3], "header_rows": 1,
+                      "rows": [[{"text": "구분", "meaning": None}, {"value": "영업이익"}, None], [{"text": "사업부1", "meaning": None}, "{수치}", {"text": None}]]}], [])
+    t = V.build_blocks(out, PAGE, ls, {})[0]["table"]
+    assert [c.get("text") for c in t["rows"][0]] == ["구분", "영업이익", None]
+    assert [c["type"] for c in t["rows"][0]] == ["text", "text", "number"]
+    assert t["rows"][1][0]["text"] == "사업부1" and t["rows"][1][1]["type"] == "number" and t["rows"][1][2]["type"] == "number"
+    assert "{" not in "".join(c.get("text") or "" for r in t["rows"] for c in r)

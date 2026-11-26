@@ -19,6 +19,8 @@ import PMessage from 'primevue/message'
 import PTag from 'primevue/tag'
 import ReportDataTable from '../components/ReportDataTable.vue'
 import ReportChart from '../components/ReportChart.vue'
+import StructureReview from '../components/StructureReview.vue'
+import { pageSizes } from '../lib/structure-review.js'
 
 const store = usePrototypeStore()
 const steps = ['자료 틀 선택', '구성 확인', '데이터 선택', '소명 분류', '완성·편집']
@@ -31,6 +33,8 @@ const results = ref(null), question = ref(''), queryResult = ref(null), metricCo
 const instruction = ref(''), editResult = ref(null), editSource = ref(''), undo = ref(null)
 const addedKind = ref('metric_table'), addedMetric = ref('영업이익')
 const pdfInput = ref(null), controller = new AbortController()
+const structureReview = computed(() => pageImages.value.length > 0 && definition.value?.source === 'pdf')           // PDF 분석 결과(쪽 그림 있음)만 박스 화면, 직접 만든·불러온 틀은 기존 편집기
+const pageSizeMap = computed(() => pageSizes(definition.value))
 const dirty = computed(() => definition.value && JSON.stringify(definition.value) !== savedContent.value)
 const assignable = computed(() => categories.value.filter(item => item.assignable))
 const currentMonth = computed(() => periods.value?.months?.find(item => item.month === base.value.month))
@@ -422,15 +426,18 @@ function blockStyle(block) {
       <template v-else-if="definition">
         <PPanel v-if="step===1" header="자료 구성 확인" class="report-card">
           <label for="report-definition-name">자료 틀 이름<PInputText id="report-definition-name" v-model="definition.name" :disabled="busy || !!saved" maxlength="120" @update:modelValue="invalidate" /></label>
-          <div v-if="pageImages.length" class="report-pages"><figure v-for="page in pageImages" :key="page.no"><img :src="page.url" :alt="`숫자를 가린 원본 ${page.no}쪽`" /><figcaption>원본 {{page.no}}쪽</figcaption></figure></div>
-          <p class="muted">추출된 제목·표·차트를 확인하고, 확인이 필요한 항목의 지표와 기간을 다음 단계에서 지정해 주세요.</p>
-          <PPanel v-for="block in definition.blocks" :key="block.id" :header="`${block.title || block.kind} · ${block.id}`" class="report-block-editor" toggleable>
-            <template #icons><div class="actions"><PButton icon="pi pi-arrow-up" severity="secondary" text :disabled="busy" :aria-label="`${block.id} 위로`" @click="changeBlock(block.id,'up')" /><PButton icon="pi pi-arrow-down" severity="secondary" text :disabled="busy" :aria-label="`${block.id} 아래로`" @click="changeBlock(block.id,'down')" /><PButton label="삭제" icon="pi pi-trash" severity="danger" text :disabled="busy" @click="changeBlock(block.id,'remove')" /></div></template>
-            <PMessage v-if="block.needs_review?.length" severity="warn" :closable="false">원본과 비교해 항목 구성을 확인해 주세요.</PMessage>
-            <label v-if="['title','paragraph','text','footnote'].includes(block.kind)" :for="`report-text-${block.id}`">본문<PTextarea :id="`report-text-${block.id}`" v-model="block.text" rows="3" autoResize :disabled="busy" @update:modelValue="invalidate" /></label>
-            <label v-else :for="`report-title-${block.id}`">제목<PInputText :id="`report-title-${block.id}`" v-model="block.title" :disabled="busy" @update:modelValue="invalidate" /></label>
-            <label v-if="block.needs_review?.length" :for="`report-reviewed-${block.id}`" class="report-check"><PCheckbox :inputId="`report-reviewed-${block.id}`" :modelValue="false" binary :disabled="busy" @update:modelValue="acknowledgeBlock(block)" /><span>이 항목을 확인했습니다</span></label>
-          </PPanel>
+          <StructureReview v-if="structureReview" :blocks="definition.blocks" :pages="pageImages" :sizes="pageSizeMap" :busy="busy" @edited="invalidate" @move="changeBlock($event.id, $event.dir)" @remove="changeBlock($event, 'remove')" @acknowledge="acknowledgeBlock" />
+          <template v-else>
+            <div v-if="pageImages.length" class="report-pages"><figure v-for="page in pageImages" :key="page.no"><img :src="page.url" :alt="`숫자를 가린 원본 ${page.no}쪽`" /><figcaption>원본 {{page.no}}쪽</figcaption></figure></div>
+            <p class="muted">추출된 제목·표·차트를 확인하고, 확인이 필요한 항목의 지표와 기간을 다음 단계에서 지정해 주세요.</p>
+            <PPanel v-for="block in definition.blocks" :key="block.id" :header="`${block.title || block.kind} · ${block.id}`" class="report-block-editor" toggleable>
+              <template #icons><div class="actions"><PButton icon="pi pi-arrow-up" severity="secondary" text :disabled="busy" :aria-label="`${block.id} 위로`" @click="changeBlock(block.id,'up')" /><PButton icon="pi pi-arrow-down" severity="secondary" text :disabled="busy" :aria-label="`${block.id} 아래로`" @click="changeBlock(block.id,'down')" /><PButton label="삭제" icon="pi pi-trash" severity="danger" text :disabled="busy" @click="changeBlock(block.id,'remove')" /></div></template>
+              <PMessage v-if="block.needs_review?.length" severity="warn" :closable="false">원본과 비교해 항목 구성을 확인해 주세요.</PMessage>
+              <label v-if="['title','paragraph','text','footnote'].includes(block.kind)" :for="`report-text-${block.id}`">본문<PTextarea :id="`report-text-${block.id}`" v-model="block.text" rows="3" autoResize :disabled="busy" @update:modelValue="invalidate" /></label>
+              <label v-else :for="`report-title-${block.id}`">제목<PInputText :id="`report-title-${block.id}`" v-model="block.title" :disabled="busy" @update:modelValue="invalidate" /></label>
+              <label v-if="block.needs_review?.length" :for="`report-reviewed-${block.id}`" class="report-check"><PCheckbox :inputId="`report-reviewed-${block.id}`" :modelValue="false" binary :disabled="busy" @update:modelValue="acknowledgeBlock(block)" /><span>이 항목을 확인했습니다</span></label>
+            </PPanel>
+          </template>
           <div class="actions"><label for="report-added-kind">추가할 항목<PSelect inputId="report-added-kind" v-model="addedKind" :options="blockKinds" optionLabel="label" optionValue="value" :disabled="busy" /></label><label v-if="addedKind!=='paragraph'" for="report-added-metric">지표<PSelect inputId="report-added-metric" v-model="addedMetric" :options="metricOptions" :disabled="busy" /></label><PButton label="항목 추가" icon="pi pi-plus" severity="secondary" outlined :disabled="busy" @click="addBlock" /></div>
         </PPanel>
 
