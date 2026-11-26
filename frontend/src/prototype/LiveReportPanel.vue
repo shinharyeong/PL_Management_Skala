@@ -380,7 +380,11 @@ function printReport() {
 function goto(next) {
   if (busy.value || (next > 0 && !definition.value)) return
   step.value = next
-  if (next === 3 && !explanations.value) run(loadExplanations)
+  if (next === 3) {                                  // 비교 기준은 선택한 기준 월 상태에서 자동: 확정 월 = 실적 vs 계획, 잠정 월 = 추정 vs 계획
+    const auto = periods.value?.months?.find(item => item.month === base.value.month)?.state === 'CONFIRMED' ? 'ACTUAL_VS_PLAN' : 'ESTIMATE_VS_PLAN'
+    if (comparison.value !== auto) { comparison.value = auto; explanations.value = null }
+    if (!explanations.value) run(loadExplanations)
+  }
 }
 </script>
 
@@ -438,8 +442,8 @@ function goto(next) {
         <template v-else-if="step === 3">
           <div class="rs-bar"><div class="rs-bar-acts"><button type="button" class="rs-btn ghost" :disabled="busy" @click="goto(2)">← 데이터 선택</button></div>
             <div class="rs-bar-acts"><button type="button" class="rs-btn" :disabled="busy" @click="run(fill)">보고서 생성 →</button></div></div>
-          <ReportClassify :explanations="explanations" :categories="assignable" v-model:comparison="comparison" :busy="busy"
-            @classify="(item, id) => run(() => classify(item, id))" @load="run(loadExplanations)" @update:comparison="explanations = null" />
+          <ReportClassify :explanations="explanations" :categories="assignable" :comparison="comparison" :busy="busy"
+            @classify="(item, id) => run(() => classify(item, id))" @load="run(loadExplanations)" />
         </template>
 
         <ReportStudio v-else :definition="definition" :results="results" :base="base" :busy="busy" :canUndo="!!undo" :editResult="editResult" :saved="saved" :dirty="!!dirty"
