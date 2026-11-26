@@ -495,7 +495,7 @@ def build_blocks(out: dict, page: dict, lines: list | None = None, report: dict 
             if not isinstance(rows, list) or not rows or not all(isinstance(r, list) for r in rows):
                 raise ValueError("표 행 형식 오류")
             n = max(len(r) for r in rows)
-            cells = [[({"type": "number"} if (c is None or (isinstance(c, str) and (X.NUM_CELL.match(c.strip()) or c.strip() == "{수치}"))) else {"type": "text", "text": X.mask(str(c))[0]}) for c in r] for r in rows]
+            cells = [[({"type": "number"} if (c is None or (isinstance(c, str) and (X.NUM_CELL.match(c.strip()) or c.strip() == "{수치}"))) else {"type": "text", "text": X.mask(str(c))[0]}) for c in (X.cell_value(v) for v in r)] for r in rows]
             if any(len(r) != n for r in rows):
                 b["needs_review"].append(X._flag("table_alignment", "행마다 칸 수가 다릅니다"))
             hr = g.get("header_rows") if isinstance(g.get("header_rows"), int) else 1

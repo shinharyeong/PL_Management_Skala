@@ -176,16 +176,19 @@ import contextvars
 UNIT = contextvars.ContextVar("report_unit", default="억원")
 SCOPE_ORG = contextvars.ContextVar("report_scope_org", default=None)
 SCOPE_ORGS = contextvars.ContextVar("report_scope_orgs", default=[])
-UNIT_DIV = {"억원": Decimal(10) ** 8, "백만원": Decimal(10) ** 6}
+UNIT_DIV = {"원": Decimal(1), "천원": Decimal(10) ** 3, "만원": Decimal(10) ** 4, "백만원": Decimal(10) ** 6, "억원": Decimal(10) ** 8, "조원": Decimal(10) ** 12}
+UNIT_DIGITS = {"원": "1", "천원": "1", "만원": "1", "백만원": "0.1", "억원": "0.1", "조원": "0.01"}    # 표시 소수 자리(원·천원·만원은 정수)
 
 
 def eok(won, *, diff: bool = False, plain_sign: bool = True) -> str:
     """원 → 억(소수 1자리, 반올림). diff 면 부호를 붙이고 음수는 △. 블록 단위가 백만원이면 백만원으로 환산(코드 계산)."""
-    v = (Decimal(won) / UNIT_DIV.get(UNIT.get(), UNIT_DIV["억원"])).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    unit = UNIT.get() if UNIT.get() in UNIT_DIV else "억원"
+    digits = Decimal(UNIT_DIGITS[unit])
+    v = (Decimal(won) / UNIT_DIV[unit]).quantize(digits, rounding=ROUND_HALF_UP)
     if not diff:
         return f"{v:,}"
     if v == 0:
-        return "0.0"
+        return f"{abs(v):,}"
     return (f"+{v:,}" if v > 0 else f"△{abs(v):,}")
 
 
