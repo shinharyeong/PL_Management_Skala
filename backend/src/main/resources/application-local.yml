@@ -3,5 +3,9 @@ spring:
   flyway:
     locations: classpath:db/migration,classpath:db/local
 app:
+  dev-tools:
+    enabled: true
   auth:
     dev-log-code: true
+
+# Local /dev uses the same opt-in account-selector API as the test deployment.

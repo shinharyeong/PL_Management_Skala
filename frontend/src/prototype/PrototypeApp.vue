@@ -1,5 +1,6 @@
 <script setup>
 import copy from './copy-text.js'
+import {isDevelopmentEntry} from '../lib/development-entry.js'
 import PButton from 'primevue/button'
 import PInputText from 'primevue/inputtext'
 import PDialog from 'primevue/dialog'
@@ -20,7 +21,7 @@ import { pageTitles } from './router.js'
 import NavIcon from './NavIcon.vue'
 import FeedbackToast from './FeedbackToast.vue'
 
-const CopyEditor = import.meta.env.DEV ? defineAsyncComponent(() => import('./CopyEditor.vue')) : null
+const CopyEditor = defineAsyncComponent(() => import('./CopyEditor.vue'))
 const store = usePrototypeStore()
 const route = useRoute(), router = useRouter()
 watch(()=>store.error,value=>{if(value&&store.toast?.message!==value)store.notify(value,'error')})
@@ -32,37 +33,22 @@ const sentAt = ref(null), now = ref(Date.now())
 const authResponse = ref(null)
 const challenge = computed(() => ({remaining: Math.max(0,Math.ceil((Date.parse(authResponse.value?.expiresAt)-now.value)/1000))||0, resendIn:Math.max(0,Math.ceil((Date.parse(authResponse.value?.resendAvailableAt)-now.value)/1000))||0, expired:authResponse.value && now.value >= Date.parse(authResponse.value.expiresAt)}))
 const authNotice = ref('')
-const localDevelopment = import.meta.env.DEV && ['localhost','127.0.0.1','[::1]'].includes(window.location.hostname)
-const localAccounts = import.meta.env.DEV ? [{email:'kim.plan@sk.com',name:'경영기획팀',hint:'김기획 매니저'}, ...['F10','F12','F20','F40','F39','F50','F16','F13','F25','F43','F42','F44','F73','F38','F66','F36','F37'].map((code,index)=>({email:code.toLowerCase()+'.test@sk.com',name:`사업부${index+1}`,hint:code+' · 조직 담당자'}))] : []
+const developmentEntry = isDevelopmentEntry(window.location.pathname)
+const localAccounts=ref([]), devAccountsError=ref('')
+onMounted(async()=>{
+  if(!developmentEntry) return
+  try { localAccounts.value=await store.api('/api/v1/dev/accounts'); if(!localAccounts.value.length) devAccountsError.value='등록된 개발 계정이 없습니다. 서버의 계정 및 허용 이메일 목록을 확인해 주세요.' }
+  catch(e) { devAccountsError.value='개발용 계정 목록을 불러오지 못했습니다. 서버의 개발 도구 활성화 설정을 확인해 주세요.' }
+})
 /** 로컬 인증 서버에서 선택 계정의 세션을 발급한다.
  * Args: account 로컬 계정. Returns: Promise<void>.
  * Raises: 서버 오류는 store.run이 표시한다. Side Effects: 인증 요청과 화면 이동.
  */
 async function localSignIn(account) {
-  if (!localDevelopment || store.busy) return
-  const ok = await store.run(async()=>{
-    const issued = await store.requestCode(account.email)
-    const response = await fetch('/__local/auth-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(issued),cache:'no-store'})
-    if (!response.ok) throw new Error('로컬 간편 접속을 사용할 수 없습니다. 로컬 인증코드 연결 설정을 확인해 주세요.')
-    const {code:issuedCode} = await response.json()
-    await store.login(account.email,issuedCode)
-  })
-  if (ok) navigate(store.actor.role==='planner'?'home':'org-requests')
+  if(!developmentEntry || store.busy) return
+  if(await store.run(()=>store.developmentLogin(account.email))) navigate(store.actor.role==='planner'?'home':'org-requests')
 }
-const localAuthCode = ref(''), localCodeNotice = ref('')
-/** 개발 환경에서 발급한 인증코드를 조회한다.
- * Args: response 발급 응답. Returns: Promise<void>.
- * Raises: 없음; 실패 안내로 변환한다. Side Effects: 로컬 HTTP 조회와 안내 상태 변경.
- */
-async function loadLocalCode(response) {
-  if (!localDevelopment) return
-  try {
-    const result = await fetch('/__local/auth-code', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email:response.email, expiresAt:response.expiresAt}), cache:'no-store'})
-    if (!result.ok) throw new Error()
-    const data = await result.json()
-    if (authResponse.value === response && /^\d{6}$/.test(data.code)) localAuthCode.value = data.code
-  } catch { localCodeNotice.value = '인증코드를 표시하지 못했습니다. 로컬 서버 설정을 확인해 주세요.' }
-}
+
 let timer
 onMounted(() => { timer = window.setInterval(() => { now.value = Date.now() }, 1000) })
 onUnmounted(() => window.clearInterval(timer))
@@ -122,8 +108,8 @@ watch(page, async value => {
  */
 async function requestCode() {
   if(store.busy)return
-  store.busy=true; authError.value=''; localAuthCode.value=''; localCodeNotice.value=''
-  try {authResponse.value=await store.requestCode(email.value.trim());now.value=Date.now();code.value='';authStep.value='code';await loadLocalCode(authResponse.value);authNotice.value='등록된 이메일로 발송한 인증코드를 입력해 주세요.';await nextTick();document.querySelector('#auth-code')?.focus()}
+  store.busy=true; authError.value=''
+  try {authResponse.value=await store.requestCode(email.value.trim());now.value=Date.now();code.value='';authStep.value='code';authNotice.value='등록된 이메일로 발송한 인증코드를 입력해 주세요.';await nextTick();document.querySelector('#auth-code')?.focus()}
   catch(e){authError.value=e.message}finally{store.busy=false}
 }
 /** 재전송 대기 시간이 끝나면 새 코드를 요청한다.
@@ -135,7 +121,7 @@ async function resendCode(){if(!challenge.value.resendIn)await requestCode()}
  * Args: 없음. Returns: 없음.
  * Raises: 없음. Side Effects: 인증 화면 메모리 상태 변경.
  */
-function changeEmail(){authStep.value='email';code.value='';authResponse.value=null;localAuthCode.value='';localCodeNotice.value='';authError.value='';authNotice.value=''}
+function changeEmail(){authStep.value='email';code.value='';authResponse.value=null;authError.value='';authNotice.value=''}
 /** 이메일과 인증코드로 로그인한다.
  * Args: 없음. Returns: Promise<void>.
  * Raises: 없음; store.run이 표시한다. Side Effects: 서버 세션 요청과 권한별 화면 이동.
@@ -157,13 +143,14 @@ watch(page,async value=>{
 </script>
 
 <template>
-  <CopyEditor v-if="localDevelopment" />
+  <CopyEditor v-if="developmentEntry" />
+  <div v-if="developmentEntry" class="dev-entry-notice">개발용 화면 · 계정 선택 로그인 · 공통 문구 편집 <a href="/">일반 화면</a></div>
   <FeedbackToast />
   <div class="prototype-banner"><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span> <span><span data-copy-key="shellText.text002">{{ copy.shellText.text002 }}</span></span></div>
   <div v-if="page === 'login'" class="auth-page">
     <a class="brand auth-brand" href="#/login"><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span></a>
     <main class="auth-main">
-      <section v-if="localDevelopment" class="auth-form local-account-form"><h1><span data-copy-key="shellText.text003">{{ copy.shellText.text003 }}</span></h1><p class="muted"><span data-copy-key="shellText.text004">{{ copy.shellText.text004 }}</span></p><div class="local-account-list"><button v-for="account in localAccounts" :key="account.email" class="local-account-button" :disabled="store.busy" @click="localSignIn(account)"><strong>{{account.name}}</strong><span>{{account.hint}}</span></button></div><p v-if="store.busy" class="muted" role="status"><span data-copy-key="shellText.text005">{{ copy.shellText.text005 }}</span></p><p v-if="store.error" class="error" role="alert">{{store.error}}</p></section>
+      <section v-if="developmentEntry && authStep === 'email'" class="auth-form local-account-form"><h1><span data-copy-key="shellText.text003">{{ copy.shellText.text003 }}</span></h1><p class="muted"><span data-copy-key="shellText.text004">{{ copy.shellText.text004 }}</span></p><p class="muted">등록된 개발 계정을 선택하면 이메일 인증 없이 로그인합니다.</p><p v-if="devAccountsError" class="error" role="alert">{{devAccountsError}}</p><p v-if="authError" class="error" role="alert">{{authError}}</p><div class="local-account-list"><button v-for="account in localAccounts" :key="account.email" class="local-account-button" :disabled="store.busy" @click="localSignIn(account)"><strong>{{account.name}}</strong><span>{{account.hint}}</span></button></div><p v-if="store.busy" class="muted" role="status"><span data-copy-key="shellText.text005">{{ copy.shellText.text005 }}</span></p><p v-if="store.error" class="error" role="alert">{{store.error}}</p></section>
       <form v-else class="auth-form" @submit.prevent="authStep === 'email' ? requestCode() : signIn()">
         <h1>{{ authStep === 'email' ? '로그인' : '인증코드 입력' }}</h1>
         <p class="muted auth-description">{{ authStep === 'email' ? '회사 이메일로 인증 메일을 받아\n로그인해 주세요.' : `${email}\n인증코드 6자리를 입력해 주세요.` }}</p>
@@ -182,7 +169,7 @@ watch(page,async value=>{
         <p v-if="authError" id="auth-error" class="error" role="alert">{{ authError }}</p>
         <p v-if="authNotice && authStep === 'code'" class="muted" role="status">{{ authNotice }}</p>
         <button class="btn primary auth-cta" type="submit" :disabled="store.busy || (authStep === 'code' && challenge.expired)">{{ authStep === 'email' ? '인증 메일 받기' : '로그인' }}</button>
-        <p class="muted"><span data-copy-key="login.loginHelp">{{ copy.login.loginHelp }}</span></p><aside v-if="localDevelopment" class="auth-demo"><strong><span data-copy-key="shellText.text009">{{ copy.shellText.text009 }}</span></strong><p v-if="authStep === 'email'"><span data-copy-key="shellText.text010">{{ copy.shellText.text010 }}</span></p><p v-else-if="challenge.expired" role="status"><span data-copy-key="shellText.text011">{{ copy.shellText.text011 }}</span></p><p v-else-if="localAuthCode" role="status"><span data-copy-key="shellText.text012">{{ copy.shellText.text012 }}</span> <strong class="local-auth-code">{{ localAuthCode }}</strong></p><p v-else role="status">{{ localCodeNotice || '인증코드를 확인하는 중입니다.' }}</p><p><span data-copy-key="shellText.text013">{{ copy.shellText.text013 }}</span> <code>kim.plan@sk.com</code></p><p><span data-copy-key="shellText.text014">{{ copy.shellText.text014 }}</span> <code>f66.test@sk.com</code></p></aside>
+        <p class="muted"><span data-copy-key="login.loginHelp">{{ copy.login.loginHelp }}</span></p>
 
       </form>
     </main>
@@ -219,3 +206,7 @@ watch(page,async value=>{
   </div>
   <dialog ref="logoutDialog" class="confirm-dialog" aria-labelledby="logout-title"><h2 id="logout-title"><span data-copy-key="login.logoutTitle">{{ copy.login.logoutTitle }}</span></h2><p class="muted"><span data-copy-key="login.logoutHelp">{{ copy.login.logoutHelp }}</span></p><div class="actions"><button class="btn" @click="logoutDialog.close()"><span data-copy-key="login.cancel">{{ copy.login.cancel }}</span></button><button class="btn primary" @click="logout"><span data-copy-key="login.logout">{{ copy.login.logout }}</span></button></div></dialog>
 </template>
+
+<style>
+.dev-entry-notice{padding:8px 20px;background:#fff2d4;color:#734b0a;font:13px/1.6 system-ui;display:flex;gap:16px;flex-wrap:wrap;align-items:center}.dev-entry-notice a{color:inherit;text-decoration:underline}
+</style>
