@@ -30,7 +30,7 @@ test('calculation does not create a workspace, even when the server returns prev
   assert.deepEqual(store.workspaces, [])
 })
 
-test('cell comparison requires a workspace item chosen from the review page', async () => {
+test('cell opens on the first selected item when none is active', async () => {
   const store = usePrototypeStore(createPinia())
   store.actor = { role: 'planner' }
   store.activeOrg = 'F10'
@@ -40,8 +40,6 @@ test('cell comparison requires a workspace item chosen from the review page', as
   assert.equal(router.currentRoute.value.name, 'monthly')
   store.carts.F10 = [{ id: 'one' }]
   await router.push('/cell')
-  assert.equal(router.currentRoute.value.name, 'workspace')
-  store.monthlySession('F10').activeCell = 'one'
-  await router.push('/cell')
   assert.equal(router.currentRoute.value.name, 'cell')
+  assert.equal(store.monthlySession('F10').activeCell, 'one')
 })

@@ -98,7 +98,7 @@ function menuSelected(id) { return id === 'monthly' ? monthlyPages.includes(page
  * Raises: 라우터 오류. Side Effects: 브라우저 경로 변경.
  */
 function navigate(id) { router.push({ name: id }) }
-async function openWorkspace(org){store.activeOrg=org;if(await store.run(()=>store.loadGap(org,store.monthlySession(org).applied?.type)))navigate('workspace')}
+async function openWorkspace(org){store.activeOrg=org;if(await store.run(()=>store.loadGap(org,store.monthlySession(org).applied?.type)))navigate('cell')}
 /** 건너뛰기 링크의 본문에 초점을 둔다.
  * Args: 없음. Returns: 없음.
  * Raises: 없음. Side Effects: DOM 초점 변경.
