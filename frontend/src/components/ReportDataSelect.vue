@@ -66,7 +66,7 @@ const note = computed(() => {
               <input :id="`rs-off-${block.id}`" type="number" min="-24" max="24" step="1" :value="block.period.offset" :disabled="busy" @change="emit('offset', block, $event.target.value === '' ? 0 : Number($event.target.value))" />
             </template>
             <label :for="`rs-unit-${block.id}`">금액 단위</label>
-            <select :id="`rs-unit-${block.id}`" v-model="block.unit" :disabled="busy" @change="emit('edited')"><option v-for="u in UNITS" :key="u" :value="u">{{ u }}</option></select>
+            <select :id="`rs-unit-${block.id}`" :value="block.unit || '억원'" @change="block.unit = $event.target.value; emit('edited')"><option v-for="u in UNITS" :key="u" :value="u">{{ u }}</option></select>
           </div>
         </template>
         <div v-if="!dataBlocks.length" class="rs-tr" style="grid-template-columns:1fr"><span class="rs-cap">숫자를 채울 블록이 없습니다. 이전 단계에서 표·차트·숫자 카드를 확인해 주세요.</span></div>
