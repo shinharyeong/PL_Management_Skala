@@ -1,22 +1,25 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import copy from './copy-text.js'
+import initial from './ui-copy.json' with {type:'json'}
+import {createSharedCopyClient} from '../lib/copy-overrides.js'
+import {useSession} from '../stores/session.js'
+import {refreshSharedCopy} from './copy-text.js'
+import {saveBlob} from '../lib/display.js'
+const session=useSession()
+const sharedCopy=createSharedCopyClient(initial,(path,options)=>session.request(path,options))
+async function downloadCopy(){try {saveBlob(new Blob([JSON.stringify(await sharedCopy.read(),null,2)+'\n'],{type:'application/json'}),'ui-copy.json')}catch(e){notice.value=e.message}}
 
 const enabled = ref(true), dialog = ref(null), input = ref(null)
 const key = ref(''), original = ref(''), draft = ref(''), busy = ref(false), error = ref(''), notice = ref(''), last = ref(null)
 let trigger
-const messages = {
-  STALE_COPY: '다른 곳에서 문구가 변경됐습니다. 취소한 뒤 다시 우클릭해 최신 문구를 확인해 주세요.',
-  INVALID_TEXT: '빈 문구는 저장할 수 없습니다. 10,000자 이내로 입력해 주세요.',
-  LOCAL_ONLY: '로컬 개발 화면에서만 저장할 수 있습니다.',
-}
 async function request(body) {
-  const response = await fetch('/__local/ui-copy', { method: body ? 'POST' : 'GET', cache: 'no-store',
-    headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined })
-  const result = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(messages[result.error] || '문구를 저장하지 못했습니다. 개발 서버 연결을 확인해 주세요.')
+  if(body && !session.actor) throw new Error('개발 계정을 선택해 로그인한 뒤 문구를 저장해 주세요.')
+  const result=body ? await sharedCopy.change(body) : await sharedCopy.read()
+  if(body) await refreshSharedCopy().catch(()=>{})
   return result
 }
+
 function apply(path, value) {
   const [group, field] = path.split('.')
   if (copy[group]) copy[group][field] = value
@@ -52,7 +55,7 @@ async function save() {
   const change = { key: key.value, expected: original.value, value: draft.value }
   try {
     await request(change); apply(change.key, change.value)
-    last.value = change; notice.value = '원본 문구 파일에 저장했습니다.'
+    last.value = change; notice.value = '공통 문구를 저장했습니다. 모든 사용자 화면에 적용됩니다.'
     dialog.value.close()
   } catch (e) { error.value = e.message } finally { busy.value = false }
 }
@@ -72,7 +75,7 @@ onBeforeUnmount(() => { document.removeEventListener('contextmenu', open, true);
 <template>
   <Teleport to="body">
     <aside class="copy-editor-bar" aria-label="개발용 문구 편집">
-      <div><button type="button" :aria-pressed="enabled" @click="toggle">문구 우클릭 편집 · {{ enabled ? '켜짐' : '꺼짐' }}</button><button v-if="last" type="button" :disabled="busy" @click="undo">직전 수정 되돌리기</button></div>
+      <div><button type="button" @click="downloadCopy">문구 JSON 내려받기</button><button type="button" :aria-pressed="enabled" @click="toggle">문구 우클릭 편집 · {{ enabled ? '켜짐' : '꺼짐' }}</button><button v-if="last" type="button" :disabled="busy" @click="undo">직전 수정 되돌리기</button></div>
       <p role="status">{{ notice || '제목·버튼·안내문을 우클릭하세요. 숫자와 업무 데이터는 편집되지 않습니다.' }}</p>
     </aside>
     <dialog ref="dialog" class="copy-editor-dialog" aria-labelledby="copy-editor-title" @cancel.prevent="close">
@@ -83,7 +86,7 @@ onBeforeUnmount(() => { document.removeEventListener('contextmenu', open, true);
         <label for="screen-copy-text">화면에 표시할 문구</label>
         <textarea id="screen-copy-text" ref="input" v-model="draft" rows="4" maxlength="10000" :disabled="busy" @keydown.ctrl.enter.prevent="save" @keydown.meta.enter.prevent="save"></textarea>
         <p class="copy-editor-error" role="alert">{{ error }}</p>
-        <p class="copy-editor-caption">저장하면 ui-copy.json에 반영되어 새로고침해도 유지됩니다.</p>
+        <p class="copy-editor-caption">저장하면 서버 DB에 보관되어 일반 화면을 포함한 모든 사용자 화면에 적용됩니다. 열려 있는 화면은 약 5초 안에 갱신됩니다.</p>
         <div class="copy-editor-actions"><button type="button" :disabled="busy" @click="close"><span data-copy-key="login.cancel">{{ copy.login.cancel }}</span></button><button type="submit" class="copy-editor-save" :disabled="busy || !draft.trim() || draft===original">{{ busy ? '저장 중…' : '저장' }}</button></div>
       </form>
     </dialog>

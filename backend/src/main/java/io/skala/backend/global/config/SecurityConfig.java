@@ -33,6 +33,8 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/codes", "/api/v1/auth/sessions").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/dev/accounts", "/api/v1/ui-copy").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/dev/sessions").permitAll()
                         // 쿠버네티스 프로브가 health/readiness·liveness를 인증 없이 부른다.
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/error").permitAll()
                         // Prometheus 수집. 운영은 관리 포트(8081)에서만 열리고 Ingress·frontend 프록시는 8080만 넘긴다.
