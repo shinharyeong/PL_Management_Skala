@@ -205,6 +205,11 @@ DecisionAgentService`로 연결된다. 수치는 Spring에서만 계산하고, �
 Flyway `V20261126_0900__decision_agent_analysis.sql`은 분석 테이블과 불변 기준 trigger를
 추가한다. 스키마가 배포되기 전에는 새 API를 사용할 수 없다.
 
+| 통합 테스트 정의 (`backend/src/test/java/io/skala/backend/domain/decisionagent/`) | 입력·출력·호출 관계와 부작용 |
+| --- | --- |
+| `DecisionAgentIntegrationTest.setUp` | 요청·대상 조직 등록 → 승인 제출본·master_source → 서로 다른 원천 행의 12개월 기준 생성. `TEST_DB_URL`이 설정된 테스트 DB와 메모리 세션만 변경하며 파일은 만들지 않음 |
+| `DecisionAgentIntegrationTest.values` | 계정·월별 원 금액·중복 없는 양수 원천 행 번호 → 재무 행 ID. 같은 제출본·시트의 원천 행 유일성을 지키며 테스트 DB에 12개월 실적·추정 생성; 중복 행이나 DB 오류는 실패로 전파 |
+
 | AI 정의 (`ai/app/`) | 입력·출력·호출 관계와 부작용 |
 | --- | --- |
 | `api/contract.read_decision_request` | 인증된 Request stream → 엄격한 DecisionComposeRequest. 실제 본문 256KiB 초과 413, 계약 오류 422. 메모리 읽기 |

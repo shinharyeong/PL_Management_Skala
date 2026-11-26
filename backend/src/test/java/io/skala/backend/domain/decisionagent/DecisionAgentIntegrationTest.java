@@ -50,7 +50,7 @@ class DecisionAgentIntegrationTest extends PostgresIntegrationTest {
     private String otherPlanner;
     private String manager;
 
-    /** 목적: 파일을 만들지 않고 DB에 완전한 12개월 기준을 준비한다. Args: 없음. Returns: 없음. Raises: DB 오류. Side Effects: 테스트 DB 레코드·세션 생성. */
+    /** 목적: 요청 대상 조직과 서로 다른 원천 행을 등록해 완전한 12개월 기준을 준비한다. Args: 없음. Returns: 없음. Raises: DB 오류. Side Effects: 테스트 DB 레코드·세션 생성, 파일 생성 없음. */
     @BeforeEach
     void setUp() {
         String unique = UUID.randomUUID().toString();
@@ -69,6 +69,7 @@ class DecisionAgentIntegrationTest extends PostgresIntegrationTest {
                 INSERT INTO submission_request(annual_plan_id,type,month,status,requested_by,requested_at,period_key)
                 VALUES (?,'MONTHLY_ACTUAL',11,'OPEN',?,now(),?) RETURNING id
                 """, Long.class, plan, plannerId, year + "-DA-11");
+        jdbc.update("INSERT INTO request_target(request_id,organization_id,selected) VALUES (?,?,true)", request, organizationId);
         String objectKey = "decision-test-" + unique;
         jdbc.update("INSERT INTO stored_object(object_key,content_type,size_bytes,sha256) VALUES (?,'application/octet-stream',1,?)", objectKey, "a".repeat(64));
         submissionId = jdbc.queryForObject("""
@@ -82,8 +83,8 @@ class DecisionAgentIntegrationTest extends PostgresIntegrationTest {
                 """, Long.class, request, submissionId, "b".repeat(64), plannerId);
         jdbc.update("INSERT INTO master_source(master_id,organization_id,submission_id) VALUES (?,?,?)", masterId, organizationId, submissionId);
         revenueItem = item("REVENUE");
-        values(revenueItem, "100");
-        costLine = values(item("COST"), "20");
+        values(revenueItem, "100", 1);
+        costLine = values(item("COST"), "20", 2);
         when(ai.post(eq("/v1/decision-agent/compose"), any(), anyLong())).thenThrow(new BusinessException(ErrorCode.PROCESSING_UNAVAILABLE));
     }
 
@@ -142,7 +143,7 @@ class DecisionAgentIntegrationTest extends PostgresIntegrationTest {
     /** 목적: 종류별 월은 완전해도 추가 원천 행 하나의 누락을 차단한다. Args: 없음. Returns: 없음. Raises: 검증/HTTP 오류. Side Effects: 테스트 원천 추가/삭제. */
     @Test
     void rejectsOneIncompleteFinancialLineEvenWhenKindCoverageIsComplete() throws Exception {
-        long extra = values(revenueItem, "1");
+        long extra = values(revenueItem, "1", 3);
         jdbc.update("DELETE FROM financial_value WHERE line_id=? AND month=12", extra);
         create(planner, key()).andExpect(status().isBadRequest());
     }
@@ -170,9 +171,9 @@ class DecisionAgentIntegrationTest extends PostgresIntegrationTest {
         return jdbc.queryForObject("INSERT INTO report_item(code,name,kind,is_leaf) VALUES (?,'테스트 계정',?,true) RETURNING id", Long.class, "DA" + UUID.randomUUID(), kind);
     }
 
-    /** 목적: 한 원천 행의 12개월 실적/추정을 만든다. Args: item 계정, amount 월별 원 금액. Returns: 행 ID. Raises: DB 오류. Side Effects: 테스트 DB 생성. */
-    private long values(long item, String amount) {
-        long line = jdbc.queryForObject("INSERT INTO financial_line(submission_id,report_item_id,source_sheet,source_row) VALUES (?,?,'손익',1) RETURNING id", Long.class, submissionId, item);
+    /** 목적: 제출본 안에서 구분되는 원천 행에 12개월 실적/추정을 만든다. Args: item 계정, amount 월별 원 금액, sourceRow 손익 시트의 중복 없는 양수 행 번호. Returns: 행 ID. Raises: DB 오류와 중복 원천 행 제약 위반. Side Effects: 테스트 DB 생성. */
+    private long values(long item, String amount, int sourceRow) {
+        long line = jdbc.queryForObject("INSERT INTO financial_line(submission_id,report_item_id,source_sheet,source_row) VALUES (?,?,'손익',?) RETURNING id", Long.class, submissionId, item, sourceRow);
         for (int month = 1; month <= 12; month++) {
             jdbc.update("INSERT INTO financial_value(line_id,year,month,scenario,amount,source_record_id,source_cell) VALUES (?,?,?,?,?::numeric,?,'A1')",
                     line, year, month, month <= 11 ? "ACTUAL" : "ESTIMATE", amount, UUID.randomUUID().toString());
