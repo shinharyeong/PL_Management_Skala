@@ -45,7 +45,7 @@ export function seoulDeadline(value) {
 export function createMonthlySession() {
   return {
     draft: { baseVersion: 'v1.02', compareVersion: '', type: comparisonTypes[0], rateEnabled: true, amountEnabled: true, rate: 5, minimum: 10000000 },
-    minimumUnit: 'THOUSAND', applied: null, selection: [], stage: '전체', search: '', sort: '차액 내림차순', unit: 'THOUSAND',
+    minimumUnit: 'THOUSAND', applied: null, selection: [], stage: '검토 필요', search: '', sort: '차액 내림차순', unit: 'THOUSAND',
     activeCell: '', detailSource: 'cart', columnWidths: null,
   }
 }

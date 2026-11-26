@@ -38,6 +38,7 @@ async function load(more=false){
  }catch(e){if(g===generation){error.value=e.message;store.notify(e.message,'error')}}finally{if(g===generation)loading.value=false}
 }
 watch([type,unreadOnly],()=>load(),{immediate:true})
+async function readAll(){if(await store.run(()=>store.api('/api/v1/notifications/read',{method:'POST',body:{all:true}})))await load()}
 async function openNotification(item){
  await store.run(async()=>{
   await store.api('/api/v1/notifications/read',{method:'POST',body:{ids:[item.id]}})
@@ -52,8 +53,13 @@ async function openNotification(item){
 }
 </script>
 <template>
- <header class="mg-heading"><div><p class="mg-breadcrumb"><span data-copy-key="notificationText.text001">{{ copy.notificationText.text001 }}</span> <span data-copy-key="pages.notifications">{{copy.pages.notifications}}</span></p><h1><span data-copy-key="pages.notifications">{{copy.pages.notifications}}</span></h1></div></header>
+ <header class="mg-heading"><div><p class="mg-breadcrumb"><span data-copy-key="notificationText.text001">{{ copy.notificationText.text001 }}</span> <span data-copy-key="pages.notifications">{{copy.pages.notifications}}</span></p><h1><span data-copy-key="pages.notifications">{{copy.pages.notifications}}</span></h1></div><button class="btn" :disabled="store.busy||!page?.summary.unreadCount" @click="readAll">모두 읽음 처리</button></header>
  <p class="mg-description"><span data-copy-key="notificationText.text002">{{ copy.notificationText.text002 }}</span></p>
+ <div class="mg-kpis" role="group" aria-label="알림 요약">
+  <div class="card mg-kpi"><small>안 읽은 알림</small><strong class="mg-kpi-red">{{page?.summary.unreadCount??'—'}}<span>건</span></strong></div>
+  <div class="card mg-kpi"><small>회신 검토 대기</small><strong class="mg-kpi-amber">{{page?.summary.replyPendingCount??'—'}}<span>건</span></strong></div>
+  <div class="card mg-kpi"><small>기한 경과 조직</small><strong class="mg-kpi-red">{{page?.summary.overdueOrganizationCount??'—'}}<span>곳</span></strong></div>
+ </div>
  <div class="mg-filter-row">
   <div class="mg-tabs" role="group" aria-label="알림 유형"><button v-for="(label,key) in types" :key="key" class="btn" :class="[type===key?'primary':'','mg-type-'+tones[key]]" :aria-pressed="type===key" @click="type=key">{{label}} {{page?.typeCounts[key]??'—'}}</button></div>
   <label class="mg-checkbox"><input v-model="unreadOnly" type="checkbox"><span data-copy-key="notificationText.text003">{{ copy.notificationText.text003 }}</span></label>
