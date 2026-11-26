@@ -72,8 +72,6 @@
 }
 
 .monthly-panel .monthly-submission-state { display:block; margin-top:8px; font-size:12px; white-space:nowrap; color:#526176; }
-.monthly-panel .monthly-submission-review { display:flex; flex-direction:column; gap:16px; border-top:1px solid #dce4ef; margin-top:8px; padding-top:20px; white-space:normal; }
-.monthly-panel .monthly-submission-review textarea { width:100%; }
 
 .monthly-panel .badge.not-requested{background:#f1f3f5;color:#576170;border:1px solid #d7dce2}
 

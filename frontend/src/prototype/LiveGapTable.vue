@@ -9,8 +9,8 @@ import { formatMoney } from '../lib/decimal-display.js'
 import { statuses, statusTones } from './domain.js'
 import './monthly-live.css'
 
-const props = defineProps({ rows: Array, selected: Array, unit: String, type: String, editable: Boolean, groupedStatuses: Boolean })
-const emit = defineEmits(['select', 'all'])
+const props = defineProps({ rows: Array, selected: Array, unit: String, type: String, editable: Boolean, groupedStatuses: Boolean, openableIds: { type: Array, default: () => [] } })
+const emit = defineEmits(['select', 'all', 'detail'])
 const collapsedMajors = ref(new Set())
 function toggleMajor(name){const next=new Set(collapsedMajors.value);next.has(name)?next.delete(name):next.add(name);collapsedMajors.value=next}
 const columnWidths = defineModel('columnWidths', { default: null })
@@ -87,7 +87,7 @@ const groupedRows = computed(() => hierarchyTableRows(props.rows,collapsedMajors
           <template v-else>
             <td v-for="rail in row.rails" :key="rail.level" :rowspan="rail.span" class="hierarchy-rail" :class="['major-rail','middle-rail','minor-rail'][rail.level]" aria-hidden="true"></td>
             <th v-if="row.level < 3" :colspan="4 - row.level" scope="row"><button v-if="row.level===0" type="button" class="major-collapse-button" :aria-expanded="!row.collapsed" :aria-label="row.name+(row.collapsed?' 하위 항목 펼치기':' 하위 항목 접기')" @click="toggleMajor(row.name)"><span class="major-collapse-icon" aria-hidden="true">{{row.collapsed?'▸':'▾'}}</span>대 · {{row.name}}</button><template v-else>{{ ['대','중','소'][row.level] }} · {{ row.name }}</template></th>
-            <td v-else class="hierarchy-detail"><label class="live-hierarchy-item" :class="{'is-selectable':selectable(row)}"><input type="checkbox" :aria-label="row.name + ' 선택'" :checked="selected.includes(row.id)" :disabled="!selectable(row)" @change="emit('select',row.id)" /><span>{{ row.name }}</span></label></td>
+            <td v-else class="hierarchy-detail"><label class="live-hierarchy-item" :class="{'is-selectable':selectable(row)}"><input type="checkbox" :aria-label="row.name + ' 선택'" :checked="selected.includes(row.id)" :disabled="!selectable(row)" :title="row.status === '재검토 필요' ? '조직이 회신한 항목입니다. 항목 이름을 눌러 회신을 확인하고 수락하거나 보완을 요청하세요.' : undefined" @change="emit('select',row.id)" /><button v-if="openableIds.includes(row.id)" type="button" class="cell-link" title="항목을 열어 비교·소명 회신을 확인합니다" @click.prevent.stop="emit('detail',row)">{{ row.name }}</button><span v-else>{{ row.name }}</span></label></td>
             <td class="number" :title="money(row.base)">{{ money(row.base) }}</td><td class="number" :title="money(row.current)">{{ money(row.current) }}</td><td class="number" :title="delta(row)" :class="compare(row.current,row.base) < 0 ? 'negative' : 'positive'">{{ delta(row) }}</td><td class="number" :title="rate(row)">{{ rate(row) }}</td><td><span v-if="row.status" class="badge" :class="tone(row.status)" :title="groupedStatuses ? row.status : undefined">{{ groupedStatuses ? calculatorStage(row.status) : row.status }}</span></td>
           </template>
         </tr>
