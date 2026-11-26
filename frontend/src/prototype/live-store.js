@@ -68,7 +68,7 @@ export const usePrototypeStore = defineStore('connected-frontend', {
       if(ids.length)await this.api('/api/v1/notifications/read',{method:'POST',body:{ids}})
       await this.refreshBadge()
     },
-    async decideSubmission(s,decision,comment,rejectedReviewItemIds=[]){await this.api(`/api/v1/submissions/${s.id}/decisions`,{method:'POST',body:{decision,comment:comment||null,rejectedReviewItemIds,expectedStateToken:s.stateToken}});try{await this.markSubmissionNotificationsRead(s.id)}catch{this.notify('제출본 처리는 완료됐지만 알림 읽음 갱신에 실패했습니다. 알림 화면에서 다시 확인해 주세요.','error')}},
+    async decideSubmission(s,decision,comment,rejectedReviewItemIds=[]){const result=await this.api(`/api/v1/submissions/${s.id}/decisions`,{method:'POST',body:{decision,comment:comment||null,rejectedReviewItemIds,expectedStateToken:s.stateToken}});try{await this.markSubmissionNotificationsRead(s.id)}catch{this.notify('제출본 처리는 완료됐지만 알림 읽음 갱신에 실패했습니다. 알림 화면에서 다시 확인해 주세요.','error')};return result},
     async loadInbox(){const r=await this.api('/api/v1/inbox');this.orgRequests=r.items.map((i,index)=>({...i,id:i.kind+':'+i.requestId+':'+(i.submissionId||index),org:r.organization.id,type:i.kind==='EXPLANATION'?'explanation':'monthly',due:i.dueAt,status:'회신 대기'}));this.orgHistory=await this.pages('/api/v1/submissions');this.orgRequests=this.orgRequests.map(item=>{const previous=this.orgHistory.find(s=>s.id===item.submissionId);return {...item,isResubmit:item.kind==='SUBMISSION'&&previous?.status==='REJECTED',reviewComment:previous?.reviewComment||''}})},
     activateOrgRequest(id){this.activeRequest=id;return !!this.activeOrgRequest},
   }

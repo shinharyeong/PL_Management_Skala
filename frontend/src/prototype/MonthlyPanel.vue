@@ -10,6 +10,7 @@ import PTag from 'primevue/tag'
 import PTextarea from 'primevue/textarea'
 import {calculatorStages,calculatorStageCounts,matchesCalculatorStage,canSelectForReview,calculatorStage,defaultCalculatorStage} from './calculator-stages.js'
 import {versionLabel} from './presentation.js'
+import {revealOrganization} from './reveal-organization.js'
 import {calculatorConditionsSnapshot,calculatorConditionsError,convertMinimumUnit} from './calculator-conditions.js'
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { usePrototypeStore } from './live-store.js'
@@ -46,21 +47,26 @@ const expandedOrg = ref(null)
 const confirmNote = ref('')
 // 와이어프레임에는 '제출본 검토' 섹션이 없다. 서버는 제출본 승인(APPROVED)이 있어야 월별 master를 만들므로
 // 승인·재요청은 Gap 화면의 마지막 단계(소명 승인 완료 뒤 확정)에서 한다.
-const unresolvedCount = computed(() => orgItems.value.filter(i => ['검토 완료','소명 진행중','재검토 필요'].includes(i.status)).length)
+// 확정 가능 여부는 서버가 판단한다(REQ-06: 현재 회차 소명이 모두 ACCEPTED가 아니면 EXPLANATIONS_NOT_ACCEPTED).
+// 화면 항목은 한 가지 비교 유형만 담고 소명 판정도 모르므로 여기서 버튼을 막지 않고, 남은 소명 수는 안내로만 보여 준다.
+const pendingExplanationCount = computed(() => orgItems.value.filter(i => ['소명 진행중','재검토 필요'].includes(i.status)).length)
 async function decideCurrentSubmission(decision) {
   const submission = store.currentSubmission
   if (!submission || submission.status !== 'PENDING') return
   const note = confirmNote.value.trim()
   if (decision === 'REJECT' && !note) { feedback.value = '재요청하려면 재요청 사유를 입력해 주세요.'; return }
   const org = store.activeOrg
+  let result
   if (await store.run(async () => {
-    await store.decideSubmission(submission, decision, note)
+    result = await store.decideSubmission(submission, decision, note)
     await store.loadMonthly()
     await store.loadGap(org, applied.value?.type || draft.value.type)
     await store.refreshBadge()
   })) {
     confirmNote.value = ''
-    feedback.value = decision === 'APPROVE' ? '월간 제출본을 확정했습니다. 두 조직 모두 확정되면 월별 master가 생성됩니다.' : '월간 제출본을 재요청했습니다.'
+    feedback.value = decision === 'REJECT' ? '월간 제출본을 재요청했습니다.'
+      : result?.masterPublished ? `월간 제출본을 확정했고 ${result.masterPublished.label}이 생성됐습니다.`
+      : '월간 제출본을 확정했습니다. 요청 대상 조직이 모두 확정되면 월별 master가 생성됩니다.'
   }
 }
 // Keep each organization's applied comparison across menu navigation and component remounts.
@@ -168,18 +174,21 @@ watch(() => props.page, async page => {
     feedback.value = '이 알림은 이전 기간의 요청입니다. 현재 화면에는 이번 달 조직 현황이 표시됩니다.'
     return
   }
-  store.activeOrg = target.organizationId
+  expandedOrg.value = target.organizationId
+  try { await store.reply(target.organizationId); await revealOrganization('monthly-org-'+target.organizationId,()=>props.page==='monthly'&&expandedOrg.value===target.organizationId) } catch (error) { store.error = error.message }
 }, { immediate: true })
 
 
+const autoApplied = new Set()
 const submittedOrganizations = computed(() => store.organizations.filter(o => o.latestSubmission))
 watch([() => props.page, () => store.monthlyLoaded, () => store.activeOrg, () => store.busy], ([page, loaded, org, busy]) => {
-  if (!['monthly','calculator'].includes(page) || !loaded || busy || !store.monthlyRequest) return
+  if (page !== 'calculator' || !loaded || busy || !store.monthlyRequest) return
   if (!org || !store.organizations.some(o => o.id === org && o.latestSubmission)) {
     const first = submittedOrganizations.value[0]
     if (first && first.id !== org) { store.activeOrg = first.id; return }
   }
-  if (store.activeOrg && !applied.value) calculate()
+  const attempt = store.monthlyRequest.request.id + ':' + store.activeOrg
+  if (store.activeOrg && !applied.value && !autoApplied.has(attempt)) { autoApplied.add(attempt); calculate() }
   else if (store.activeOrg && applied.value && !store.items[store.activeOrg]) store.run(() => store.loadGap(store.activeOrg, applied.value.type))
 }, { immediate: true })
 const pipelineSeverities = ['warn','info','danger','success']
@@ -226,18 +235,17 @@ function downloadMonthlySubmission(org) { return store.run(() => store.downloadS
       <div class="card"><h2>{{ store.monthlyRequest ? '추가 요청 대상 조직' : '요청 대상 조직' }}</h2><div class="table-scroll"><table><thead><tr><th><input type="checkbox" aria-label="미요청 조직 전체 선택" :checked="requestRecipients.length > 0 && recipientIds.length === requestRecipients.length" @change="recipientIds = $event.target.checked ? requestRecipients.map(o => o.id) : []" /></th><th><span data-copy-key="monthlyText.text014">{{ copy.monthlyText.text014 }}</span></th><th><span data-copy-key="monthlyText.text015">{{ copy.monthlyText.text015 }}</span></th><th><span data-copy-key="monthlyText.text032">{{ copy.monthlyText.text032 }}</span></th></tr></thead><tbody><tr v-for="org in requestRecipients" :key="org.id"><td><input v-model="recipientIds" type="checkbox" :value="org.id" :aria-label="`${org.name} 요청 대상 선택`" /></td><td>{{ org.name }}</td><td>{{ org.code }}</td><td>{{ org.author }}</td></tr><tr v-if="!requestRecipients.length"><td colspan="4" class="muted"><span data-copy-key="monthlyText.text033">{{ copy.monthlyText.text033 }}</span></td></tr></tbody></table></div></div>
       <div class="card request-fields"><label class="field"><span data-copy-key="monthly.replyDeadline">{{ copy.monthly.replyDeadline }}</span><input v-model="bulkDue" type="datetime-local" required /></label><label class="field"><span data-copy-key="monthly.requestMessage">{{ copy.monthly.requestMessage }}</span><textarea v-model="bulkMessage" rows="5" required /></label><p v-if="bulkError" class="error" role="alert">{{ bulkError }}</p><p class="muted caption"><span data-copy-key="monthlyText.text034">{{ copy.monthlyText.text034 }}</span></p><div class="actions"><button type="button" class="btn" @click="emit('navigate','monthly')"><span data-copy-key="monthlyText.text035">{{ copy.monthlyText.text035 }}</span></button><button class="btn primary" type="submit" :disabled="store.busy || !recipientIds.length">{{ recipientIds.length }}<span :data-copy-key="store.monthlyRequest ? 'monthly.additionalSend' : 'monthly.initialSend'">{{ store.monthlyRequest ? copy.monthly.additionalSend : copy.monthly.initialSend }}</span></button></div></div>
     </form>
-    <template v-if="page === 'monthly-request'">
-      <div class="row-between"><h2>{{ year }}<span data-copy-key="monthlyText.text003">{{ copy.monthlyText.text003 }}</span> {{ month }}<span data-copy-key="monthlyText.text005">{{ copy.monthlyText.text005 }}</span></h2></div>
+    <template v-if="page === 'monthly'">
+      <div class="row-between"><h2>{{ year }}<span data-copy-key="monthlyText.text003">{{ copy.monthlyText.text003 }}</span> {{ month }}<span data-copy-key="monthlyText.text005">{{ copy.monthlyText.text005 }}</span></h2><button class="btn primary" @click="emit('navigate','monthly-request')"><span data-copy-key="monthlyText.text006">{{ copy.monthlyText.text006 }}</span></button></div>
       <p class="muted"><span data-copy-key="monthlyText.text007">{{ copy.monthlyText.text007 }}</span> {{ store.organizations.length }}<span data-copy-key="monthlyText.text008">{{ copy.monthlyText.text008 }}</span> {{ store.organizations.filter(o => o.monthlyRequested).length }}<span data-copy-key="monthlyText.text009">{{ copy.monthlyText.text009 }}</span> {{ store.organizations.filter(o => !o.monthlyRequested).length }}<span data-copy-key="monthlyText.text010">{{ copy.monthlyText.text010 }}</span> {{ store.organizations.filter(o => o.submissionStatus === '제출 완료').length }} <span data-copy-key="monthlyText.text011">{{ copy.monthlyText.text011 }}</span> {{ store.organizations.filter(o=>o.submissionStatus==='기한 경과').length }} <span data-copy-key="monthlyText.text012">{{ copy.monthlyText.text012 }}</span> {{ store.organizations.filter(o=>o.monthlyRequested && o.submissionStatus==='회신 대기').length }}</p>
       <section class="card org-status"><h2><span data-copy-key="monthlyText.text013">{{ copy.monthlyText.text013 }}</span></h2>
-        <div class="table-scroll"><table><thead><tr><th><span data-copy-key="monthlyText.text014">{{ copy.monthlyText.text014 }}</span></th><th><span data-copy-key="monthlyText.text015">{{ copy.monthlyText.text015 }}</span></th><th><span data-copy-key="monthlyText.text016">{{ copy.monthlyText.text016 }}</span></th><th><span data-copy-key="monthly.replyDeadline">{{ copy.monthly.replyDeadline }}</span></th><th><span data-copy-key="monthlyText.text017">{{ copy.monthlyText.text017 }}</span></th><th><span data-copy-key="monthlyText.text018">{{ copy.monthlyText.text018 }}</span></th></tr></thead><tbody><template v-for="org in store.organizations" :key="org.id"><tr :id="'monthly-org-'+org.id" class="org-row organization-reveal-row" :class="{expanded:expandedOrg === org.id}"><td><button class="text-button" :aria-expanded="expandedOrg === org.id" @click="expandedOrg = expandedOrg === org.id ? null : org.id; expandedOrg && store.run(()=>store.reply(org.id))">{{ org.name }} <span aria-hidden="true">{{ expandedOrg === org.id ? '⌃' : '⌄' }}</span></button></td><td>{{ org.code }}</td><td>{{ org.requestedAt ? dateLabel(org.requestedAt) : '—' }}</td><td>{{ org.requestDue ? dateLabel(org.requestDue) : '—' }}</td><td><span class="badge" :class="org.submissionStatus === '제출 완료' ? 'submitted' : org.submissionStatus === '기한 경과' ? 'overdue' : org.submissionStatus === '회신 대기' ? 'waiting' : 'not-requested'">{{ org.submissionStatus }}</span><small v-if="org.latestSubmission" class="monthly-submission-state">{{ versionLabel(org.latestSubmission.label) || '버전명 없음' }} | {{ submissionStatusLabel(org.latestSubmission.status) }}</small></td><td><span class="badge" :class="org.explanationStatus === '소명 진행중' ? 'progress' : org.explanationStatus === '소명 회신' ? 'recheck' : ''">{{ org.explanationStatus }}</span></td></tr>
-        <tr v-if="expandedOrg === org.id"><td colspan="6" class="reply-cell"><div class="reply-card"><div class="row-between"><strong>{{ org.author }} · {{ org.department }}</strong><small class="muted">{{ org.fileName ? dateLabel(org.submittedAt) : org.monthlyRequested ? '회신 대기' : org.submissionStatus }}</small></div><p :data-copy-key="!org.message &amp;&amp; !org.monthlyRequested &amp;&amp; !!store.monthlyRequest ? 'monthly.notRequestedMessage' : undefined">{{ org.message || (org.monthlyRequested ? '아직 회신이 없습니다.' : !!store.monthlyRequest ? copy.monthly.notRequestedMessage : '이번 달 월간 시트 요청이 없습니다.') }}</p><div class="row-between"><button v-if="org.fileName" class="btn subtle" @click="store.run(()=>store.downloadSubmission(org.submission.id,org.fileName))" :disabled="!org.submission || store.busy">{{ org.fileName }} ↓</button><button v-if="org.fileName" class="btn primary" @click="openCalculator(org.id)"><span data-copy-key="monthlyText.text020">{{ copy.monthlyText.text020 }}</span></button></div>
+        <div class="table-scroll"><table><thead><tr><th><span data-copy-key="monthlyText.text014">{{ copy.monthlyText.text014 }}</span></th><th><span data-copy-key="monthlyText.text015">{{ copy.monthlyText.text015 }}</span></th><th><span data-copy-key="monthlyText.text016">{{ copy.monthlyText.text016 }}</span></th><th><span data-copy-key="monthly.replyDeadline">{{ copy.monthly.replyDeadline }}</span></th><th>수신 담당자</th><th><span data-copy-key="monthlyText.text017">{{ copy.monthlyText.text017 }}</span></th><th><span data-copy-key="monthlyText.text018">{{ copy.monthlyText.text018 }}</span></th></tr></thead><tbody><template v-for="org in store.organizations" :key="org.id"><tr :id="'monthly-org-'+org.id" class="org-row organization-reveal-row" :class="{expanded:expandedOrg === org.id}"><td><button class="text-button" :aria-expanded="expandedOrg === org.id" @click="expandedOrg = expandedOrg === org.id ? null : org.id; expandedOrg && store.run(()=>store.reply(org.id))">{{ org.name }} <span aria-hidden="true">{{ expandedOrg === org.id ? '⌃' : '⌄' }}</span></button></td><td>{{ org.code }}</td><td>{{ org.requestedAt ? dateLabel(org.requestedAt) : '—' }}</td><td>{{ org.requestDue ? dateLabel(org.requestDue) : '—' }}</td><td>{{ org.managers?.length ? org.managers.map(m => m.name + ' · ' + m.email).join(', ') : '—' }}</td><td><span class="badge" :class="org.submissionStatus === '제출 완료' ? 'submitted' : org.submissionStatus === '기한 경과' ? 'overdue' : org.submissionStatus === '회신 대기' ? 'waiting' : 'not-requested'">{{ org.submissionStatus }}</span><small v-if="org.latestSubmission" class="monthly-submission-state">{{ versionLabel(org.latestSubmission.label) || '버전명 없음' }} | {{ submissionStatusLabel(org.latestSubmission.status) }}</small></td><td><span class="badge" :class="org.explanationStatus === '소명 진행중' ? 'progress' : org.explanationStatus === '소명 회신' ? 'recheck' : ''">{{ org.explanationStatus }}</span></td></tr>
+        <tr v-if="expandedOrg === org.id"><td colspan="7" class="reply-cell"><div class="reply-card"><div class="row-between"><strong>{{ org.author }} · {{ org.department }}</strong><small class="muted">{{ org.fileName ? dateLabel(org.submittedAt) : org.monthlyRequested ? '회신 대기' : org.submissionStatus }}</small></div><p :data-copy-key="!org.message &amp;&amp; !org.monthlyRequested &amp;&amp; !!store.monthlyRequest ? 'monthly.notRequestedMessage' : undefined">{{ org.message || (org.monthlyRequested ? '아직 회신이 없습니다.' : !!store.monthlyRequest ? copy.monthly.notRequestedMessage : '이번 달 월간 시트 요청이 없습니다.') }}</p><div class="row-between"><button v-if="org.fileName" class="btn subtle" @click="store.run(()=>store.downloadSubmission(org.submission.id,org.fileName))" :disabled="!org.submission || store.busy">{{ org.fileName }} ↓</button><button v-if="org.fileName" class="btn primary" @click="openCalculator(org.id)"><span data-copy-key="monthlyText.text020">{{ copy.monthlyText.text020 }}</span></button></div>
 </div></td></tr></template></tbody></table></div>
       </section>
     </template>
 
-    <template v-if="page === 'calculator' || page === 'monthly'">
-      <div v-if="page === 'monthly'" class="row-between monthly-heading-actions"><h2>{{ year }}<span data-copy-key="monthlyText.text003">{{ copy.monthlyText.text003 }}</span> {{ month }}<span data-copy-key="monthlyText.text005">{{ copy.monthlyText.text005 }}</span></h2><button class="btn primary" @click="emit('navigate','monthly-request')"><span data-copy-key="monthlyText.text006">{{ copy.monthlyText.text006 }}</span></button></div>
+    <template v-if="page === 'calculator'">
       <section class="card calculator-settings"><div class="field"><label><span data-copy-key="monthlyText.text036">{{ copy.monthlyText.text036 }}</span></label><div class="version-controls"><label><span class="sr-only"><span data-copy-key="monthlyText.text037">{{ copy.monthlyText.text037 }}</span></span><select v-model="draft.baseVersion" aria-label="기준 대상" disabled title="현재 Gap 조회 API는 제출 시 고정된 기준을 사용합니다."><option value="fixed">기준 대상 · 서버에 고정된 비교 기준</option></select></label><label><span class="sr-only"><span data-copy-key="monthlyText.text038">{{ copy.monthlyText.text038 }}</span></span><select v-model="draft.compareVersion" aria-label="현재 비교 대상"><option value="">비교 대상 · 선택하세요</option><option value="latest">최신 제출본</option></select></label><select v-model="draft.type" aria-label="비교 필터"><option v-for="type in comparisonTypes" :key="type">{{ type }}</option></select></div></div>
       <div class="field"><label><span data-copy-key="monthlyText.text039">{{ copy.monthlyText.text039 }}</span></label>
         <div class="gap-controls">
@@ -258,8 +266,8 @@ function downloadMonthlySubmission(org) { return store.run(() => store.downloadS
       <p v-if="store.currentSubmission?.status==='APPROVED'" class="notice"><span data-copy-key="monthlyText.text043">{{ copy.monthlyText.text043 }}</span></p><div class="status-tabs" role="group" aria-label="진행 단계별 현황"><button v-for="filter in calculatorStages" :key="filter.label" :class="[filter.tone,{selected:stage === filter.label}]" :aria-pressed="stage === filter.label" @click="stage = filter.label; selection = []">{{ filter.label }} <b>{{ counts[filter.label] || 0 }}</b></button></div>
       <div class="pipeline calculator-pipeline" tabindex="0" role="region" aria-label="검토 상태 흐름"><template v-for="(label,index) in pipeline" :key="label"><span v-if="index" class="pipeline-line" aria-hidden="true" /><span class="pipeline-step"><b class="badge" :class="pipelineTones[index]">{{ index + 1 }}</b><span>{{ label }}</span></span></template><span class="pipeline-line" aria-hidden="true" /><span class="pipeline-step"><b class="badge" :class="store.currentSubmission?.status==='APPROVED'?'approved':'waiting'">✓</b><span>확정</span></span></div>
       <section v-if="store.currentSubmission" class="card monthly-confirm" aria-label="월간 제출본 확정">
-        <div class="monthly-confirm-info"><strong>{{ currentOrg.name }} · {{ versionLabel(store.currentSubmission.label) }}</strong><span class="badge" :class="store.currentSubmission.status==='PENDING'?'review':store.currentSubmission.status==='APPROVED'?'approved':'recheck'">{{ submissionStatusLabel(store.currentSubmission.status) }}</span><small class="muted">{{ store.currentSubmission.status!=='PENDING' ? (store.currentSubmission.reviewComment ? '재요청 사유: '+store.currentSubmission.reviewComment : '처리가 끝난 제출본입니다.') : unresolvedCount ? '처리 중인 항목 '+unresolvedCount+'건이 남아 있습니다. 소명을 모두 승인하거나 제외한 뒤 확정할 수 있습니다.' : '남은 항목이 없습니다. 확정하면 월별 master 생성 조건에 반영됩니다.' }}</small></div>
-        <div v-if="store.currentSubmission.status==='PENDING'" class="monthly-confirm-actions"><input v-model="confirmNote" maxlength="4000" placeholder="재요청 사유 (재요청 시 필수)" aria-label="재요청 사유" /><button class="btn" :disabled="store.busy || !confirmNote.trim()" @click="decideCurrentSubmission('REJECT')">재요청</button><button class="btn primary" :disabled="store.busy || unresolvedCount > 0" @click="decideCurrentSubmission('APPROVE')">확정</button></div>
+        <div class="monthly-confirm-info"><strong>{{ currentOrg.name }} · {{ versionLabel(store.currentSubmission.label) }}</strong><span class="badge" :class="store.currentSubmission.status==='PENDING'?'review':store.currentSubmission.status==='APPROVED'?'approved':'recheck'">{{ submissionStatusLabel(store.currentSubmission.status) }}</span><small class="muted">{{ store.currentSubmission.status!=='PENDING' ? (store.currentSubmission.reviewComment ? '재요청 사유: '+store.currentSubmission.reviewComment : '처리가 끝난 제출본입니다.') : pendingExplanationCount ? '승인되지 않은 소명 '+pendingExplanationCount+'건이 보입니다. 현재 회차 소명이 모두 승인돼야 확정할 수 있습니다.' : '현재 회차 소명이 모두 승인됐으면 확정할 수 있습니다. 확정하면 월별 master 생성 조건에 반영됩니다.' }}</small></div>
+        <div v-if="store.currentSubmission.status==='PENDING'" class="monthly-confirm-actions"><input v-model="confirmNote" maxlength="4000" placeholder="재요청 사유 (재요청 시 필수)" aria-label="재요청 사유" /><button class="btn" :disabled="store.busy || !confirmNote.trim()" @click="decideCurrentSubmission('REJECT')">재요청</button><button class="btn primary" :disabled="store.busy" @click="decideCurrentSubmission('APPROVE')">확정</button></div>
       </section>
       <div class="result-toolbar"><label class="org-context"><small class="muted"><span data-copy-key="monthlyText.text044">{{ copy.monthlyText.text044 }}</span></small><select v-model="store.activeOrg" aria-label="조직 선택"><option v-for="o in store.organizations" :key="o.id" :value="o.id" :disabled="!o.latestSubmission">{{ o.name }}{{ o.latestSubmission ? '' : ' (미제출)' }}</option></select></label><label class="unit-field"><small class="muted"><span data-copy-key="monthlyText.text045">{{ copy.monthlyText.text045 }}</span></small><select v-model="unit" aria-label="금액 표시 단위"><option value="THOUSAND">천원</option><option value="HUNDRED_MILLION">억원</option></select></label><label class="search-field"><span class="sr-only"><span data-copy-key="monthlyText.text046">{{ copy.monthlyText.text046 }}</span></span><input v-model="search" type="search" placeholder="항목명 검색" aria-label="항목명 검색" /></label><label class="sort-field"><small class="muted"><span data-copy-key="monthlyText.text047">{{ copy.monthlyText.text047 }}</span></small><select v-model="sort" aria-label="결과 정렬"><option>차액 내림차순</option><option>차액 오름차순</option><option>차이율 내림차순</option><option>차이율 오름차순</option></select></label></div>
       <div v-if="!applied" class="empty-state calculator-empty"><h3><span data-copy-key="monthlyText.text048">{{ copy.monthlyText.text048 }}</span></h3></div>
@@ -271,7 +279,7 @@ function downloadMonthlySubmission(org) { return store.run(() => store.downloadS
 
 
     <template v-if="page === 'cell'">
-      <button class="btn back-button" @click="emit('navigate','monthly')">← 월간 시트 관리</button>
+      <button class="btn back-button" @click="emit('navigate','calculator')">← Gap 화면</button>
 
       <div v-if="!detail" class="empty-state"><span data-copy-key="monthlyText.text069">{{ copy.monthlyText.text069 }}</span></div>
       <div v-else class="cell-layout"><aside class="answer-list"><h2><span data-copy-key="monthly.reviewItems">{{ copy.monthly.reviewItems }}</span></h2><button v-for="item in detailItems" :key="item.id" class="answer-card" :class="{active:activeCell===item.id}" @click="activeCell=item.id"><strong>{{ item.name }}</strong><small>{{ item.group }} / {{ item.category }}</small></button></aside><LiveReviewDetail :id="detail.id" /></div>
