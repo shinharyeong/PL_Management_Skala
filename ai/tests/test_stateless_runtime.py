@@ -204,7 +204,7 @@ class StatelessRuntimeTests(unittest.TestCase):
                     and node.name in {"_numbercards", "_metric_in", "eok", "_won"}]
         scope = {"Decimal": Decimal, "ROUND_HALF_UP": ROUND_HALF_UP, "METRIC_COL": {"매출": "revenue_won"},
                  "UNIT": SimpleNamespace(get=lambda: "억원"), "SCOPE_ORG": SimpleNamespace(get=lambda: None),
-                 "UNIT_DIV": {"억원": Decimal(10) ** 8}, "COMPARE_WORDS": [],
+                 "UNIT_DIV": {"억원": Decimal(10) ** 8}, "UNIT_DIGITS": {"억원": "0.1"}, "COMPARE_WORDS": [],
                  "_bases": lambda *args: {"현재": value}}
         exec(compile(ast.Module(body=selected, type_ignores=[]), "card_export_test", "exec"), scope)
         cards, missing = scope["_numbercards"](None, {}, {"year": 2030, "month": 6}, [{"label": "매출"}, {"label": "미등록"}], ["매출"])

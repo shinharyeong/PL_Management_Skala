@@ -13,7 +13,7 @@
 | `POST /v1/sql-check` | RPT-09 SQL 검사 | 허용된 읽기 전용 SQL인지 검사, 실행하지 않음 |
 | `GET /health` | 상태 확인 | 모델 이름·키 존재 여부 반환, 모델 호출 없음 |
 
-계약 API는 `X-Internal-Token`과 `REPORT_AI_TOKEN`을 대조합니다. 운영의 `AI_REQUIRE_INTERNAL_TOKEN=true`에서는 토큰 미설정도 거부합니다. PDF 작업 결과는 `AI_BACKEND_URL`의 `/internal/pdf-jobs/{jobId}/result`에 보고합니다.
+계약 API는 `X-Internal-Token`과 `REPORT_AI_TOKEN`을 대조합니다. 운영의 `AI_REQUIRE_INTERNAL_TOKEN=true`에서는 토큰 미설정도 거부합니다. PDF 작업 결과는 `AI_BACKEND_URL`의 `/internal/pdf-jobs/{jobId}/result`에 보고합니다. 결과의 `definition.extraction.pages`는 쪽 번호별 크기(`{no, width, height}`, pt)이며, 블록의 `bbox`가 이 크기 기준이라 화면이 쪽 그림 위에 박스를 올릴 때 씁니다(백엔드의 `pages` 응답에는 쪽 크기가 없습니다).
 
 `/v1/nl-query` 입력은 `{question, baseYear, baseMonth, conversationId?}`이며 응답은 `status: OK|CLARIFY|UNKNOWN`, SQL, 설명, 되묻기, `preview`, 행 수와 잘림 여부입니다. 기준 월의 뷰 버전이 없으면 `UNKNOWN`입니다. 조회 그래프는 해석 → 후속 질문 규칙 또는 SQL 생성 → 검사·읽기 전용 실행 → 제한된 자기 수정 → 숫자 검증 설명 → 근거 구성 → 메모리 문맥 갱신으로 이어집니다.
 

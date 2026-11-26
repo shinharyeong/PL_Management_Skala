@@ -79,6 +79,13 @@ class _Line:
         return out
 
 
+def cell_value(c):
+    """모델이 표 칸을 글자가 아니라 객체({"text": "...", "meaning": null})로 돌려주는 경우가 있다: 글자만 꺼낸다(없으면 None = 숫자 칸 취급)."""
+    if isinstance(c, dict):
+        c = c.get("text") if c.get("text") is not None else c.get("value")
+    return c
+
+
 def mask_all(text: str) -> str:
     """AI 로 보내는 글자용: mask() 에 더해 '1,234' 처럼 단위 없는 숫자 낱말도 {수치} 로 가린다(그림에서 검게 칠하는 기준 NUM_CELL 과 같다)."""
     return " ".join("{수치}" if NUM_CELL.match(w) else w for w in mask(text)[0].split(" "))
