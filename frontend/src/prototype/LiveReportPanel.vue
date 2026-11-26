@@ -395,7 +395,7 @@ function blockStyle(block) {
 <template>
   <section class="report-panel">
     <h1>보고서 생성</h1>
-    <p class="muted">기존 PDF나 저장한 틀을 바탕으로 보고서를 만들고, 확인한 데이터로 채웁니다.</p>
+
     <PMessage v-if="error" severity="error" :closable="false">{{error}}</PMessage>
     <PMessage v-if="notice" severity="info" :closable="false">{{notice}}</PMessage>
     <PSelectButton v-model="step" :options="stepOptions" optionLabel="label" optionValue="value" optionDisabled="disabled" :allowEmpty="false" :disabled="busy" class="report-steps" aria-label="보고서 작성 단계" />
@@ -403,7 +403,7 @@ function blockStyle(block) {
     <fieldset :disabled="busy" :aria-busy="busy" class="report-body">
       <div v-if="step===0" class="report-grid">
         <PPanel header="PDF에서 시작" class="report-card">
-          <p>숫자를 가린 PDF를 분석해 자료 구성을 추출합니다. 최대 30MB입니다.</p>
+          <span class="report-upload-limit muted">PDF · 최대 30MB</span>
           <PFileUpload ref="pdfInput" mode="basic" customUpload :auto="false" :multiple="false" accept=".pdf,application/pdf" :maxFileSize="30*1024*1024" chooseLabel="PDF 선택·분석" :disabled="busy" invalidFileTypeMessage="{0}: PDF 파일을 선택해 주세요." invalidFileSizeMessage="{0}: 30MB 이하 파일을 선택해 주세요." :pt="{input:{'aria-label':'분석할 PDF'}}" @select="uploadPdf" />
           <p v-if="job">분석 상태: <PTag :value="{RUNNING:'진행 중',SUCCEEDED:'완료',FAILED:'실패'}[job.status] || job.status" :severity="job.status==='FAILED'?'danger':job.status==='SUCCEEDED'?'success':'info'" /></p>
           <PButton v-if="job" label="분석 상태 새로고침" severity="secondary" outlined :disabled="busy" @click="run(refreshJob)" />
@@ -423,7 +423,7 @@ function blockStyle(block) {
         <PPanel v-if="step===1" header="자료 구성 확인" class="report-card">
           <label for="report-definition-name">자료 틀 이름<PInputText id="report-definition-name" v-model="definition.name" :disabled="busy || !!saved" maxlength="120" @update:modelValue="invalidate" /></label>
           <div v-if="pageImages.length" class="report-pages"><figure v-for="page in pageImages" :key="page.no"><img :src="page.url" :alt="`숫자를 가린 원본 ${page.no}쪽`" /><figcaption>원본 {{page.no}}쪽</figcaption></figure></div>
-          <p class="muted">추출된 제목·표·차트를 확인하고, 확인이 필요한 항목의 지표와 기간을 다음 단계에서 지정해 주세요.</p>
+
           <PPanel v-for="block in definition.blocks" :key="block.id" :header="`${block.title || block.kind} · ${block.id}`" class="report-block-editor" toggleable>
             <template #icons><div class="actions"><PButton icon="pi pi-arrow-up" severity="secondary" text :disabled="busy" :aria-label="`${block.id} 위로`" @click="changeBlock(block.id,'up')" /><PButton icon="pi pi-arrow-down" severity="secondary" text :disabled="busy" :aria-label="`${block.id} 아래로`" @click="changeBlock(block.id,'down')" /><PButton label="삭제" icon="pi pi-trash" severity="danger" text :disabled="busy" @click="changeBlock(block.id,'remove')" /></div></template>
             <PMessage v-if="block.needs_review?.length" severity="warn" :closable="false">원본과 비교해 항목 구성을 확인해 주세요.</PMessage>

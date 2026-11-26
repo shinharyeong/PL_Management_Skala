@@ -1,0 +1,258 @@
+@media screen {
+/* Shared work-screen density. Financial values, messages and controls remain readable. */
+.app-layout { --workspace-chrome:32px; font-size:14px; line-height:1.5; min-height:calc(100dvh - var(--workspace-chrome)); }
+.app-layout.development-workspace { --workspace-chrome:69px; }
+.app-layout .main-content:not(.home-overview) { max-width:1720px; padding:18px 24px 24px; }
+.app-layout .main-content:not(.home-overview) :is(.page-stack,.management-panels,.org-panel) { gap:12px; }
+.app-layout .main-content:not(.home-overview) h1 { font-size:23px; line-height:32px; letter-spacing:-.7px; }
+.app-layout .main-content:not(.home-overview) h2 { font-size:16px; line-height:24px; letter-spacing:-.3px; }
+.app-layout .main-content:not(.home-overview) h3 { font-size:14px; line-height:22px; }
+.app-layout .main-content:not(.home-overview) .card { padding:14px 16px; border-radius:10px; box-shadow:none; }
+.app-layout .main-content:not(.home-overview) :is(.page-heading,.mg-heading) { gap:4px 12px; margin:0; padding:0; border:0; }
+.app-layout .main-content:not(.home-overview) :is(.row-between,.mg-section-heading,.org-section-heading) { gap:8px 12px; min-height:32px; }
+.app-layout .main-content:not(.home-overview) :is(.btn,.button) { min-height:34px; padding:6px 12px; border-radius:7px; font-size:13px; line-height:20px; }
+.app-layout .main-content:not(.home-overview) :is(.actions,.mg-actions) { gap:8px; }
+.app-layout .main-content:not(.home-overview) :is(.field,.mg-field) { gap:4px; font-size:13px; }
+.app-layout .main-content:not(.home-overview) :is(input:not([type=checkbox]):not([type=radio]):not([type=file]),select) { height:34px; min-height:34px; padding:6px 10px; border-radius:7px; font-size:13px; line-height:20px; }
+.app-layout .main-content:not(.home-overview) textarea { min-height:80px; padding:8px 10px; border-radius:7px; font-size:14px; line-height:1.6; }
+.app-layout .main-content:not(.home-overview) input:is([type=checkbox],[type=radio]) { width:16px; height:16px; min-height:16px; margin-block:0; padding:0; }
+.app-layout .main-content:not(.home-overview) .badge { padding:2px 7px; border-radius:5px; font-size:12px; line-height:18px; }
+.app-layout .main-content:not(.home-overview) :is(.notice,.mg-feedback) { padding:8px 12px; font-size:13px; }
+.app-layout .main-content:not(.home-overview) :is(.empty-state,.mg-empty,.org-empty) { padding:24px 16px; min-height:0; }
+.app-layout .main-content:not(.home-overview) :is(.mg-small-note,.caption) { font-size:12px; line-height:18px; }
+.app-layout .main-content:not(.home-overview) :is(.table-scroll,.mg-table-scroll,.org-table-scroll) { min-width:0; scrollbar-gutter:stable; }
+.app-layout .main-content:not(.home-overview) :is(.mg-table,.org-history-table) { font-size:13px; }
+.app-layout .main-content:not(.home-overview) :is(.mg-table,.org-history-table,.org-status table,.monthly-request-form table,.monthly-panel[data-page=workspace] table) :is(th,td) { padding:8px 12px; vertical-align:middle; line-height:22px; }
+.app-layout .main-content:not(.home-overview) :is(.mg-table,.org-history-table,.org-status table,.monthly-request-form table) thead { position:sticky; top:0; z-index:2; }
+.app-layout .main-content:not(.home-overview) :is(.mg-table,.org-history-table,.org-status table,.monthly-request-form table) thead th { background:#edf2f8; font-size:12px; }
+.app-layout .main-content:not(.home-overview) :is(.mg-row-link,.org-link-button,.mg-icon-button) { min-height:28px; font-size:13px; }
+.app-layout .main-content:not(.home-overview) :is(.mg-table-scroll,.org-table-scroll):focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+/* Shallow navigation leaves the working area wider without changing menu order. */
+@media(min-width:761px) {
+  .app-layout .sidebar { width:216px; min-width:216px; height:calc(100dvh - var(--workspace-chrome)); padding:20px 12px 14px; }
+  .app-layout .sidebar .role-caption { padding:6px 0 16px 44px; margin-bottom:14px; }
+  .app-layout .sidebar nav { gap:4px; }
+  .app-layout .sidebar .nav-link { min-height:40px; padding:9px 12px; gap:10px; }
+  .app-layout .sidebar .workspace-nav { margin:4px 0 4px 24px; padding-left:8px; }
+  .app-layout .sidebar .workspace-nav .nav-link { min-height:34px; padding:6px 10px; }
+  .app-layout .sidebar-user { min-height:90px; padding-top:14px; gap:3px; }
+  .app-layout .user-avatar { top:16px; }
+}
+
+/* Notifications keep read/unread, status and actions visible in a compact record. */
+.app-layout .live-management[data-page=notifications] { gap:10px; }
+.app-layout .main-content:not(.home-overview) .mg-filter-row { padding:8px 10px; gap:8px 12px; border-radius:8px; flex-wrap:wrap; flex-direction:row; align-items:center; }
+.app-layout .main-content:not(.home-overview) .mg-tabs { gap:4px; width:auto; }
+.app-layout .main-content:not(.home-overview) .mg-tabs .btn { min-width:0; padding-inline:12px; font-size:13px; flex:0 1 auto; }
+.app-layout .main-content:not(.home-overview) .mg-checkbox { min-height:32px; font-size:13px; gap:6px; }
+.app-layout .main-content:not(.home-overview) .mg-notification-group { gap:6px; }
+.app-layout .main-content:not(.home-overview) .mg-notification-group h2 { font-size:12px; line-height:24px; }
+.app-layout .main-content:not(.home-overview) .mg-notification { gap:12px; padding:10px 14px; }
+.app-layout .main-content:not(.home-overview) .mg-notification-body { display:grid; grid-template-columns:auto minmax(0,1fr); gap:3px 12px; }
+.app-layout .main-content:not(.home-overview) .mg-notification-meta { grid-column:1/-1; gap:6px; font-size:12px; }
+.app-layout .main-content:not(.home-overview) .mg-notification h3 { grid-column:1/-1; font-size:14px; line-height:22px; }
+.app-layout .main-content:not(.home-overview) .mg-notification p { font-size:12px; line-height:18px; }
+.app-layout .main-content:not(.home-overview) .mg-notification small { font-size:12px; line-height:18px; }
+.app-layout .main-content:not(.home-overview) .mg-notification-action { min-width:116px; gap:5px; }
+.app-layout .main-content:not(.home-overview) .mg-notification-action .btn { min-width:104px; }
+.app-layout .main-content:not(.home-overview) .notification-read-label { padding:1px 6px; font-size:11px; border-radius:4px; }
+
+/* Management lists scroll within their table, keeping the controls close. */
+.app-layout .main-content:not(.home-overview) .mg-annual-progress { gap:8px; }
+.app-layout .main-content:not(.home-overview) .mg-annual-organizations > .mg-table-scroll { max-height:clamp(220px,calc(100dvh - 410px),640px); }
+.app-layout .main-content:not(.home-overview) .mg-annual-progress[aria-labelledby=annual-master-title] .mg-table-scroll { max-height:154px; }
+.app-layout .main-content:not(.home-overview) .mg-submission-state { display:inline-block; margin:0 0 0 6px; font-size:11px; }
+.app-layout .main-content:not(.home-overview) .mg-expanded > td { padding:10px 12px; }
+.app-layout .main-content:not(.home-overview) .mg-reply { gap:8px; padding:12px; }
+.app-layout .main-content:not(.home-overview) .mg-history-note { padding:8px 12px; font-size:12px; line-height:1.5; }
+.app-layout .main-content:not(.home-overview) .mg-history-note p { margin-top:3px; }
+.app-layout .main-content:not(.home-overview) .mg-actions .btn { min-width:0; }
+.app-layout .main-content:not(.home-overview) .mg-section-heading > .mg-actions > .mg-field { flex-direction:row; align-items:center; gap:8px; }
+.app-layout .main-content:not(.home-overview) .mg-section-heading input[type=number] { max-width:96px; }
+.app-layout .main-content:not(.home-overview) .annual-heading-actions > .mg-field { flex-direction:row; align-items:center; gap:8px; white-space:nowrap; }
+.app-layout .main-content:not(.home-overview) .annual-heading-actions input { width:96px; }
+.app-layout .main-content:not(.home-overview) .mg-request-form { gap:12px; }
+.app-layout .main-content:not(.home-overview) .mg-request-form > .mg-table-scroll { max-height:clamp(240px,calc(100dvh - 300px),580px); }
+.app-layout .main-content:not(.home-overview) .mg-request-submit { min-width:0; }
+.app-layout .main-content:not(.home-overview) .mg-archive { grid-template-columns:200px minmax(0,1fr); gap:14px; }
+.app-layout .main-content:not(.home-overview) .mg-org-picker { gap:4px; max-height:calc(100dvh - 130px); overflow:auto; }
+.app-layout .main-content:not(.home-overview) .mg-org-picker button { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 10px; min-height:34px; font-size:13px; }
+.app-layout .main-content:not(.home-overview) .mg-org-picker small { display:inline; margin:0; font-size:11px; }
+.app-layout .main-content:not(.home-overview) .mg-archive-main { gap:10px; }
+.app-layout .main-content:not(.home-overview) .mg-month-grid { grid-template-columns:repeat(6,minmax(0,1fr)); gap:6px; }
+.app-layout .main-content:not(.home-overview) .mg-month-grid button { padding:8px 10px; min-height:64px; gap:4px; border-radius:7px; }
+.app-layout .main-content:not(.home-overview) .mg-month-grid strong { font-size:14px; }
+.app-layout .main-content:not(.home-overview) .mg-month-grid small { font-size:11px; }
+.app-layout .main-content:not(.home-overview) .mg-archive-main .mg-table-scroll { max-height:340px; }
+
+/* Monthly calculator: compact conditions, filters, hierarchy and fixed action dock. */
+.app-layout .main-content:not(.home-overview) .monthly-panel .page-heading { display:flex; flex-direction:row; flex-wrap:wrap; align-items:baseline; justify-content:space-between; }
+.app-layout .main-content:not(.home-overview) .monthly-panel .page-heading > p { font-size:12px; }
+.app-layout .main-content:not(.home-overview) .monthly-heading-actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.app-layout .main-content:not(.home-overview) .monthly-heading-actions h2 { font-size:13px; font-weight:500; color:var(--muted); }
+.app-layout .main-content:not(.home-overview) .org-status > h2 { margin-bottom:8px; }
+.app-layout .main-content:not(.home-overview) .org-status > .table-scroll { max-height:clamp(300px,calc(100dvh - 220px),800px); }
+.app-layout .main-content:not(.home-overview) .monthly-submission-state { display:inline-block; margin:0 0 0 6px; font-size:11px; }
+.app-layout .main-content:not(.home-overview) .reply-cell { padding:10px 12px; }
+.app-layout .main-content:not(.home-overview) .reply-card { padding:12px; gap:8px; }
+.app-layout .main-content:not(.home-overview) .monthly-submission-review { gap:8px; margin-top:4px; padding-top:10px; }
+.app-layout .main-content:not(.home-overview) :is(.request-fields,.calculator-settings) { gap:10px; }
+.app-layout .main-content:not(.home-overview) .version-controls { gap:8px; }
+.app-layout .main-content:not(.home-overview) .gap-controls { gap:8px; }
+.app-layout .main-content:not(.home-overview) .custom-gap-condition { padding:3px 8px; gap:8px; border-radius:8px; }
+.app-layout .main-content:not(.home-overview) .gap-condition-toggle { min-height:30px; gap:8px; }
+.app-layout .main-content:not(.home-overview) .gap-condition-input input { height:32px; min-height:32px; }
+.app-layout .main-content:not(.home-overview) .gap-controls > .actions .btn { min-width:0; }
+.app-layout .main-content:not(.home-overview) .gap-amount-units { padding:2px; gap:2px; }
+.app-layout .main-content:not(.home-overview) .gap-amount-units button { padding:3px 7px; min-height:26px; }
+.app-layout .main-content:not(.home-overview) .status-tabs { gap:5px; }
+.app-layout .main-content:not(.home-overview) .status-tabs button { min-height:36px; padding:5px 10px; border-radius:7px; font-size:13px; }
+.app-layout .main-content:not(.home-overview) .calculator-pipeline { padding:0 4px; gap:6px; }
+.app-layout .main-content:not(.home-overview) .result-toolbar { padding:7px 10px; gap:8px 12px; border-radius:8px; }
+.app-layout .main-content:not(.home-overview) .org-context { padding:5px 8px; gap:7px; min-width:120px; }
+.app-layout .main-content:not(.home-overview) .sort-field select { min-width:140px; }
+.app-layout .main-content:not(.home-overview) .monthly-panel[data-page=calculator] { gap:8px; }
+.app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table { max-height:clamp(200px,calc(100dvh - 560px),720px); overflow:auto; }
+.app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table thead { position:sticky; top:0; z-index:3; }
+.app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table thead th { height:38px; padding:8px 12px; }
+.app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table tbody th,
+.app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table tbody tr:not(.hierarchy-close) td:not(.hierarchy-rail):not(.hierarchy-detail) { padding:7px 12px; line-height:22px; }
+.app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table .hierarchy-detail { height:42px; }
+.app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table .hierarchy-detail .live-hierarchy-item { min-height:42px; padding:8px 12px; line-height:22px; }
+.app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table tbody tr td.hierarchy-detail { padding:0; }
+.app-layout .main-content:not(.home-overview) .selection-bar { padding:10px 12px; gap:10px; border-radius:9px; }
+.app-layout .main-content:not(.home-overview) .calculator-actions-dock .btn.primary { min-width:190px; }
+.app-layout .main-content:not(.home-overview) .snapshot-card { grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px 16px; }
+.app-layout .main-content:not(.home-overview) .snapshot-card > div { padding:0; border:0; }
+.app-layout .main-content:not(.home-overview) .snapshot-card p { margin-top:3px; font-size:13px; line-height:20px; }
+.app-layout .main-content:not(.home-overview) .cell-layout { grid-template-columns:220px minmax(0,1fr); gap:12px; }
+.app-layout .main-content:not(.home-overview) .answer-list { gap:6px; padding:12px; max-height:calc(100dvh - 160px); overflow:auto; }
+.app-layout .main-content:not(.home-overview) .answer-card { padding:8px 10px; }
+.app-layout .main-content:not(.home-overview) .cell-detail { gap:12px; }
+.app-layout .main-content:not(.home-overview) .version-grid.live-version-grid :is(th,td) { padding:10px 12px; font-size:13px; }
+.app-layout .main-content:not(.home-overview) .live-version-value { font-size:16px; }
+.app-layout .main-content:not(.home-overview) .live-version-change { margin-top:6px; }
+.app-layout .main-content:not(.home-overview) .message-dock { padding:16px; gap:12px; }
+
+/* Organization submissions and replies use the same scale as planner screens. */
+.app-layout .main-content:not(.home-overview) .org-panel { min-height:0; }
+.app-layout .main-content:not(.home-overview) .org-panel h1 { padding-bottom:0; border:0; }
+.app-layout .main-content:not(.home-overview) .org-card { gap:10px; }
+.app-layout .main-content:not(.home-overview) .org-request-card { min-height:0; padding:10px 12px; gap:12px; }
+.app-layout .main-content:not(.home-overview) .org-request-card h3 { margin-top:3px; }
+.app-layout .main-content:not(.home-overview) .org-request-message { margin-top:4px; font-size:13px; line-height:20px; }
+.app-layout .main-content:not(.home-overview) .org-live-request-content .muted { margin-top:4px; }
+.app-layout .main-content:not(.home-overview) .org-template { padding:10px 12px; }
+.app-layout .main-content:not(.home-overview) .org-dropzone { padding:18px 16px; min-height:120px; gap:8px; }
+.app-layout .main-content:not(.home-overview) .org-live-validation { padding:10px 12px; gap:10px; }
+.app-layout .main-content:not(.home-overview) .org-live-diagnostics { padding:12px; }
+.app-layout .main-content:not(.home-overview) .org-explanation-grid { grid-template-columns:240px minmax(0,1fr); gap:12px; }
+.app-layout .main-content:not(.home-overview) .org-item-list { padding:10px; gap:8px; max-height:calc(100dvh - 190px); overflow:auto; }
+.app-layout .main-content:not(.home-overview) .org-explanation-item { padding:8px 10px; gap:5px; }
+.app-layout .main-content:not(.home-overview) .org-comparison-card { padding:14px; gap:12px; }
+.app-layout .main-content:not(.home-overview) .org-selected-heading { padding-bottom:8px; }
+.app-layout .main-content:not(.home-overview) .org-comparison :is(th,td) { padding:8px 10px; font-size:13px; }
+.app-layout .main-content:not(.home-overview) .org-explanation-footer { padding-top:10px; margin-top:0; gap:10px; }
+.app-layout .main-content:not(.home-overview) .org-rerequest-comment { padding:8px 12px; margin:6px 0; }
+.app-layout .main-content:not(.home-overview) .org-history-tabs { padding:3px; gap:3px; }
+.app-layout .main-content:not(.home-overview) .org-history-tabs button { min-height:32px; padding:5px 12px; font-size:13px; }
+.app-layout .main-content:not(.home-overview) .org-history-filters { padding:8px 10px; gap:10px; }
+.app-layout .main-content:not(.home-overview) .org-history-filters label { font-size:13px; }
+.app-layout .main-content:not(.home-overview) .org-history-table { min-width:700px; }
+.app-layout .main-content:not(.home-overview) .org-table-scroll { max-height:calc(100dvh - 300px); }
+.app-layout .main-content:not(.home-overview) .current-reviews .section-heading { margin-bottom:10px; }
+.app-layout .main-content:not(.home-overview) .current-reviews .review-layout { grid-template-columns:240px minmax(0,1fr); gap:12px; }
+.app-layout .main-content:not(.home-overview) .current-reviews .review-list { padding:10px; gap:6px; max-height:calc(100dvh - 200px); overflow:auto; }
+.app-layout .main-content:not(.home-overview) .current-reviews .review-item { padding:8px 10px; font-size:13px; }
+.app-layout .main-content:not(.home-overview) .current-reviews .review-item.active { color:#17458f; }
+.app-layout .main-content:not(.home-overview) .current-reviews .review-detail { padding:14px; gap:12px; }
+.app-layout .main-content:not(.home-overview) .current-reviews .review-detail > h3 { padding-bottom:8px; }
+.app-layout .main-content:not(.home-overview) .current-reviews .review-detail :is(th,td) { padding:8px 10px; font-size:13px; }
+.app-layout .main-content:not(.home-overview) .current-reviews .p-datatable td:first-child { white-space:nowrap; }
+.app-layout .main-content:not(.home-overview) .current-reviews .review-detail form,
+.app-layout .main-content:not(.home-overview) .current-reviews .review-detail form > label,
+.app-layout .main-content:not(.home-overview) .current-reviews .attachment-input { gap:6px; }
+.app-layout .main-content:not(.home-overview) .current-reviews .review-detail textarea { min-height:80px; }
+.app-layout .main-content:not(.home-overview) .current-reviews .review-group > summary,
+.app-layout .main-content:not(.home-overview) .current-reviews .review-period > summary { padding:6px 8px; }
+.app-layout .main-content:not(.home-overview) .org-live-validation p { display:inline; margin:0 0 0 10px; }
+.app-layout .main-content:not(.home-overview) .current-reviews .review-detail > h3 { font-size:15px; line-height:23px; }
+
+/* PrimeVue report controls inherit the same compact dimensions. Printed output is untouched. */
+@media screen {
+  .app-layout .main-content:not(.home-overview) .report-panel { gap:12px; }
+  .app-layout .main-content:not(.home-overview) .report-panel :is(h1,h2,h3) { margin-bottom:0; }
+  .app-layout .main-content:not(.home-overview) .report-panel .report-grid { gap:12px; }
+  .app-layout .main-content:not(.home-overview) .p-button { min-height:34px; padding:6px 12px; border-radius:7px; font-size:13px; }
+  .app-layout .main-content:not(.home-overview) .p-button:not(.p-button-secondary):not(.p-button-text):not(.p-button-outlined):not(.p-button-danger):not(.p-button-success):not(.p-button-warn):not(.review-item) { color:#fff; }
+  .app-layout .main-content:not(.home-overview) .p-fileupload-basic input[type=file] { display:none; }
+  .app-layout .main-content:not(.home-overview) .report-panel input[type=file] { display:none; }
+  .app-layout .main-content:not(.home-overview) :is(.p-inputtext,.p-select) { min-height:34px; font-size:13px; }
+  .app-layout .main-content:not(.home-overview) .p-panel-header { padding:12px 16px; font-size:15px; }
+  .app-layout .main-content:not(.home-overview) .p-panel-toggle-button { width:28px; height:28px; min-height:28px; padding:4px; }
+  .app-layout .main-content:not(.home-overview) .p-panel-content { padding:0 16px 14px; }
+  .app-layout .main-content:not(.home-overview) .p-datatable :is(th,td) { padding:8px 12px; font-size:13px; }
+  .app-layout .main-content:not(.home-overview) .report-template-list { margin:0; max-height:320px; overflow:auto; }
+  .app-layout .main-content:not(.home-overview) .report-template-list li { padding:8px 0; gap:10px; }
+  .app-layout .main-content:not(.home-overview) .report-upload-limit { display:block; font-size:12px; margin-bottom:8px; }
+  .app-layout .main-content:not(.home-overview) .report-panel .report-question { margin-top:12px; }
+  .app-layout .main-content:not(.home-overview) .report-panel .report-step-actions { margin-top:12px; }
+}
+
+/* Request recipients and message fields share a row when there is enough width. */
+@media(min-width:1101px) {
+  .app-layout .main-content:not(.home-overview) .snapshot-card { grid-template-columns:repeat(6,minmax(0,1fr)); }
+  .app-layout .main-content:not(.home-overview) .monthly-request-form { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr); gap:12px; align-items:start; }
+  .app-layout .main-content:not(.home-overview) .monthly-request-form > .notice { grid-column:1/-1; }
+  .app-layout .main-content:not(.home-overview) .monthly-request-form .table-scroll { max-height:calc(100dvh - 200px); }
+  .app-layout .main-content:not(.home-overview) .mg-request-form { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(300px,.75fr); grid-template-rows:auto auto auto 1fr; gap:12px 20px; align-items:start; }
+  .app-layout .main-content:not(.home-overview) .mg-request-form > .mg-section-heading { grid-column:1/-1; }
+  .app-layout .main-content:not(.home-overview) .mg-request-form > .mg-table-scroll { grid-column:1; grid-row:2 / span 4; }
+  .app-layout .main-content:not(.home-overview) .mg-request-form > .mg-field,
+  .app-layout .main-content:not(.home-overview) .mg-request-form > .error,
+  .app-layout .main-content:not(.home-overview) .mg-request-form > .mg-actions { grid-column:2; }
+  .app-layout .main-content:not(.home-overview) .mg-request-form .mg-table { min-width:500px; }
+}
+
+@media(max-width:1100px) {
+  .app-layout .main-content:not(.home-overview) { padding-inline:18px; }
+  .app-layout .main-content:not(.home-overview) .version-controls { grid-template-columns:1fr 1fr; }
+  .app-layout .main-content:not(.home-overview) .version-controls > select { grid-column:1/-1; }
+  .app-layout .main-content:not(.home-overview) .mg-month-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+}
+@media(max-width:900px) {
+  .app-layout .main-content:not(.home-overview) :is(.org-explanation-grid,.current-reviews .review-layout) { grid-template-columns:minmax(0,1fr); }
+  .app-layout .main-content:not(.home-overview) :is(.org-item-list,.current-reviews .review-list) { max-height:240px; }
+}
+@media(max-width:760px) {
+  .app-layout .sidebar { padding:12px; gap:8px; }
+  .app-layout .sidebar nav { gap:4px; }
+  .app-layout .sidebar-user { flex-direction:row; align-items:center; padding-top:8px; gap:6px; }
+  .app-layout .sidebar-user strong { font-size:11px; }
+  .app-layout .sidebar-user small { display:none; }
+  .app-layout .main-content:not(.home-overview) { padding:14px 12px 24px; }
+  .app-layout .main-content:not(.home-overview) h1 { font-size:21px; line-height:30px; }
+  .app-layout .main-content:not(.home-overview) .card { padding:12px; }
+  .app-layout .main-content:not(.home-overview) :is(.btn,.button) { min-height:40px; padding:8px 12px; }
+  .app-layout .main-content:not(.home-overview) :is(input:not([type=checkbox]):not([type=radio]):not([type=file]),select) { height:40px; min-height:40px; }
+  .app-layout .main-content:not(.home-overview) .mg-filter-row { gap:6px; }
+  .app-layout .main-content:not(.home-overview) .mg-notification { padding:10px 12px; gap:8px; }
+  .app-layout .main-content:not(.home-overview) .mg-notification-action { flex-direction:row; align-items:center; justify-content:space-between; }
+  .app-layout .main-content:not(.home-overview) .mg-notification-action .btn { min-width:96px; }
+  .app-layout .main-content:not(.home-overview) .mg-archive { grid-template-columns:minmax(0,1fr); gap:10px; }
+  .app-layout .main-content:not(.home-overview) .mg-org-picker { max-height:220px; }
+  .app-layout .main-content:not(.home-overview) .mg-month-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .app-layout .main-content:not(.home-overview) .version-controls { grid-template-columns:minmax(0,1fr); }
+  .app-layout .main-content:not(.home-overview) .gap-controls > .actions { margin-left:0; width:100%; }
+  .app-layout .main-content:not(.home-overview) .gap-controls > .actions .btn { flex:1; }
+  .app-layout .main-content:not(.home-overview) .status-tabs { display:flex; overflow:auto; flex-wrap:nowrap; }
+  .app-layout .main-content:not(.home-overview) .status-tabs button { min-width:96px; flex:0 0 auto; min-height:40px; }
+  .app-layout .main-content:not(.home-overview) .calculator-actions-dock .btn.primary { min-width:0; }
+  .app-layout .main-content:not(.home-overview) .cell-layout { grid-template-columns:minmax(0,1fr); }
+  .app-layout .main-content:not(.home-overview) .snapshot-card { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .app-layout .main-content:not(.home-overview) .answer-list { max-height:200px; }
+  .app-layout .main-content:not(.home-overview) .org-history-filters { flex-wrap:wrap; }
+  .app-layout .main-content:not(.home-overview) .mg-annual-organizations > .mg-table-scroll { max-height:520px; }
+}
+}

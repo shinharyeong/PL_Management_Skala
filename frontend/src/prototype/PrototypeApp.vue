@@ -185,7 +185,7 @@ watch(page,async value=>{
     </main>
     <footer class="muted"><span data-copy-key="login.footer">{{ copy.login.footer }}</span></footer>
   </div>
-  <div v-else-if="store.actor" class="app-layout">
+  <div v-else-if="store.actor" class="app-layout" :class="{'development-workspace':developmentEntry}">
     <a class="skip-link" href="#main-content" @click.prevent="focusMain"><span data-copy-key="shellText.text015">{{ copy.shellText.text015 }}</span></a>
     <aside class="sidebar">
       <a class="brand" :href="store.actor.role === 'org' ? '#/org-requests' : '#/home'"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span></a>
@@ -205,7 +205,7 @@ watch(page,async value=>{
       <div class="sidebar-user"><span class="user-avatar" aria-hidden="true">{{ store.actor.name.slice(0,1) }}</span><strong>{{ store.actor.name }}</strong><small>{{ store.actor.department }}</small><button class="text-button" @click="logoutDialog.showModal()"><span data-copy-key="login.logout">{{ copy.login.logout }}</span></button></div>
     </aside>
     <div class="workspace-shell">
-    <main id="main-content" class="main-content" tabindex="-1">
+    <main id="main-content" class="main-content" :class="{ 'home-overview': page === 'home' }" tabindex="-1">
       <p v-if="store.error" class="notice error" role="alert">{{ store.error }}</p><p v-if="store.busy" class="muted" role="status"><span data-copy-key="shellText.text016">{{ copy.shellText.text016 }}</span></p>
       <HomePanel v-if="page === 'home'" @navigate="navigate" />
       <MonthlyPanel v-else-if="monthlyPages.includes(page)" :page="page" @navigate="navigate" />

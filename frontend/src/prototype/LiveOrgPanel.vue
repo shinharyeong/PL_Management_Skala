@@ -125,7 +125,7 @@ async function submit(){await store.run(async()=>{await store.api(`/api/v1/submi
 async function template(){await store.run(async()=>saveFile(await store.api('/api/v1/submission-template/file',{blob:true}),'제출양식.xlsx'))}
 </script>
 <template>
-<section class="org-panel org-live">
+<section class="org-panel org-live" :data-page="page">
   <p v-if="loading" class="muted" role="status"><span data-copy-key="organizationText.text001">{{ copy.organizationText.text001 }}</span></p>
   <template v-if="page==='org-requests'">
     <h1>{{ copy.pages['org-requests'] }}</h1>
@@ -162,7 +162,7 @@ async function template(){await store.run(async()=>saveFile(await store.api('/ap
           <div class="actions"><button class="btn" :disabled="store.busy" @click="fileInput?.click()">{{file?'파일 다시 선택':'파일 선택'}}</button><button v-if="file" class="btn danger" :disabled="store.busy" @click="file=null;fileError=''"><span data-copy-key="organizationText.text027">{{ copy.organizationText.text027 }}</span></button></div>
         </div>
         <p v-if="fileError" class="org-inline-message" role="alert">{{fileError}}</p>
-        <p class="org-upload-notice muted"><span data-copy-key="organizationText.text028">{{ copy.organizationText.text028 }}</span></p>
+
         <div class="org-upload-actions"><button class="btn" @click="emit('navigate','org-requests')"><span data-copy-key="organizationText.text029">{{ copy.organizationText.text029 }}</span></button><button class="btn primary" :disabled="!file || store.busy" @click="upload"><span data-copy-key="organizationText.text030">{{ copy.organizationText.text030 }}</span></button></div>
       </template>
       <template v-else><h2><span data-copy-key="organizationText.text031">{{ copy.organizationText.text031 }}</span></h2><p v-if="request?.request?.message" class="org-baseline muted org-live-message">{{request.request.message}}</p><p class="muted"><span data-copy-key="organizationText.text005">{{ copy.organizationText.text005 }}</span> {{date(request?.request?.dueAt)}} <span data-copy-key="organizationText.text032">{{ copy.organizationText.text032 }}</span></p></template>
