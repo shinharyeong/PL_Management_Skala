@@ -1,15 +1,17 @@
-// 와이어프레임 4-2: 탭은 서버 상태를 그대로 보여 주고, '검토 필요' 탭에는 선택해 둔 항목(검토 완료)도 남긴다.
+// Calculator filters group workflow states without changing their server meaning.
 export const calculatorStages = [
-  { label: '검토 필요', tone: 'review' },
-  { label: '소명 진행중', tone: 'progress' },
-  { label: '재검토 필요', tone: 'recheck' },
-  { label: '소명 승인 완료', tone: 'approved' },
-  { label: '제외됨', tone: 'excluded' },
   { label: '전체', tone: 'all' },
+  { label: '검토중', tone: 'review' },
+  { label: '소명 중', tone: 'progress' },
+  { label: '제외됨', tone: 'excluded' },
+  { label: '승인됨', tone: 'approved' },
 ]
-export const defaultCalculatorStage = '검토 필요'
+export const defaultCalculatorStage = '전체'
 export function calculatorStage(status) {
-  return status === '검토 완료' ? '검토 필요' : status
+  if (['검토 필요', '검토 완료', '재검토 필요'].includes(status)) return '검토중'
+  if (status === '소명 진행중') return '소명 중'
+  if (status === '소명 승인 완료') return '승인됨'
+  return status
 }
 export const matchesCalculatorStage = (item, stage) => stage === '전체' || calculatorStage(item.status) === stage
 export function calculatorStageCounts(items) {
