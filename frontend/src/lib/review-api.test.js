@@ -25,12 +25,13 @@ test('review evidence and explanation requests use the actual review ID and curr
   } finally { globalThis.fetch = original }
 })
 
-/** 제외 사유와 현재 항목 토큰을 필수로 유지하는지 검증한다.
+/** 제외 사유는 선택이고 현재 항목 토큰은 필수인지 검증한다.
  * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 없음.
  */
-test('exclusions require a reason and never invent missing review tokens', function exclusionContract() {
+test('exclusion reasons are optional and missing review tokens are never invented', function exclusionContract() {
   const rows = [{ id: '71', stateToken: 'current' }]
-  assert.throws(() => reviewActionBody('EXCLUDE', rows), /제외 사유/)
+  assert.deepEqual(reviewActionBody('EXCLUDE', rows), { action: 'EXCLUDE', items: [{ reviewItemId: '71', expectedStateToken: 'current' }] })
+  assert.throws(() => reviewActionBody('EXCLUDE', rows, { note: 'x'.repeat(4001) }), /제외 사유/)
   assert.throws(() => reviewActionBody('SELECT', [{ id: '71' }]), /최신 상태/)
   assert.throws(() => reviewActionBody('SELECT', [...rows, ...rows]), /최신 상태/)
   assert.deepEqual(reviewActionBody('EXCLUDE', rows, { note: ' 일회성 항목으로 제외 ' }), { action: 'EXCLUDE', items: [{ reviewItemId: '71', expectedStateToken: 'current' }], note: '일회성 항목으로 제외' })

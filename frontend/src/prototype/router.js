@@ -23,8 +23,14 @@ export function createPrototypeRouter(history, store) {
       }
     }
     if (to.name === 'calculator' && store.live && !store.activeOrg) return { name: 'monthly', replace: true }
-    if (to.name === 'workspace' && !store.carts[store.activeOrg]?.length) return { name: 'monthly', replace: true }
-    if (to.name === 'cell' && store.live && !store.carts[store.activeOrg]?.some(item => item.id === store.monthlySession(store.activeOrg).activeCell)) return { name: store.carts[store.activeOrg]?.length ? 'workspace' : 'monthly', replace: true }
+    // 와이어프레임 4-3: 선택 항목은 Gap 상세(cell)에서 바로 검토한다. 예전 workspace 주소는 cell로 보낸다.
+    if (to.name === 'workspace') return { name: store.carts[store.activeOrg]?.length ? 'cell' : 'monthly', replace: true }
+    if (to.name === 'cell' && store.live) {
+      const cart = store.carts[store.activeOrg] || []
+      if (!cart.length) return { name: 'monthly', replace: true }
+      const session = store.monthlySession?.(store.activeOrg)
+      if (session && !cart.some(item => item.id === session.activeCell)) session.activeCell = cart[0].id
+    }
     if ((to.name === 'cell' || (to.name === 'calculator' && !store.live)) && !store.items[store.activeOrg]?.length) return { name: 'monthly', replace: true }
   })
   return router
