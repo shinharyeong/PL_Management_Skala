@@ -54,7 +54,7 @@ async function openNotification(item){
 </script>
 <template>
  <header class="mg-heading"><div><p class="mg-breadcrumb"><span data-copy-key="notificationText.text001">{{ copy.notificationText.text001 }}</span> <span data-copy-key="pages.notifications">{{copy.pages.notifications}}</span></p><h1><span data-copy-key="pages.notifications">{{copy.pages.notifications}}</span></h1></div><button class="btn" :disabled="store.busy||!page?.summary.unreadCount" @click="readAll">모두 읽음 처리</button></header>
- <p class="mg-description"><span data-copy-key="notificationText.text002">{{ copy.notificationText.text002 }}</span></p>
+
  <div class="mg-kpis" role="group" aria-label="알림 요약">
   <div class="card mg-kpi"><small>안 읽은 알림</small><strong class="mg-kpi-red">{{page?.summary.unreadCount??'—'}}<span>건</span></strong></div>
   <div class="card mg-kpi"><small>회신 검토 대기</small><strong class="mg-kpi-amber">{{page?.summary.replyPendingCount??'—'}}<span>건</span></strong></div>

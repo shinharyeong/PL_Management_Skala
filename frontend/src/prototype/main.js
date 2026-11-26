@@ -10,6 +10,7 @@ import './prototype.css'
 import './workspace.css'
 import './responsive.css'
 import './legacy-design-bridge.css'
+import './density.css'
 import {refreshSharedCopy,startSharedCopySync} from './copy-text.js'
 
 const pinia = createPinia()
