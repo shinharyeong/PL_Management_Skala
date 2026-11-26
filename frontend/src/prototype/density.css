@@ -70,8 +70,9 @@
 .app-layout .main-content:not(.home-overview) .mg-actions .btn { min-width:0; }
 .app-layout .main-content:not(.home-overview) .mg-section-heading > .mg-actions > .mg-field { flex-direction:row; align-items:center; gap:8px; }
 .app-layout .main-content:not(.home-overview) .mg-section-heading input[type=number] { max-width:96px; }
-.app-layout .main-content:not(.home-overview) .annual-heading-actions > .mg-field { flex-direction:row; align-items:center; gap:8px; white-space:nowrap; }
-.app-layout .main-content:not(.home-overview) .annual-heading-actions input { width:96px; }
+.app-layout .main-content:not(.home-overview) .annual-heading-actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.app-layout .main-content:not(.home-overview) .annual-heading-actions h2 { margin:0; font-size:13px; font-weight:500; color:var(--muted); }
+.app-layout .main-content:not(.home-overview) .mg-request-year { font-size:13px; font-weight:500; color:var(--muted); }
 .app-layout .main-content:not(.home-overview) .mg-request-form { gap:12px; }
 .app-layout .main-content:not(.home-overview) .mg-request-form > .mg-table-scroll { max-height:clamp(240px,calc(100dvh - 300px),580px); }
 .app-layout .main-content:not(.home-overview) .mg-request-submit { min-width:0; }
@@ -96,7 +97,6 @@
 .app-layout .main-content:not(.home-overview) .monthly-submission-state { display:inline-block; margin:0 0 0 6px; font-size:11px; }
 .app-layout .main-content:not(.home-overview) .reply-cell { padding:10px 12px; }
 .app-layout .main-content:not(.home-overview) .reply-card { padding:12px; gap:8px; }
-.app-layout .main-content:not(.home-overview) .monthly-submission-review { gap:8px; margin-top:4px; padding-top:10px; }
 .app-layout .main-content:not(.home-overview) :is(.request-fields,.calculator-settings) { gap:10px; }
 .app-layout .main-content:not(.home-overview) .version-controls { gap:8px; }
 .app-layout .main-content:not(.home-overview) .gap-controls { gap:8px; }
@@ -106,7 +106,7 @@
 .app-layout .main-content:not(.home-overview) .gap-controls > .actions .btn { min-width:0; }
 .app-layout .main-content:not(.home-overview) .gap-amount-units { padding:2px; gap:2px; }
 .app-layout .main-content:not(.home-overview) .gap-amount-units button { padding:3px 7px; min-height:26px; }
-.app-layout .main-content:not(.home-overview) .status-tabs { grid-template-columns:repeat(5,minmax(0,1fr)); gap:5px; }
+.app-layout .main-content:not(.home-overview) .status-tabs { grid-template-columns:repeat(6,minmax(0,1fr)); gap:5px; }
 .app-layout .main-content:not(.home-overview) .status-tabs button { min-height:36px; padding:5px 10px; border-radius:7px; font-size:13px; }
 .app-layout .main-content:not(.home-overview) .calculator-pipeline { padding:0 4px; gap:6px; }
 .app-layout .main-content:not(.home-overview) .result-toolbar { padding:7px 10px; gap:8px 12px; border-radius:8px; }

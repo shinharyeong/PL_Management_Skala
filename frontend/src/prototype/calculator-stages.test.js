@@ -5,24 +5,28 @@ import { usePrototypeStore } from './live-store.js'
 import { createMonthlySession, statuses } from './domain.js'
 import { calculatorStageCounts, matchesCalculatorStage } from './calculator-stages.js'
 
-test('전체 includes every workflow state; review includes selected items and replies awaiting review', () => {
+test('전체 includes every workflow state; replies awaiting review get their own tab', () => {
   const items = statuses.map((status, id) => ({ id, status }))
   assert.equal(createMonthlySession().stage, '전체')
   assert.deepEqual(items.filter(item => matchesCalculatorStage(item, '전체')), items)
-  assert.deepEqual(items.filter(item => matchesCalculatorStage(item, '검토중')).map(item => item.status), ['검토 필요', '검토 완료', '재검토 필요'])
+  assert.deepEqual(items.filter(item => matchesCalculatorStage(item, '검토중')).map(item => item.status), ['검토 필요', '검토 완료'])
+  assert.deepEqual(items.filter(item => matchesCalculatorStage(item, '회신 검토')).map(item => item.status), ['재검토 필요'])
   const counts = calculatorStageCounts(items)
-  assert.deepEqual(counts, { 전체: 6, 검토중: 3, '소명 중': 1, 제외됨: 1, 승인됨: 1 })
-  assert.equal(counts.전체, counts.검토중 + counts['소명 중'] + counts.제외됨 + counts.승인됨)
+  assert.deepEqual(counts, { 전체: 6, 검토중: 2, '회신 검토': 1, '소명 중': 1, 제외됨: 1, 승인됨: 1 })
+  assert.equal(counts.전체, counts.검토중 + counts['회신 검토'] + counts['소명 중'] + counts.제외됨 + counts.승인됨)
 })
 
 test('a selected item remains visible in both all and review after opening its workspace', () => {
   const item = { id: 'one', status: '검토 필요' }
-  for (const status of ['검토 필요', '검토 완료', '재검토 필요']) {
+  for (const status of ['검토 필요', '검토 완료']) {
     item.status = status
     assert.ok(matchesCalculatorStage(item, '전체'))
     assert.ok(matchesCalculatorStage(item, '검토중'))
     assert.equal(matchesCalculatorStage(item, '소명 중'), false)
   }
+  item.status = '재검토 필요'
+  assert.ok(matchesCalculatorStage(item, '회신 검토'))
+  assert.equal(matchesCalculatorStage(item, '검토중'), false)
   item.status = '소명 진행중'
   assert.equal(matchesCalculatorStage(item, '검토중'), false)
   assert.ok(matchesCalculatorStage(item, '소명 중'))
