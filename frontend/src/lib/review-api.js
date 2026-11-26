@@ -32,9 +32,10 @@ export function reviewActionBody(action, rows, extra = {}) {
   }
   const body = { action, items }
   if (action === 'EXCLUDE') {
+    // 제외 사유는 선택이다(와이어프레임 4-2의 하단 바에는 사유 입력이 없다). 서버는 note를 비워도 받는다.
     const note = extra.note?.trim()
-    if (!note || note.length > 4000) throw new Error('제외 사유를 1~4000자로 입력해 주세요.')
-    body.note = note
+    if (note && note.length > 4000) throw new Error('제외 사유는 4000자 이내로 입력해 주세요.')
+    if (note) body.note = note
   }
   if (action === 'REQUEST_EXPLANATION') {
     const message = extra.message?.trim()
