@@ -1,6 +1,31 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { analysisBrief, answerActions, answerCitations, askAssistant, assistantPayload, canStartGoalPreview, citationValue, conversationHistory, conversationKey, goalPreviewQuestion, observationCell, observationExplanations, observationForExecution, observationTables, reviewDraftSource, successfulObservations, validateAssistantResponse } from './decision-conversation-api.js'
+import { analysisBrief, answerActions, answerCitations, askAssistant, assistantPayload, assistantStatusLabel, canStartGoalPreview, citationValue, conversationHistory, conversationKey, goalPreviewQuestion, observationCell, observationExplanations, observationForExecution, observationTables, reviewDraftSource, successfulObservations, validateAssistantResponse } from './decision-conversation-api.js'
+
+/** 같은 UNAVAILABLE라도 실행 한도와 응답 중단을 구분하고 원인 안내·실제 관찰을 보존한다.
+ * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 메모리 응답만 검사한다.
+ */
+test('failure labels distinguish execution limits without replacing the server cause or successful evidence', function failureStatusLabels() {
+  const payload = assistantPayload('101', null, '계획 차이 확인')
+  const cases = [
+    { mode: 'UNAVAILABLE', status: 'LIMIT_REACHED', answer: '모델의 일일 호출 한도에 도달했습니다.', label: '실행 한도 도달' },
+    { mode: 'MODEL', status: 'LIMIT_REACHED', answer: '실행 시간이 소진되었습니다.', label: '실행 한도 도달' },
+    { mode: 'UNAVAILABLE', status: 'FAILED', answer: '모델 응답 대기 시간이 초과되었습니다.', label: '답변 생성 중단' },
+    { mode: 'UNAVAILABLE', status: 'FAILED', answer: '모델이 설정되지 않았습니다.', label: '답변 생성 중단' },
+    { mode: 'MODEL', status: 'FAILED', answer: '업무 자료 조회를 완료하지 못했습니다.', label: '조회·답변 처리 실패' },
+  ]
+  for (const item of cases) {
+    const response = { ...groundedResponse(), mode: item.mode, status: item.status, answer: item.answer, brief: null }
+    const checked = validateAssistantResponse(response, payload)
+    assert.equal(assistantStatusLabel(checked), item.label)
+    assert.equal(checked.answer, item.answer)
+    assert.equal(checked.observations, response.observations)
+    assert.equal(successfulObservations(checked).length, 1)
+  }
+  assert.equal(assistantStatusLabel({ mode: 'MODEL', status: 'COMPLETED', brief: {} }), '요청 항목 확인 완료')
+  assert.equal(assistantStatusLabel({ mode: 'MODEL', status: 'COMPLETED' }), '근거 조회 완료')
+  assert.equal(assistantStatusLabel({ mode: 'MODEL', status: 'NEEDS_INPUT' }), '추가 정보 필요')
+})
 
 /** 실제 근거 연결과 미해결 요구 항목을 가진 합성 응답을 만든다.
  * Args: 없음. Returns: 독립된 메모리 응답. Raises: 없음. Side Effects: 외부 데이터·파일 접근 없음.
@@ -114,16 +139,16 @@ test('report source resolves the exact execution instead of a reused observation
   assert.equal(observationForExecution(turns, 'second-execution', 'obs-1'), null)
 })
 
-/** 폼의 목표를 저장 없는 조회 질문에 정밀하게 반영하며 보호 제약 검증과 구분한다.
+/** 폼의 두 조회 요청과 정밀 목표를 보존하고 정책 안내를 추가 요청으로 보내지 않는다.
  * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 없음.
  */
 test('goal form becomes a precise read only comparison question with no analysis payload', function previewQuestion() {
   const input = { masterId: '101', year: 2026, targetProfitEok: '9007199254740993.12345678' }
   const message = goalPreviewQuestion(input), payload = assistantPayload(input.masterId, null, message)
-  assert.match(message, /9007199254740993\.12345678억 원/)
-  assert.match(message, /조직별 영업이익의 계획 대비 차이/)
-  assert.match(message, /목표나 분석은 저장하지 말고/)
-  assert.match(message, /보호 제약과 개선 과제 효과의 검증은 이번 비교에 포함하지 않습니다/)
+  assert.match(message, /2026년 현재 연간 영업이익 전망을 목표 9007199254740993\.12345678억 원과 비교해 부족액 또는 초과액/)
+  assert.match(message, /조직별 영업이익 계획 차이/)
+  assert.doesNotMatch(message, /저장|승인|보호|개선 과제|검증/)
+  assert.equal(payload.message, message)
   assert.equal(payload.masterId, '101')
   assert.equal(payload.analysisId, null)
   assert.equal(payload.expectedRevision, null)

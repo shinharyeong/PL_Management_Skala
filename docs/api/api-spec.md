@@ -31,7 +31,7 @@
 | `Authorization` | 로그인·공개 API 외 전부 | `Bearer <token>` | AUTH-02에서 받은 세션 토큰. 없거나 만료되면 `401 UNAUTHENTICATED` |
 | `Content-Type` | 본문이 있는 요청 | `application/json`, 파일 업로드는 `multipart/form-data` | 파일은 multipart의 `file` 필드로 보냄 |
 | `Accept` | 선택 | `application/json` | 파일 다운로드 API는 파일 스트림(`200`) |
-| `Idempotency-Key` | POST·PUT·PATCH·DELETE 명령 전부 | 클라이언트가 만든 고유 문자열(UUID 권장, 최대 128자) | 같은 사용자·경로·키로 다시 보내면 첫 성공 응답을 그대로 돌려줌(24시간 보관). 같은 키에 다른 본문이면 `409 IDEMPOTENCY_KEY_REUSED`, 첫 요청이 처리 중이면 `409 REQUEST_IN_PROGRESS` |
+| `Idempotency-Key` | 업무 상태를 저장하는 POST·PUT·PATCH·DELETE 명령 | 클라이언트가 만든 고유 문자열(UUID 권장, 최대 128자) | 같은 사용자·경로·키로 다시 보내면 첫 성공 응답을 그대로 돌려줌(24시간 보관). 같은 키에 다른 본문이면 `409 IDEMPOTENCY_KEY_REUSED`, 첫 요청이 처리 중이면 `409 REQUEST_IN_PROGRESS`. 인증·저장 없는 조회형 POST·아래 명시한 메모리 로그아웃은 예외 |
 | `X-Request-ID` | 선택 | 클라이언트 추적 ID | 보내면 그대로 쓰고, 없으면 서버가 만들어 응답 헤더로 돌려줌 |
 
 ### 0-2. 공통 성공 응답
@@ -137,9 +137,13 @@ API별 업무 오류 코드(`REQUEST_ALREADY_EXISTS`, `PENDING_ALREADY_EXISTS`, 
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | AUTH-01 | POST | `/auth/codes` | 인증 메일 요청·재전송. 등록된 사내 도메인·계정만 허용, 재전송은 1분 후 | `email` | `202` `expiresAt`(3분), `resendAvailableAt` · 오류 `UNREGISTERED_EMAIL`, `CODE_RESEND_WAIT`(429) | 공개 | AUTH-001, 002 | app_user |
 | AUTH-02 | POST | `/auth/sessions` | 인증코드로 로그인 | `email`, `code` | `token`, `expiresAt`, `me{user,role,organization,homePath,menus}` · 오류 `INVALID_AUTH_CODE`, 상세 `errors[].code`=MISMATCH·EXPIRED·TOO_MANY_ATTEMPTS | 공개 | AUTH-002, 003, 004 | app_user |
-| AUTH-03 | DELETE | `/auth/session` | 로그아웃(세션 종료) | — | `204` | P·O | AUTH-007 | — |
+| AUTH-03 | DELETE | `/auth/session` | 인증된 현재 메모리 세션 종료. DB 멱등 기록 없음 | 본문 없음, 기존 `Idempotency-Key`는 선택이며 무시 | `204`; 종료된 토큰의 후속 요청은 `401 UNAUTHENTICATED` | P·O | AUTH-007 | — |
 | AUTH-04 | GET | `/me` | 로그인 사용자·역할·조직. 메뉴 구성과 조직 고정에 사용 | — | `user`, `role`, `organization{id,code,name}`(O만), `menus[]` | P·O | AUTH-004, MENU-001, 002 | app_user, organization |
 | AUTH-05 | GET | `/me/badges` | 메뉴 배지 건수. 0이면 프론트에서 숨김 | — | P: `unreadNotifications`, `monthlyReviewNeeded`, `annualReviewNeeded` · O: `openRequests` | P·O | MENU-004 | notification, review_item, submission, request_target |
+
+AUTH-03은 인증 확인 후 현재 토큰만 메모리에서 폐기한다. 멱등 키가 없어도 실행하며,
+기존 클라이언트가 보낸 키는 검증·저장하지 않는다. 다른 세션은 유지하고, 폐기한 토큰으로
+재호출하면 인증 단계에서 거부하므로 이전 성공 응답을 DB에서 재생하지 않는다.
 
 ## 2. 알림 모아보기 (FR-NOTI-A) — 경영기획팀
 

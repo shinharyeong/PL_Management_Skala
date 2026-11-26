@@ -183,6 +183,58 @@ test('organization projection sorts exact signed decimals and preserves full cou
   assert.equal(result.organizations[0].favorability, 'NEUTRAL'); assert.equal(JSON.stringify(run), before)
 })
 
+/** 손익 차이만 조회한 경우 실제 비교액은 보이고 전망·전체 조직 수는 추정하지 않는다.
+ * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 메모리만 사용한다.
+ */
+test('profit driver fallback preserves exact differences without inventing outlook or scope counts', function driverProjection() {
+  const drivers = observation('drivers', 'profit_drivers', { dataStatus: 'CONFIRMED', total: '-123456789.987654', items: [
+    { organization: { id: 'larger-shortfall', name: '합성 조직 가' }, opDiff: '-9007199254740993.000002', opDiffRate: '-2.5' },
+    { organization: { id: 'smaller-shortfall', name: '합성 조직 나' }, opDiff: '-9007199254740993.000001', opDiffRate: '-1.5' },
+    { organization: { id: 'missing', name: '합성 조직 다' }, opDiff: 100, opDiffRate: null },
+    { organization: { id: 'larger-shortfall', name: '중복' }, opDiff: '1' },
+  ] })
+  const stale = observation('old', 'profit_drivers', { items: [{ organization: { id: 'old' }, opDiff: '999' }] }); stale.basis.masterId = '102'
+  const failed = observation('failed', 'profit_drivers', { items: [{ organization: { id: 'failed' }, opDiff: '888' }] }); failed.status = 'ERROR'
+  const run = execution([drivers, stale, failed]); run.response.status = 'NEEDS_INPUT'
+  const before = JSON.stringify(run), result = buildPreviewResult(run, scope())
+  assert.equal(result.state, 'PARTIAL')
+  assert.equal(result.organizationSource, 'profit_drivers')
+  assert.equal(result.organizationCount, null)
+  const ids = []
+  for (const row of result.organizations) ids.push(row.id)
+  assert.deepEqual(ids, ['smaller-shortfall', 'larger-shortfall', 'missing'])
+  assert.equal(result.organizations[0].planDifferenceWon, '-9007199254740993.000001')
+  assert.equal(result.organizations[0].actualWon, null)
+  assert.equal(result.organizations[0].direction, null)
+  assert.equal(result.organizations[0].favorability, null)
+  assert.equal(result.organizations[0].missing, false)
+  assert.equal(result.organizations[0].comparisonOnly, true)
+  assert.equal(result.organizations[0].sourceObservationId, 'drivers')
+  assert.equal(result.organizations[2].planDifferenceWon, null)
+  assert.equal(result.organizations[2].missing, true)
+  assert.equal(JSON.stringify(run), before)
+  assert.deepEqual(buildPreviewResult(run, { ...scope(), masterId: 'other' }).organizations, [])
+})
+
+/** 전체 조직 조회가 있으면 호출 순서에 관계없이 제한된 차이 목록으로 대체하지 않는다.
+ * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 메모리만 사용한다.
+ */
+test('full organization observations take precedence over limited driver fallback in either order', function organizationPrecedence() {
+  const drivers = observation('drivers', 'profit_drivers', { total: '999', items: [{ organization: { id: 'driver' }, opDiff: '999' }] })
+  const orgs = observation('orgs', 'organization_pnl', { summary: { scopeOrganizationCount: 7, rankedByOpPlanDifference: [organization('full', '123')] } })
+  for (const observations of [[drivers, orgs], [orgs, drivers]]) {
+    const result = buildPreviewResult(execution(observations), scope())
+    assert.equal(result.organizationSource, 'organization_pnl')
+    assert.equal(result.organizationCount, 7)
+    assert.equal(result.organizations[0].id, 'full')
+    assert.equal(result.organizations[0].actualWon, '100.123456')
+  }
+  const empty = buildPreviewResult(execution([observation('empty-drivers', 'profit_drivers', { total: '0', items: [] })]), scope())
+  assert.equal(empty.organizationSource, 'profit_drivers')
+  assert.equal(empty.organizationCount, null)
+  assert.deepEqual(empty.organizations, [])
+})
+
 /** 미조회 개수와 성공한 빈 조회를 구분하고 누락 비교액을 영으로 바꾸지 않는다.
  * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 없음.
  */
@@ -195,6 +247,47 @@ test('counts distinguish unqueried from observed zero and missing comparisons re
   const row = organization('1', null, true)
   const missing = buildPreviewResult(execution([observation('orgs', 'organization_pnl', { summary: { scopeOrganizationCount: 1, rankedByOpPlanDifference: [row] } })]), scope())
   assert.equal(missing.organizations[0].planDifferenceWon, null); assert.equal(missing.organizations[0].missing, true)
+})
+
+/** 서로 다른 조직의 조회 결과를 마지막 조회나 서버 total로 덮지 않고 합친다.
+ * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 메모리만 사용한다.
+ */
+test('approved explanation counts combine returned evidence across organizations', function combinedExplanationCount() {
+  const first = observation('org-a', 'approved_explanations', { total: 8, items: [
+    { refId: 'explanation-101', organizationId: 'a' }, { refId: 'explanation-102', organizationId: 'a' },
+  ] })
+  const second = observation('org-b', 'approved_explanations', { total: 7, items: [{ refId: 'explanation-103', organizationId: 'b' }] })
+  const empty = observation('empty', 'approved_explanations', { total: 0, items: [] })
+  const run = execution([first, second, empty]), before = JSON.stringify(run)
+  assert.equal(buildPreviewResult(run, scope()).explanationCount, 3)
+  assert.equal(JSON.stringify(run), before)
+})
+
+/** 전체 조회와 조직 재조회가 겹쳐도 전역 소명 ID를 한 번만 집계한다.
+ * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 메모리만 사용한다.
+ */
+test('overlapping explanation queries count each global evidence identifier once', function repeatedExplanationCount() {
+  const company = observation('all-orgs', 'approved_explanations', { items: [
+    { refId: 'explanation-201', organizationId: 'a' }, { refId: 'explanation-202', organizationId: 'b' },
+  ] })
+  const again = observation('org-repeat', 'approved_explanations', { items: [
+    { refId: 'explanation-201', organizationId: 'a' }, { refId: 'explanation-203', organizationId: 'a' },
+  ] })
+  assert.equal(buildPreviewResult(execution([company, again, company]), scope()).explanationCount, 3)
+  const unidentifiable = observation('missing-id', 'approved_explanations', { items: [{}] })
+  assert.equal(buildPreviewResult(execution([company, unidentifiable]), scope()).explanationCount, null)
+})
+
+/** 소명 기본키는 조직별 ID가 아니며 다른 기준·실패 관찰은 합집합에 포함하지 않는다.
+ * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 메모리만 사용한다.
+ */
+test('explanation identity is global while counts remain isolated to successful current scope', function scopedExplanationIdentity() {
+  const current = observation('current', 'approved_explanations', { items: [{ refId: 'explanation-301', organizationId: 'a' }] })
+  const sameId = observation('same-id', 'approved_explanations', { items: [{ refId: 'explanation-301', organizationId: 'b' }] })
+  const stale = observation('stale', 'approved_explanations', { items: [{ refId: 'explanation-302', organizationId: 'a' }] }); stale.basis.revision = 2
+  const failed = observation('failed', 'approved_explanations', { items: [{ refId: 'explanation-303', organizationId: 'a' }] }); failed.status = 'ERROR'
+  assert.equal(buildPreviewResult(execution([current, sameId, stale, failed]), scope()).explanationCount, 1)
+  assert.equal(buildPreviewResult(execution([stale, failed]), scope()).explanationCount, null)
 })
 
 /** 부분 실패에서도 같은 기준의 실제 성공 자료만 유지한다.

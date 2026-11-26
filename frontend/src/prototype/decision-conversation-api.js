@@ -125,8 +125,8 @@ export function assistantPayload(masterId, analysis, message, turns = []) {
   return { masterId, analysisId: analysis?.id || null, expectedRevision: analysis?.revision ?? null, message: message.trim(), history: conversationHistory(turns) }
 }
 
-/** 목표 폼의 정확한 억원 입력을 저장 없는 전망 비교 질문으로 바꾼다.
- * Args: input 마스터 ID·연도·목표 억원 문자열. Returns: 사용자에게 표시할 비교 질문.
+/** 목표 폼의 정확한 억원 입력을 목표 비교와 조직별 계획 차이 조회 질문으로 바꾼다.
+ * Args: input 마스터 ID·연도·목표 억원 문자열. Returns: 실제 조회 요청 두 가지를 담은 질문; 고정 기준·조회 전용 정책은 API와 화면에서 별도로 유지한다.
  * Raises: 기준·연도·금액 범위 오류. Side Effects: 저장·금액 반올림 없음.
  * @param {{masterId:string,year:number,targetProfitEok:string}} input
  * @returns {string}
@@ -137,7 +137,7 @@ export function goalPreviewQuestion(input) {
   const target = decimalText(input.targetProfitEok, '연간 영업이익 목표')
   const [whole, fraction = ''] = target.split('.')
   if (target === '0' || whole.length > 16 || fraction.length > 8) throw new Error('연간 영업이익 목표는 0보다 크고 억원 단위 정수 16자리·소수 8자리 이내로 입력해 주세요.')
-  return `선택한 ${input.year}년 확정 마스터의 현재 연간 영업이익 전망을 목표 ${target}억 원과 비교하고, 목표까지 부족액 또는 초과 전망액을 보여 주세요. 조직별 영업이익의 계획 대비 차이도 함께 조회해 주세요. 목표나 분석은 저장하지 말고 현재 전망과 목표만 비교해 주세요. 인력·R&D 등 보호 제약과 개선 과제 효과의 검증은 이번 비교에 포함하지 않습니다.`
+  return `${input.year}년 현재 연간 영업이익 전망을 목표 ${target}억 원과 비교해 부족액 또는 초과액을 보여주고, 조직별 영업이익 계획 차이를 보여주세요.`
 }
 
 /** 목표 비교가 기존 질문 초안이나 진행 중인 대화를 덮어쓰지 못하게 검사한다.
@@ -166,6 +166,18 @@ export function validateAssistantResponse(response, payload) {
       ? '조회 자료는 확보했지만 분석 설명을 확인하지 못했습니다.' : '분석 설명을 확인하지 못했습니다. 기준과 질문을 확인해 주세요.', limitations }
   }
   return response
+}
+
+/** 실행 한도와 답변 중단을 구분하되 모델 미설정 등 구체 원인을 추정하지 않는다.
+ * Args: response 실제 Agent 응답. Returns: 상태를 설명하는 한국어 태그 문구.
+ * Raises: 없음. Side Effects: 없음; 원인·재시도 안내는 서버의 안전한 answer를 그대로 표시한다.
+ * @param {object|null|undefined} response
+ * @returns {string}
+ */
+export function assistantStatusLabel(response) {
+  if (response?.status === 'LIMIT_REACHED') return '실행 한도 도달'
+  if (response?.mode === 'UNAVAILABLE') return '답변 생성 중단'
+  return { COMPLETED: response?.brief ? '요청 항목 확인 완료' : '근거 조회 완료', NEEDS_INPUT: '추가 정보 필요', FAILED: '조회·답변 처리 실패' }[response?.status] || '상태 확인 필요'
 }
 
 /** 인용 경로를 관찰의 자체 속성만 따라 읽는다.

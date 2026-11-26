@@ -88,12 +88,20 @@ function directionClass(row) { return row.favorability === 'FAVORABLE' ? 'is-fav
 /** 조직 영업이익의 서버 비교 방향을 한국어로 표시한다.
  * Args: row 조직 결과. Returns: 계획 대비 방향. Raises: 없음. Side Effects: 수치 재판단 없음.
  */
-function planDirection(row) { if (row.missing) return '자료 없음'; return { INCREASE: '계획 초과', DECREASE: '계획 미달', UNCHANGED: '계획 일치', MISSING: '비교 불가' }[row.direction] || '비교 확인 필요' }
+function planDirection(row) { if (row.missing) return '자료 없음'; if (row.comparisonOnly) return '차이만 조회'; return { INCREASE: '계획 초과', DECREASE: '계획 미달', UNCHANGED: '계획 일치', MISSING: '비교 불가' }[row.direction] || '비교 확인 필요' }
+/** 조직 전체 손익과 차이 상위 조회의 제공 범위를 구분한다.
+ * Args: 없음. Returns: 표의 비교 기준·정렬·누락 값 안내. Raises: 없음. Side Effects: 없음.
+ */
+function organizationCaption() {
+  return props.result.organizationSource === 'profit_drivers' && rows.value.length
+    ? '영업이익 전망 − 계획 · 조회된 조직 안에서 차이 큰 순 · 연간 전망 미조회'
+    : '영업이익 전망 − 계획 · 계획 초과액 큰 순'
+}
 /** 미조회와 실제 빈 조직 결과를 구별해 표시한다.
  * Args: 없음. Returns: 조직 표의 빈 상태 안내. Raises: 없음. Side Effects: 없음.
  */
 function organizationEmptyText() {
-  if (props.result.organizationCount === 0) return '조회된 조직별 비교 자료가 없습니다.'
+  if (props.result.organizationCount === 0 || props.result.organizationSource === 'profit_drivers') return '조회된 조직별 비교 자료가 없습니다.'
   if (['READY', 'PARTIAL'].includes(props.result.state)) return '조직별 계획 차이는 추가 조회가 필요합니다.'
   if (props.result.state === 'ERROR') return '이번 실행에서 확인된 조직별 자료가 없습니다.'
   return '조직별 조회 결과가 이 자리에 정리됩니다.'
@@ -134,7 +142,7 @@ function findingSeverity(kind) { return kind === 'FACT' ? 'secondary' : kind ===
 
     <section class="preview-report__section">
       <div class="preview-report__section-heading"><h3><span>01</span> 조직별 계획 차이</h3><span class="preview-report__unit">단위: 억 원</span></div>
-      <p class="preview-report__caption">영업이익 전망 − 계획 · 계획 초과액 큰 순</p>
+      <p class="preview-report__caption">{{ organizationCaption() }}</p>
       <template v-if="result.state === 'LOADING'"><div v-for="line in 3" :key="line" class="preview-report__skeleton row-skeleton" aria-hidden="true" /></template>
       <PDataTable v-else-if="rows.length" :value="rows" data-key="id" class="preview-report__table" size="small" :pt="{ table: { 'aria-label': '조직별 영업이익 계획 차이' } }">
         <PColumn field="name" header="조직"><template #body="{ data }"><strong class="organization-name">{{ data.name || data.code || '조직명 확인 필요' }}</strong></template></PColumn>
@@ -144,6 +152,7 @@ function findingSeverity(kind) { return kind === 'FACT' ? 'secondary' : kind ===
       </PDataTable>
       <div v-else class="preview-report__empty-line"><i class="pi pi-chart-bar" aria-hidden="true" /><p>{{ organizationEmptyText() }}</p></div>
       <p v-if="rows.length" class="preview-report__table-note"><template v-if="result.organizationCount != null">기준 {{ result.organizationCount }}개 조직 중 </template>{{ rows.length }}개 표시<span v-if="result.organizationCount != null && result.organizationCount > rows.length"> · 전체 내용은 아래 조회 근거에서 확인</span>. 목표와의 차이와 계획 대비 차이는 별개입니다.</p>
+      <p v-if="rows.length && result.organizationSource === 'profit_drivers'" class="preview-report__table-note">차이 상위 조회에서 반환한 조직만 표시합니다. 연간 전망과 전체 조직 수는 조회되지 않았습니다.</p>
     </section>
 
     <section v-if="brief" class="preview-report__section preview-report__analysis" aria-label="근거를 연결한 분석">

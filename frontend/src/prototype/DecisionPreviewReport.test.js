@@ -5,6 +5,7 @@ import { parse, compileScript } from '@vue/compiler-sfc'
 import { createSSRApp } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import PrimeVue from 'primevue/config'
+import { buildPreviewResult } from './decision-preview-result.js'
 
 let component
 /** 보고서 SFC를 파일을 만들지 않고 메모리에서 컴파일한다.
@@ -89,6 +90,26 @@ test('partial report renders precise backend goal values and keeps total organiz
   assert.match(html, /승인 소명 0건 조회/)
   assert.match(html, /답변 일부 미완료/)
   assert.match(html, /목표 비교 원문/)
+})
+
+/** 실제 차이 조회 계약을 보고서까지 연결해 누락된 표를 표시하고 미조회 전망을 구분한다.
+ * Args: 없음. Returns: Promise<void>. Raises: 검증 실패. Side Effects: 합성 자료의 메모리 투영·SSR만 수행한다.
+ */
+test('driver-only results render organization differences with their limited scope and source', async function driverOnlyReport() {
+  const context = { masterId: '101', year: 2026, baseMonth: 10, analysisId: null, revision: null }
+  const observation = { id: 'driver-source', tool: 'profit_drivers', label: '합성 손익 차이', status: 'SUCCESS', basis: context,
+    data: { total: '-9', items: [{ organization: { id: 'synthetic-org', name: '합성 조직' }, opDiff: '-123456789.123456', opDiffRate: '-1.2' }] }, warnings: [] }
+  const result = buildPreviewResult({ phase: 'RESULT', source: 'CHAT', payload: { masterId: '101', analysisId: null, expectedRevision: null },
+    response: { mode: 'MODEL', status: 'NEEDS_INPUT', context, observations: [observation], limitations: [] } }, context)
+  const html = await renderReport(result)
+  assert.match(html, /합성 조직/)
+  assert.match(html, /-1\.23456789123456/)
+  assert.match(html, /차이만 조회/)
+  assert.match(html, /연간 전망 미조회/)
+  assert.match(html, /전체 조직 수는 조회되지 않았습니다/)
+  assert.match(html, /합성 손익 차이/)
+  assert.ok(!html.includes('조직별 계획 차이는 추가 조회가 필요합니다'))
+  assert.ok(!html.includes('기준 1개 조직 중'))
 })
 
 /** stale·로딩 상태에서는 이전 금액이 DTO에 남아 있어도 표시하지 않는다.

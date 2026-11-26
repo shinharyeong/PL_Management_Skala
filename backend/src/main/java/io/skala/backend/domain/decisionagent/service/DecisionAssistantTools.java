@@ -71,7 +71,7 @@ public class DecisionAssistantTools {
             case "approved_explanations" -> Set.of("organizationId", "limit");
             case "submission_comparison" -> Set.of("organizationId", "baseSubmissionId");
             case "scenario_preview" -> Set.of("candidateIds");
-            case "goal_preview" -> Set.of("targetProfitEok");
+            case "goal_preview" -> Set.of("targetProfitEok", "targetYear");
             case "review_request_draft" -> Set.of("sourceKind", "sourceId");
             case "observation_detail" -> Set.of("observationId", "path", "offset", "limit");
             default -> Set.of();
@@ -89,6 +89,10 @@ public class DecisionAssistantTools {
             boundedInteger(args, "limit", 5, 1, 10);
         }
         if (tool.equals("goal_preview")) {
+            JsonNode targetYear = args.get("targetYear");
+            if (targetYear == null || !targetYear.isIntegralNumber() || !targetYear.canConvertToInt()
+                    || targetYear.intValue() < 2000 || targetYear.intValue() > 9999)
+                throw new IllegalArgumentException("목표 연도는 2000~9999의 정수로 명시해야 합니다.");
             JsonNode target = args.get("targetProfitEok");
             if (target == null || !target.isTextual() || !target.textValue().matches("(?:0|[1-9][0-9]{0,15})(?:\\.[0-9]{1,8})?")
                     || new BigDecimal(target.textValue()).signum() <= 0) throw new IllegalArgumentException("목표는 정수부 16자리·소수부 8자리 이내 양수 억원 문자열이어야 합니다.");
@@ -118,11 +122,14 @@ public class DecisionAssistantTools {
         return json.canonical(args);
     }
 
-    /** 목적: 권한 확인 후 기존 업무 조회 또는 현재 원장 상세 읽기를 실행한다. Args: run 사용자·기준, tool 허용 이름, args 정규 인자. Returns: 조회 자료와 비교 한계. Raises: 업무/조회 오류. Side Effects: DB 읽기만; 상세 읽기는 업무 자료를 재조회하지 않으며 저장·발송 없음. */
+    /** 목적: 권한·목표 연도 일치 확인 후 기존 업무 조회 또는 현재 원장 상세 읽기를 실행한다. Args: run 사용자·기준, tool 허용 이름, args 정규 인자. Returns: 조회 자료와 비교 한계. Raises: ToolFailure 목표·기준 연도 불일치 또는 업무/조회 오류. Side Effects: DB 읽기만; 목표 연도가 다르면 원천 재조회·계산을 하지 않으며 상세 읽기도 업무 자료 재조회·저장·발송 없음. */
     @Transactional(readOnly = true)
     public ToolValue execute(DecisionAssistantGateway.Run run, String tool, JsonNode args) {
         assertCurrent(run);
         if (tool.equals("observation_detail")) return observationDetail(run, args);
+        if (tool.equals("goal_preview") && args.get("targetYear").intValue() != run.snapshot.year())
+            throw new ToolFailure("목표 연도 " + args.get("targetYear").intValue() + "년과 선택한 기준 " + run.snapshot.year()
+                    + "년이 다릅니다. 목표 연도에 맞는 마스터를 선택하거나 목표 연도를 확인해 주세요.");
         research.assertSameAmounts(run.snapshot, baselines.load(Long.parseLong(run.snapshot.masterId())));
         String org = args.has("organizationId") ? args.get("organizationId").textValue() : null;
         if (org != null && run.snapshot.organizations().stream().noneMatch(item -> item.id().equals(org)))

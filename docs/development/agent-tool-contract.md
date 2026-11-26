@@ -62,7 +62,7 @@ Tool 실행만 read-only 트랜잭션이며 AI HTTP 대기 동안 DB 연결·트
 | submission_versions | {organizationId:string} | ArchiveQueryService.versions, APPROVED·asOf 이전으로 필터, 파일/URL 제외 |
 | submission_comparison | {organizationId:string,baseSubmissionId:string} | 목표는 고정 조직 제출본, base는 앞선 허용 버전 목록에 한정, VersionComparisonService.compare |
 | scenario_preview | {candidateIds?:string[]} | 선택 analysis의 저장 후보만 기존 DecisionScenarioCalculator로 계산, 저장 없음 |
-| goal_preview | {targetProfitEok:string} | 사용자가 지정한 양수 억 원 목표를 고정 연간 전망과 정밀 비교. 새 분석·후보·DB 저장 없음 |
+| goal_preview | {targetProfitEok:string,targetYear:integer} | 양수 억 원 목표와 목표 연도를 모두 지정. 고정 마스터 연도와 같을 때만 정밀 비교하며 불일치하면 계산 전 ERROR. 새 분석·후보·DB 저장 없음 |
 | observation_detail | {observationId:string,path:string,offset?:0..10000,limit?:1..10} | 이번 실행의 성공 관찰에서 보존한 원문을 상세 조회. 배열·객체 항목 또는 긴 문자열의 다음 부분을 읽고 nextOffset을 반환. 새 DB·URL·파일 접근 없음 |
 | work_items | {} | 선택 analysis 소유 요청·회신·결정·후속 상태, DecisionWorkflowService.list |
 | review_request_draft | {sourceKind:candidate 또는 hypothesis,sourceId:string} | 저장된 후보/가설만 확인하고 요청 작성 화면에 넘길 초안, 저장·발송 없음 |
@@ -132,7 +132,12 @@ title,message,needsConfirmation:true}`다. 기한은 사용자가 입력하고 �
 초안을 생성·발행한다. 도구 실행은 해당 API를 호출하지 않는다. scenario_preview는 선택 분석의 저장
 후보만 계산하며 빈 candidateIds는 후보 없이 기준 전망만 계산한다.
 
-`goal_preview`는 양수 억 원 문자열을 소수 최대 8자리로 받고 정확히 원으로 환산한다.
+`goal_preview`는 목표 연도 `targetYear`(2000~9999 정수)와 양수 억 원 문자열을 모두 받는다.
+연도 누락·잘못된 형식은 거부하고, 목표 연도가 고정 마스터 연도와 다르면 원천 재조회·계산 전에
+`ERROR` 관찰로 기준 선택 또는 목표 연도 확인을 요청한다. 모델은 사용자가 명시한 목표 연도를
+우선하고 불일치가 해결되지 않으면 `NEEDS_INPUT`으로 종료한다. 서버는 전달된 연도와 기준의
+일치 여부를 검사하며 자연어 해석 자체의 정확성을 자동 보장하지 않는다.
+금액은 소수 최대 8자리로 받고 정확히 원으로 환산한다.
 기존 원 금액의 24자리 상한을 적용한다. 반환값은 목표, 현재 연간 전망, 부족액, 초과 전망액,
 부호 있는 차이와 `forecastMeetsTarget`, `saved:false`다. 전망이 목표 이상이라는 판정은
 실제 목표 달성이나 추진 승인을 의미하지 않는다. 이 도구는 저장 분석이 없어도 사용할 수 있다.

@@ -38,6 +38,7 @@ export function buildPreviewResult(execution, scope = {}) {
   result.brief = brief
   result.status = response.status
   result.warnings = warningTexts(response.limitations)
+  let planDifferences = null
   for (const observation of observations) {
     result.sources.push({ id: observation.id, label: textOrNull(observation.label) || textOrNull(observation.tool) || observation.id })
     const capturedAt = dateText(observation.basis?.capturedAt)
@@ -48,10 +49,18 @@ export function buildPreviewResult(execution, scope = {}) {
       const organizations = observedOrganizations(observation)
       result.organizations = organizations.rows
       result.organizationCount = organizations.count
+      if (Array.isArray(observation.data?.summary?.rankedByOpPlanDifference)) result.organizationSource = 'organization_pnl'
     }
-    if (observation.tool === 'approved_explanations') {
-      result.explanationCount = Array.isArray(observation.data?.items) ? observation.data.items.length : null
+    if (observation.tool === 'profit_drivers') {
+      const differences = observedPlanDifferences(observation)
+      if (differences && (!planDifferences || differences.rows.length >= planDifferences.rows.length)) planDifferences = differences
     }
+  }
+  result.explanationCount = observedExplanationCount(observations)
+  if (result.organizationSource !== 'organization_pnl' && planDifferences) {
+    result.organizations = planDifferences.rows
+    result.organizationCount = null
+    result.organizationSource = 'profit_drivers'
   }
   return result
 }
@@ -61,7 +70,7 @@ export function buildPreviewResult(execution, scope = {}) {
  * Raises: 없음. Side Effects: 없음.
  */
 function emptyResult(state, message) {
-  return { state, context: null, capturedAt: null, goal: null, organizations: [], organizationCount: null,
+  return { state, context: null, capturedAt: null, goal: null, organizations: [], organizationCount: null, organizationSource: null,
     explanationCount: null, warnings: [], message, sources: [], brief: null, status: null }
 }
 
@@ -134,6 +143,49 @@ function observedOrganizations(observation) {
   }
   rows.sort(byPlanDifference)
   return { rows: rows.slice(0, 5), count: count ?? rows.length }
+}
+
+/** 조직 전체 조회가 없을 때 실제 손익 차이 조회의 정밀 비교액만 보존한다.
+ * Args: observation 같은 기준의 성공한 profit_drivers 관찰.
+ * Returns: 조회된 조직의 최대 다섯 차이 행 또는 null. Raises: 없음.
+ * Side Effects: 없음; 현재 전망·전체 조직 수·비교 방향을 추정하거나 금액을 재계산하지 않는다.
+ */
+function observedPlanDifferences(observation) {
+  const values = observation.data?.items
+  if (!Array.isArray(values)) return null
+  const rows = [], ids = new Set()
+  for (const value of values) {
+    const organization = value?.organization, id = textOrNull(organization?.id)
+    if (!id || ids.has(id)) continue
+    ids.add(id)
+    const planDifferenceWon = moneyText(value.opDiff)
+    rows.push({ id, name: textOrNull(organization.name), code: textOrNull(organization.code), actualWon: null,
+      planDifferenceWon, direction: null, favorability: null, missing: planDifferenceWon === null,
+      comparisonOnly: true, sourceObservationId: observation.id })
+  }
+  rows.sort(byPlanDifference)
+  return { rows: rows.slice(0, 5) }
+}
+
+/** 실제 조회한 수락 소명을 전역 근거 ID로 중복 제거해 집계한다.
+ * Args: observations 현재 기준에서 검증된 성공 관찰 목록.
+ * Returns: 고유 조회 건수, 미조회·식별 불가이면 null. Raises: 없음.
+ * Side Effects: 없음; 서버 refId는 review_explanation의 전역 기본키에서 만들어지며 조직·조회별 개수가 아니다.
+ */
+function observedExplanationCount(observations) {
+  const ids = new Set()
+  let queried = false
+  for (const observation of observations) {
+    if (observation.tool !== 'approved_explanations') continue
+    if (!Array.isArray(observation.data?.items)) return null
+    queried = true
+    for (const item of observation.data.items) {
+      const id = textOrNull(item?.refId)
+      if (!id) return null
+      ids.add(id)
+    }
+  }
+  return queried ? ids.size : null
 }
 
 /** 비교 자료가 있는 조직을 부호 유지 계획 차이 큰 순으로 비교한다.

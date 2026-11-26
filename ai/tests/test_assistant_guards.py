@@ -382,8 +382,51 @@ class AssistantLoopGuardTests(unittest.TestCase):
                                          model_caller=Mock(side_effect=[native_call("plan_analysis", plan_arguments(), 0), native_call("company_pnl", {}, 1)]),
                                          tool_caller=Mock(side_effect=RuntimeError("private-token")))
         self.assertEqual(tool_failed["status"], "FAILED")
+        self.assertEqual(tool_failed["mode"], "MODEL")
         self.assertEqual(tool_failed["observations"], [])
         self.assertNotIn("private-token", str(tool_failed))
+
+    def test_tool_timeout_or_invalid_response_preserves_partial_data_and_model_mode(self) -> None:
+        """모델 실행 뒤 조회 지연·관찰 오류를 모델 부재로 표시하지 않고 기존 근거를 보존한다.
+
+        Args: 없음. Returns: 없음.
+        Raises: AssertionError: 조회 실패의 모델 오진·관찰 유실·오류 원문 노출.
+        Side Effects: 합성 모델·업무 조회 대역만 메모리에서 실행한다.
+        """
+        invalid = observation_fixture("profit_drivers", 2)
+        invalid["basis"]["masterId"] = "wrong-private-master"
+        for failure in (TimeoutError("private-backend-timeout"), invalid):
+            with self.subTest(failure=type(failure).__name__):
+                model = Mock(side_effect=[native_call("plan_analysis", plan_arguments(), 0),
+                                          native_call("company_pnl", {}, 1), native_call("profit_drivers", {}, 2)])
+                tool = Mock(side_effect=[observation_fixture(), failure])
+                result = graph.run_assistant(request_fixture(), settings=self.settings, model_caller=model, tool_caller=tool)
+                self.assertEqual((result["mode"], result["status"]), ("MODEL", "FAILED"))
+                self.assertEqual(result["observations"], [observation_fixture()])
+                self.assertEqual(len(result["toolCalls"]), 1)
+                self.assertTrue(result["citations"])
+                self.assertIsNone(result["brief"])
+                self.assertNotIn("private-backend-timeout", str(result))
+                self.assertNotIn("wrong-private-master", str(result))
+                self.assertEqual(model.call_count, 3)
+
+    def test_missing_model_and_daily_limit_remain_distinct_without_calls(self) -> None:
+        """모델 미설정과 일일 한도는 기존 상태 조합으로 구분하며 추가 호출하지 않는다.
+
+        Args: 없음. Returns: 없음.
+        Raises: AssertionError: 한도·미설정 상태 혼동 또는 불필요한 호출.
+        Side Effects: 합성 설정과 메모리 대역만 사용한다.
+        """
+        for key, limit, status in ((None, 1000, "FAILED"), ("synthetic-key", 0, "LIMIT_REACHED")):
+            with self.subTest(status=status):
+                model, tool = Mock(), Mock()
+                result = graph.run_assistant(request_fixture(), settings=Settings(openai_api_key=key, ai_daily_call_limit=limit),
+                                             model_caller=model, tool_caller=tool)
+                self.assertEqual((result["mode"], result["status"]), ("UNAVAILABLE", status))
+                self.assertEqual(result["observations"], [])
+                self.assertEqual(result["citations"], [])
+                model.assert_not_called()
+                tool.assert_not_called()
 
     def test_model_budget_stops_after_six_attempts(self) -> None:
         """반복적인 부적절 호출도 모델 호출 여섯 번을 넘기지 않는다.

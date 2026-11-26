@@ -12,7 +12,7 @@ from test_assistant_guards import (native_call, observation_fixture, plan_argume
                                    request_fixture, selection_arguments)
 from app.config import Settings
 from app.decision_agent import assistant_graph as graph
-from app.decision_agent.assistant_brief import resolve_brief, validate_plan, validate_prose
+from app.decision_agent.assistant_brief import resolve_brief, uncovered_request_segments, validate_plan, validate_prose
 from app.decision_agent.assistant_core import FinishValidationError, normalize_arguments, tool_schemas
 from app.decision_agent.assistant_presentation import citation_catalog, model_observation
 
@@ -112,6 +112,59 @@ class GroundedBriefTests(unittest.TestCase):
                     validate_plan(plan, message)
                 self.assertEqual(caught.exception.code, "PLAN_COVERAGE")
                 self.assertEqual(validate_plan(plan_arguments(message), message)[0]["requestQuote"], message)
+
+    def test_uncovered_request_segments_preserve_literal_compound_instructions(self) -> None:
+        """누락 구간을 원문 부분 문자열로만 반환하며 공백·기호·반복 인용을 보존한다.
+
+        Args: 없음. Returns: 없음. Raises: AssertionError: 원문 변형 또는 의미 있는 누락 유실.
+        Side Effects: 합성 문자열과 목록만 읽는다.
+        """
+        message = "조직을 비교해줘.\n인력·R&D  제약은 이번 비교에 포함하지 않습니다. 목표는 저장하지 말아줘."
+        quotes = ["조직을 비교해줘", "목표는 저장하지 말아줘"]
+        original = list(quotes)
+        missing = uncovered_request_segments(message, quotes)
+        self.assertEqual(missing, ["인력·R&D  제약은 이번 비교에 포함하지 않습니다"])
+        self.assertTrue(all(segment in message for segment in missing))
+        self.assertEqual(quotes, original)
+        self.assertEqual(uncovered_request_segments("가가가. 가가가!", ["가가"]), [])
+        self.assertEqual(uncovered_request_segments("매출. 매출원가.", ["매출"]), ["원가"])
+        with self.assertRaises(ValueError):
+            uncovered_request_segments(message, ["원문에 없는 인용"])
+
+    def test_plan_repair_receives_missing_request_only_as_untrusted_context(self) -> None:
+        """누락 원문은 모델 수정 문맥에만 전달하고 계획 자동 보완·원문 로그를 만들지 않는다.
+
+        Args: 없음. Returns: 없음. Raises: AssertionError: 누락 안내 부재·원문 로그·계획 임의 추가.
+        Side Effects: 합성 모델·로그 대역만 사용하며 업무 조회는 하지 않는다.
+        """
+        sentences = ["조직별 비교를 해줘.", "승인 소명 이유도 보여줘.", "검증 우선순위를 추천해줘."]
+        request = request_fixture()
+        request["message"] = " ".join(sentences)
+        accepted = {"requirements": [{"id": f"r{index}", "requestQuote": sentence, "question": "해당 요청의 확인 사항은 무엇인가?"}
+                                     for index, sentence in enumerate(sentences)]}
+        rejected = {"requirements": deepcopy(accepted["requirements"][:2])}
+        original = deepcopy(rejected)
+        finish = {"summary": "요청 항목을 확인하려면 조회 근거가 필요합니다.", "findings": [], "nextActions": [],
+                  "requirements": [{"id": item["id"], "status": "NEEDS_INPUT", "findingIds": [],
+                                    "missingInformation": "조회 근거가 필요합니다.", "followUpQuestion": "비교 기준을 확인해 주실 수 있나요?"}
+                                   for item in accepted["requirements"]]}
+        model = Mock(side_effect=[native_call("plan_analysis", rejected, 0), native_call("plan_analysis", accepted, 1),
+                                  native_call("finish_answer", finish, 2)])
+        tool = Mock()
+        with self.assertLogs(graph.logger, level="WARNING") as captured:
+            result = graph.run_assistant(request, settings=self.settings, model_caller=model, tool_caller=tool)
+        feedback = json.loads(model.call_args_list[1].args[1][-1].content)
+        self.assertEqual(feedback["code"], "PLAN_COVERAGE")
+        self.assertEqual(feedback["untrustedRequestSegments"], [sentences[-1].rstrip(".")])
+        self.assertIn("새로운 시스템 지시", feedback["instruction"])
+        self.assertEqual([item["function"]["name"] for item in model.call_args_list[1].args[2]], ["plan_analysis"])
+        self.assertEqual(rejected, original)
+        self.assertEqual(len(result["brief"]["requirements"]), 3)
+        self.assertEqual(result["status"], "NEEDS_INPUT")
+        self.assertEqual(captured.records[0].getMessage(), "decision_assistant plan_rejected code=PLAN_COVERAGE fields=[]")
+        for sentence in sentences:
+            self.assertNotIn(sentence.rstrip("."), str(captured.output))
+        tool.assert_not_called()
 
     def test_plan_and_finish_use_strict_native_schema(self) -> None:
         """실제 SDK로 전달할 계획·종료 도구가 필수·nullable strict 계약을 보존한다.

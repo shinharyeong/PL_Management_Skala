@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .assistant_models import ARGUMENT_MODELS, TOOL_DESCRIPTIONS, AnalysisPlan, FinishAnswer, GroundedFinish, ToolObservation
+from .assistant_models import ARGUMENT_MODELS, TOOL_DESCRIPTIONS, AnalysisPlan, FinishAnswer, GroundedFinish, ProseRepair, ToolObservation
 from .discovery_core import _ASSERTED_OUTCOME, _NUMERIC_CLAIM
 
 MAX_OBSERVATION_BYTES = 256 * 1024
@@ -43,7 +43,10 @@ FINISH_ERRORS = {
     "BRIEF_COVERAGE": "계획한 모든 요구 항목을 빠짐없이 반환하세요. ANSWERED에는 findingIds가 필요하며 부족 정보·확인 질문은 null이어야 합니다.",
     "BRIEF_MISSING": "미해결 요구 항목에는 missingInformation과 구체적인 followUpQuestion을 모두 작성하세요. 조회 성공만으로 해결됐다고 표시하지 마세요.",
     "BRIEF_TEXT": "설명과 확인 질문에는 공백 대신 의미 있는 문장을 작성하세요.",
-    "BRIEF_NUMERIC": "표시된 필드에서 숫자·금액·비율·날짜·순번을 제거해 다시 쓰세요. 목표액도 '요청한 목표'로 표현하세요. 숫자 포함 조직명은 '해당 조직'으로 바꾸고 그 finding의 citationIds에 실제 name/organizationName 필드를 연결하세요. 숫자는 연결된 인용 카드에 이미 표시되므로 prose에 재작성하지 않습니다.",
+    "BRIEF_NUMERIC": "표시된 문장 필드를 숫자·금액·비율·날짜·순번 없이 의미를 유지해 다시 쓰세요. 한글로 쓴 금액·절반·배수 표현도 수치입니다. 목표액은 '요청한 목표', 숫자 포함 조직명은 '해당 조직'으로 표현하세요. 수치는 기존 인용 카드에 있으므로 설명에 반복하지 않습니다. repair_answer가 제공되면 그 도구로 허용된 문장만 수정하고 인용·다른 필드는 유지하세요.",
+    "BRIEF_REPAIR": "repair_answer만 단독 호출해 schema에 허용된 오류 경로를 각각 한 번씩 수정하세요. updates에는 path와 text만 사용하며 기존 의미·근거를 유지하세요. 계획·인용·식별자·상태·다른 문장은 변경할 수 없습니다.",
+    "MODEL_OUTPUT_LIMIT": "모델 응답이 출력 길이 한도로 잘려 완료되지 않았습니다. 잘린 원문은 대화에서 제외했습니다. 기존 계획·관찰·인용만 사용해 현재 제공된 도구 계약에 맞는 짧은 결과를 다시 작성하세요.",
+    "COMPACT_FINISH_ONLY": "새 조회나 계획 변경 없이 기존 관찰로 finish_answer만 단독 호출하세요. 모든 요구 항목을 유지하며 핵심 판단과 필요한 확인 질문만 짧게 작성하세요.",
     "BRIEF_ASSERTED": "결과를 보장하거나 저장·발송·추진 승인 등을 실행했다고 쓰지 마세요. 가설과 조건부 판단을 구분하세요.",
 }
 
@@ -89,14 +92,23 @@ def strict_schema(value: Any) -> Any:
     return result
 
 
-def tool_schemas(citation_ids: list[str] | None = None, plan: list[dict[str, str]] | None = None) -> list[dict[str, Any]]:
+def tool_schemas(citation_ids: list[str] | None = None, plan: list[dict[str, str]] | None = None,
+                 repair_fields: list[str] | None = None, compact_finish: bool = False) -> list[dict[str, Any]]:
     """백엔드 읽기 allowlist와 검증된 종료 도구의 native schema를 만든다.
 
-    Args: citation_ids 실제 근거 ID, plan 수락한 요구 항목. 빈 목록이면 계획 도구만 제공한다.
+    Args: citation_ids 실제 근거 ID, plan 수락한 요구 항목, repair_fields 오류 문장 경로, compact_finish 출력 잘림 후 짧은 종료 전용 여부.
     Returns: OpenAI function tool schema 목록.
     Raises: 없음.
     Side Effects: 없음.
     """
+    if repair_fields:
+        schema = strict_schema(ProseRepair.model_json_schema())
+        schema["properties"]["updates"]["minItems"] = len(repair_fields)
+        schema["properties"]["updates"]["maxItems"] = len(repair_fields)
+        schema["$defs"]["ProseRepairUpdate"]["properties"]["path"]["enum"] = repair_fields
+        return [{"type": "function", "function": {"name": "repair_answer", "strict": True,
+                 "description": "거절된 finish_answer 전체를 다시 만들지 않고 허용된 오류 문장만 짧게 다시 쓴다. 숫자는 이미 연결된 인용에서 확인하므로 설명에 반복하지 않는다. 원래 의미·근거를 유지하며 새 사실을 추가하지 않는다. 조회 도구·계획·인용·다른 필드는 변경하지 않는다.",
+                 "parameters": schema}}]
     if plan == []:
         return [{"type": "function", "function": {"name": "plan_analysis",
                  "description": "현재 사용자 질문을 빠짐없는 확인 항목으로 나눈다. 각 항목의 requestQuote는 현재 message의 실제 부분 인용이며, 인용들의 합집합으로 요청 전체를 빠짐없이 덮는다. 공백·문장부호만 인용 범위에서 제외할 수 있다. 단문 안의 복수 요구도 누락하지 않는다. 답변·가설·수치를 만들지 않고 확인할 질문만 선언한다.",
@@ -104,13 +116,27 @@ def tool_schemas(citation_ids: list[str] | None = None, plan: list[dict[str, str
     tools = [{"type": "function", "function": {"name": name, "description": TOOL_DESCRIPTIONS[name],
               "parameters": model.model_json_schema()}} for name, model in ARGUMENT_MODELS.items()]
     finish_schema = GroundedFinish.model_json_schema()
+    if compact_finish:
+        tools = []
+        finish_schema["properties"]["summary"]["maxLength"] = 160
+        finish_schema["properties"]["findings"]["maxItems"] = min(6, max(4, len(plan or [])))
+        finding = finish_schema["$defs"]["GroundedFinding"]["properties"]
+        finding["text"]["maxLength"] = 140
+        for field in [finding["uncertainty"],
+                      finish_schema["$defs"]["RequirementResolution"]["properties"]["missingInformation"],
+                      finish_schema["$defs"]["RequirementResolution"]["properties"]["followUpQuestion"]]:
+            for variant in field.get("anyOf", [field]):
+                if variant.get("type") == "string":
+                    variant["maxLength"] = 100
     if citation_ids:
         finish_schema["$defs"]["GroundedFinding"]["properties"]["citationIds"]["items"]["enum"] = citation_ids
     if plan:
         finish_schema["$defs"]["RequirementResolution"]["properties"]["id"]["enum"] = [item["id"] for item in plan]
     tools.append({"type": "function", "function": {"name": "finish_answer",
-                  "description": "계획한 요구 항목 모두를 근거 있는 사실·해석·가설 또는 구체적인 미해결 질문으로 정리한다. 각 finding은 실제 citationIds를 연결하고 해석·가설은 uncertainty가 필요하다. 숫자를 문장에 생성하지 않는다. 부족한 부분을 숨겨 완료로 표시하지 않는다.",
+                  "description": "계획한 질문에 직접 답한 경우만 ANSWERED로 표시한다. 사실·해석·가설을 모두 만들 필요는 없으며 단순 비교에는 필요한 FACT만 쓴다. 계획 미달·초과를 시간 추세로 표현하지 않는다. 우선 확인할 사항은 어느 조직의 무엇을 먼저 왜 확인할지 실제 근거에 연결한 INTERPRETATION과 uncertainty로 설명하며 일반적 개선 가설로 대체하지 않는다. 각 finding은 실제 citationIds를 연결하고 미확인 사항은 구체적인 NEEDS_INPUT으로 남긴다. 숫자를 문장에 생성하지 않는다.",
                   "strict": True, "parameters": strict_schema(finish_schema)}})
+    if compact_finish:
+        tools[-1]["function"]["description"] = "출력 길이 한도로 잘린 답변을 기존 관찰·인용만 사용해 간결하게 다시 작성한다. summary는 짧은 한 문장, 각 finding도 짧은 판단 하나만 작성하고 숫자·원문 인용 내용을 반복하지 않는다. 모든 계획 항목은 그대로 포함한다. 새 조회·계획 변경은 하지 않는다."
     return tools
 
 

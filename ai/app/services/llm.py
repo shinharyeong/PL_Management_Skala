@@ -144,10 +144,14 @@ class _SdkChatModel(BaseChatModel):
         resp = openai_client.make_client(self.settings).chat.completions.create(**args)
         tin = int(getattr(resp.usage, "prompt_tokens", 0) or 0)
         tout = int(getattr(resp.usage, "completion_tokens", 0) or 0)
-        reply = resp.choices[0].message
+        choice = resp.choices[0]
+        reply = choice.message
+        reason = getattr(choice, "finish_reason", None)
+        metadata = {"finish_reason": reason} if isinstance(reason, str) and reason in {"stop", "length", "tool_calls", "content_filter", "function_call"} else {}
         calls, invalid = sdk_tool_calls(reply)
         message = AIMessage(content=reply.content or "", tool_calls=calls, invalid_tool_calls=invalid,
-                            usage_metadata={"input_tokens": tin, "output_tokens": tout, "total_tokens": tin + tout})
+                            usage_metadata={"input_tokens": tin, "output_tokens": tout, "total_tokens": tin + tout},
+                            response_metadata=metadata)
         return ChatResult(generations=[ChatGeneration(message=message)])
 
 

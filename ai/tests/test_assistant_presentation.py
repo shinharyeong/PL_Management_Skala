@@ -129,10 +129,11 @@ class AssistantPresentationTests(unittest.TestCase):
         Side Effects: 없음. 백엔드·DB를 호출하지 않는다.
         """
         for value in ("900", "0.00000001", "9999999999999999.99999999"):
-            self.assertEqual(normalize_arguments("goal_preview", {"targetProfitEok": value}), {"targetProfitEok": value})
+            self.assertEqual(normalize_arguments("goal_preview", {"targetProfitEok": value, "targetYear": 2026}),
+                             {"targetProfitEok": value, "targetYear": 2026})
         for value in ("0", "-1", "+1", "01", "1e3", "1,000", "900억", "0.000000001", " 900", 900):
             with self.subTest(value=value), self.assertRaises(ValueError):
-                normalize_arguments("goal_preview", {"targetProfitEok": value})
+                normalize_arguments("goal_preview", {"targetProfitEok": value, "targetYear": 2026})
 
     def test_timeout_and_limit_keep_valid_partial_evidence(self) -> None:
         """실제 모델 호출 없이 timeout·호출 한도의 부분 근거와 안전한 오류 코드만 확인한다.

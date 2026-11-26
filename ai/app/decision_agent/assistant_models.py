@@ -90,6 +90,7 @@ class GoalPreviewArguments(ContractModel):
     targetProfitEok: StrictStr = Field(
         pattern=r"^(?:0|[1-9][0-9]{0,15})(?:\.[0-9]{1,8})?$",
         description="사용자가 명시한 영업이익 목표의 억 원 단위 십진 문자열. 900억원은 '900'. 양수·소수 여덟 자리까지, 쉼표·단위·지수·부호 금지. 저장 없이 기존 연간 전망과 비교한다.")
+    targetYear: StrictInt = Field(ge=2000, le=9999, description="사용자가 목표에 명시한 연도. 목표 연도를 명시하지 않은 경우에만 context.year를 사용한다. 선택 마스터와 다르면 임의로 기준 연도로 바꾸지 않는다.")
 
     @field_validator("targetProfitEok")
     @classmethod
@@ -146,7 +147,7 @@ class RequirementResolution(ContractModel):
     status: Literal["ANSWERED", "NEEDS_INPUT", "UNSUPPORTED"]
     findingIds: list[Identifier] = Field(default_factory=list, max_length=8, description="실제 작성한 finding ID만 사용한다. ANSWERED는 하나 이상 필요하다. 근거 없는 미해결 항목은 빈 배열을 사용할 수 있다.")
     missingInformation: StrictStr | None = Field(default=None, min_length=1, max_length=400, description="ANSWERED이면 null. 미해결이면 필요한 자료·조건을 구체적으로 쓴다. 아직 조회하지 않은 자료를 존재하지 않는다고 단정하지 않는다.")
-    followUpQuestion: StrictStr | None = Field(default=None, min_length=1, max_length=400, description="ANSWERED이면 null. 미해결이면 사용자가 답할 수 있는 구체적인 확인 질문을 쓴다. 이 질문에는 인용이 없어도 된다.")
+    followUpQuestion: StrictStr | None = Field(default=None, min_length=1, max_length=400, description="ANSWERED이면 null. 미해결이면 사용자가 제공할 구체적인 값·문서·시점을 요청한다. 우선순위 추천처럼 사용자가 판단을 요청한 질문을 그대로 되묻지 않는다. 이 질문에는 인용이 없어도 된다.")
 
 
 class GroundedFinish(ContractModel):
@@ -156,6 +157,19 @@ class GroundedFinish(ContractModel):
     findings: list[GroundedFinding] = Field(max_length=8)
     requirements: list[RequirementResolution] = Field(min_length=1, max_length=6)
     nextActions: list[Literal["OPEN_DISCOVERY", "OPEN_SCENARIOS", "OPEN_WORKFLOW"]] = Field(default_factory=list, max_length=3)
+
+
+class ProseRepairUpdate(ContractModel):
+    """서버가 허용한 설명 필드 한 곳의 모델 작성 대체 문장."""
+
+    path: StrictStr = Field(min_length=1, max_length=80)
+    text: StrictStr = Field(min_length=1, max_length=1000, description="해당 필드의 의미와 근거를 유지하되 숫자·금액·비율 표현 없이 다시 쓴다. 실제 수치는 이미 연결된 인용에서 확인하며 임의 금액이나 새 사실을 추가하지 않는다.")
+
+
+class ProseRepair(ContractModel):
+    """숫자 검증에 실패한 설명만 고치는 로컬 도구 계약."""
+
+    updates: list[ProseRepairUpdate] = Field(min_length=1, max_length=8)
 
 
 class Citation(ContractModel):
@@ -222,12 +236,12 @@ TOOL_DESCRIPTIONS = {
     "profit_drivers": "계획 대비 영업이익 차이가 큰 항목을 조회한다. 절댓값이 큰 차이는 큰 미달일 수도 있으며 개선 순위가 아니다. 차이는 인과 원인이나 개선 가능액이 아니다.",
     "organization_pnl": "organizationId를 생략하면 모든 허용 조직의 손익·계획 대비 OP 차이·증감·유불리·순위를 한 번에 조회한다. signed 순위는 OP 차이 내림차순, absolute 순위는 절댓값순이다. 원인·개선 가능성은 이 수치만으로 단정하지 말고 필요한 소명이나 상세 근거를 추가로 확인한다.",
     "pnl_waterfall": "고정 master 손익의 워터폴 구성과 비교 기준을 조회한다.",
-    "approved_explanations": "조직 ID를 생략하면 허용 조직의 승인 소명을 읽는다. 담당자가 제시한 과거 사유와 미래 개선 가설을 구분한다. 축약된 소명은 observation_detail로 더 읽고, 소명 승인을 새 과제의 승인이나 개선액 증명으로 해석하지 않는다.",
+    "approved_explanations": "조직 ID를 생략하면 허용 조직의 승인 소명을 상한까지 읽는다. items.organizationId와 facts의 기간으로 분석 대상과 대조하고 label의 계정명이 아닌 items.text의 실제 회신에서 사유를 읽는다. total이 items 수보다 크면 일부 조회다. 필요한 조직이 목록에 없으면 실제 조회한 organizationId로 다시 요청하며, observation_detail은 이미 반환된 text의 잘린 내용만 더 읽을 수 있다. 계정명을 원인으로 바꾸거나 소명 승인을 새 과제 승인·개선액 증명으로 해석하지 않는다.",
     "submission_versions": "조직의 승인된 과거 제출 목록을 읽는다. 비교하려면 먼저 이 도구로 base ID를 확인한다.",
     "submission_comparison": "앞선 submission_versions에서 확인한 과거 제출과 고정 제출을 비교한다.",
     "scenario_preview": "선택 analysis의 기존 후보만 Spring 계산기로 시뮬레이션한다. 새 금액 입력·저장은 없다.",
     "work_items": "선택 analysis의 요청·회신·검토·결정·후속 상태를 읽는다.",
     "review_request_draft": "저장된 candidate 또는 hypothesis로 사용자가 확인할 요청 화면 초안을 만든다. 저장·발송하지 않는다.",
-    "goal_preview": "사용자가 명시한 영업이익 목표(억 원)를 Spring 계산기로 기존 고정 연간 전망과 비교한다. 저장·새 분석 생성은 없다. 목표 부족액·초과액·전망 기준 충족 여부를 반환하며 실적 달성으로 해석하지 않는다. 임의 목표를 만들지 않는다.",
+    "goal_preview": "사용자가 명시한 영업이익 목표(억 원)와 목표 연도를 Spring 계산기로 기존 고정 연간 전망과 비교한다. targetYear는 필수이며 목표 연도가 기준과 다르면 계산하지 않는다. 기간 불일치는 해당 연도 마스터 선택 또는 목표 연도 확인이 필요한 미해결 항목이다. 저장·새 분석 생성은 없다. 목표 부족액·초과액·전망 기준 충족 여부를 반환하며 실적 달성으로 해석하지 않는다. 임의 목표를 만들지 않는다.",
     "observation_detail": "현재 실행의 SUCCESS 관찰에서 /data 아래 원문을 페이지로 읽는다. observationId와 availableDetails의 path를 사용한다. 배열은 limit개, 문자열은 limit×400자, 객체는 limit개 속성이다. nextOffset이 있으면 같은 원천·경로의 그 offset을 요청한다. 상세 도구 결과 자체를 다시 원천으로 삼지 않는다. DB·파일·URL 임의 조회는 불가능하다.",
 }

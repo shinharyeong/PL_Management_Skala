@@ -48,6 +48,7 @@ class DecisionAssistantTest {
     private final AppUserRepository users = mock(AppUserRepository.class);
     private final AppUser user = mock(AppUser.class);
     private final Clock clock = mock(Clock.class);
+    private final DecisionScenarioCalculator calculator = spy(new DecisionScenarioCalculator());
     private final AuthenticatedUser actor = new AuthenticatedUser(7L, UserRole.PLANNER, null);
     private final OffsetDateTime now = OffsetDateTime.parse("2026-11-26T00:00:00Z");
     private DecisionAssistantTools tools;
@@ -62,7 +63,7 @@ class DecisionAssistantTest {
         when(users.findById(7L)).thenReturn(Optional.of(user)); when(user.getRole()).thenReturn(UserRole.PLANNER); when(user.getActive()).thenReturn(true);
         when(baselines.load(3L)).thenReturn(snapshot());
         when(home.pnl(actor, "YEAR", 2026, 11, 3L)).thenReturn(new HomePnlResponse("READY", List.of(new HomePnlResponse.Kpi("OP", "-15000000000", null, "0")), List.of(), null));
-        tools = new DecisionAssistantTools(home, archive, comparison, new DecisionScenarioCalculator(), workflow, research, discovery, baselines, analyses, submissions, users, json);
+        tools = new DecisionAssistantTools(home, archive, comparison, calculator, workflow, research, discovery, baselines, analyses, submissions, users, json);
         gateway = new DecisionAssistantGateway(tools, json, clock); validator = new DecisionAssistantResponseValidator(json);
         token = gateway.grant(actor, snapshot(), null);
     }
@@ -144,7 +145,7 @@ class DecisionAssistantTest {
     /** 목적: 저장 분석 없이 억원 목표를 정확한 원으로 바꾸고 전망 초과액을 실적 달성과 구분한다. Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: mock 조회와 메모리 원장만. */
     @Test
     void previewsGoalWithoutAnalysisAndDoesNotSaveOrClaimAchievement() {
-        Observation result = call("goal_preview", Map.of("targetProfitEok", "900"));
+        Observation result = call("goal_preview", Map.of("targetProfitEok", "900", "targetYear", 2026));
         var data = result.data();
         assertThat(result.status()).isEqualTo("SUCCESS");
         assertThat(data.get("targetProfitWon").textValue()).isEqualTo("90000000000");
@@ -155,33 +156,59 @@ class DecisionAssistantTest {
         assertThat(data.has("targetAlreadyMet")).isFalse(); assertThat(data.get("year").intValue()).isEqualTo(2026);
         assertThat(data.get("unit").textValue()).isEqualTo("KRW");
         assertThat(result.warnings()).anyMatch(item -> item.contains("실적 달성"));
-        assertThat(call("goal_preview", Map.of("targetProfitEok", "900.00000000"))).isSameAs(result);
+        assertThat(call("goal_preview", Map.of("targetProfitEok", "900.00000000", "targetYear", 2026))).isSameAs(result);
         verifyNoInteractions(analyses, workflow, discovery, home);
     }
 
     /** 목적: 부족·일치 목표와 일 원·기존 최대 원 금액을 반올림 없이 계산한다. Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: mock 조회와 메모리 원장만. */
     @Test
     void previewsGoalGapEqualityAndExactWonBounds() {
-        var below = call("goal_preview", Map.of("targetProfitEok", "1050")).data();
+        var below = call("goal_preview", Map.of("targetProfitEok", "1050", "targetYear", 2026)).data();
         assertThat(below.get("gapWon").textValue()).isEqualTo("13000000000");
         assertThat(below.get("surplusWon").textValue()).isEqualTo("0"); assertThat(below.get("forecastMeetsTarget").booleanValue()).isFalse();
-        var equal = call("goal_preview", Map.of("targetProfitEok", "920")).data();
+        var equal = call("goal_preview", Map.of("targetProfitEok", "920", "targetYear", 2026)).data();
         assertThat(equal.get("gapWon").textValue()).isEqualTo("0"); assertThat(equal.get("surplusWon").textValue()).isEqualTo("0");
         assertThat(equal.get("forecastMeetsTarget").booleanValue()).isTrue();
-        assertThat(call("goal_preview", Map.of("targetProfitEok", "0.00000001")).data().get("targetProfitWon").textValue()).isEqualTo("1");
-        assertThat(call("goal_preview", Map.of("targetProfitEok", "9999999999999999.99999999")).data().get("targetProfitWon").textValue()).isEqualTo("999999999999999999999999");
+        assertThat(call("goal_preview", Map.of("targetProfitEok", "0.00000001", "targetYear", 2026)).data().get("targetProfitWon").textValue()).isEqualTo("1");
+        assertThat(call("goal_preview", Map.of("targetProfitEok", "9999999999999999.99999999", "targetYear", 2026)).data().get("targetProfitWon").textValue()).isEqualTo("999999999999999999999999");
     }
 
     /** 목적: 목표의 음수·영·정밀도 초과·범위 초과·지수·숫자 JSON과 기준 덮어쓰기를 거부한다. Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 없음. */
     @Test
     void rejectsInvalidGoalFormatsAndInjectedYearWithoutDatabaseAccess() {
         for (Object value : List.of("0", "-900", "+900", "0900", "900 ", "9e2", "9,00", "0.000000001", "10000000000000000", 900)) {
-            assertThatThrownBy(() -> tools.normalize("goal_preview", json.tree(Map.of("targetProfitEok", value))))
+            assertThatThrownBy(() -> tools.normalize("goal_preview", json.tree(Map.of("targetProfitEok", value, "targetYear", 2026))))
                     .as(String.valueOf(value)).isInstanceOf(IllegalArgumentException.class);
         }
         assertThatThrownBy(() -> tools.normalize("goal_preview", json.tree(Map.of()))).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> tools.normalize("goal_preview", json.tree(Map.of("targetProfitEok", "900", "year", 2027)))).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> tools.normalize("goal_preview", json.tree(Map.of("targetProfitEok", "900", "targetYear", 2026, "year", 2027)))).isInstanceOf(IllegalArgumentException.class);
         verifyNoInteractions(home, research, analyses, workflow, discovery);
+    }
+
+    /** 목적: 목표 연도 누락·형식·범위 오류를 기본 연도로 대체하지 않고 거부한다. Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 메모리 원장만, 업무 조회·계산 없음. */
+    @Test
+    void rejectsMissingOrInvalidTargetYearBeforeCalculation() {
+        for (Object year : List.of(1999, 10000, "2026", 2026.0, true, Long.MAX_VALUE)) {
+            assertThatThrownBy(() -> tools.normalize("goal_preview", json.tree(Map.of("targetProfitEok", "900", "targetYear", year))))
+                    .as(String.valueOf(year)).isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(() -> tools.normalize("goal_preview", mapper.createObjectNode().put("targetProfitEok", "900").putNull("targetYear")))
+                .isInstanceOf(IllegalArgumentException.class);
+        Observation missing = call("goal_preview", Map.of("targetProfitEok", "900"));
+        assertThat(missing.status()).isEqualTo("ERROR");
+        assertThat(missing.data()).isNull();
+        verifyNoInteractions(calculator, baselines, home, research, analyses, workflow, discovery);
+    }
+
+    /** 목적: 기준과 다른 목표 연도는 원천 조회와 계산 전에 차단하고 기간 확인 사유를 남긴다. Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 메모리 원장만. */
+    @Test
+    void rejectsMismatchedTargetYearBeforeBaselineReadOrCalculation() {
+        token = gateway.grant(actor, snapshot(), null, "2027년 영업이익 목표 900억을 이 기준과 비교하고 다르면 알려 줘");
+        Observation result = call("goal_preview", Map.of("targetProfitEok", "900", "targetYear", 2027));
+        assertThat(result.status()).isEqualTo("ERROR");
+        assertThat(result.data()).isNull();
+        assertThat(result.warnings()).singleElement().asString().contains("2027년", "2026년", "목표 연도", "마스터");
+        verifyNoInteractions(calculator, baselines, home, research, analyses, workflow, discovery);
     }
 
     /** 목적: 기본 인자가 같은 조회는 한 번 실행하고 권한은 매번 검사한다. Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: mock 조회만. */
