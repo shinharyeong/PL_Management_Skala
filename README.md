@@ -8,7 +8,7 @@ SKALA 최종 프로젝트 모노레포입니다.
 | --- | --- | --- |
 | [`frontend/`](frontend/) | 웹 프론트엔드 | Vue 3, Vite, Vue Router, Pinia |
 | [`backend/`](backend/) | API 서버 | Spring Boot 3.4, Java 21, Gradle |
-| [`ai/`](ai/) | AI 기능 | FastAPI, LangChain (구성 예정) |
+| [`ai/`](ai/) | AI 조회·보고서·의사결정 설명 | FastAPI, LangChain, LangGraph |
 | [`parser/`](parser/) | 경영기획 Excel 파싱·검증 (.xlsx·.xlsm·.xlsb) | Python 3.11+ (표준 라이브러리) |
 | [`docs/`](docs/) | 공통 문서 | |
 
@@ -32,6 +32,7 @@ Compose는 Vue 정적 프런트, Java 21·Python 3.11 백엔드, PostgreSQL을 �
 홈은 연간 PLAN과 월간 ACTUAL을 구분하고 실적은 고정된 확정 계획과 비교합니다. Contingency는 명시적으로 입력한 전사 연간 값으로 별도 표시하며 월별 배분·차감은 하지 않습니다. 보고 항목 목록·요청 수정·별도 보고 데이터 구성 3개 API는 후속 범위이고 `/api/dev` 역할 선택·합성 양식 2개는 별도 개발 기능입니다. 구현 범위와 실제 실행 검증 결과는 구분하며 [로컬 실행 환경](docs/development/local-environment.md)의 기록을 따릅니다.
 
 - [문서 목록](docs/README.md) — PRD·인프라 구성·로컬 실행 환경
+- [경영 의사결정 에이전트](docs/development/pnl-decision-agent.md) — 자연어 질문에 따라 기존 손익·조직·워터폴·버전 비교 도구를 선택하는 대화형 Agent. 고정 근거 조사 → 조직 검토 요청·회신 → 후보 채택·시나리오 → 외부 추진 결정 기록·후속 전망 비교 → A4 요약으로 연결한다. 운영 DB 마이그레이션·실제 임원 전자결재·ERP 연계는 미수행이며 검증 범위를 문서에 구분한다.
 
 ## 배포·운영
 

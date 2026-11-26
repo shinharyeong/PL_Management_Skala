@@ -233,7 +233,9 @@ class StatelessRuntimeTests(unittest.TestCase):
                            if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute)
                            and isinstance(decorator.func.value, ast.Name) and decorator.func.value.id == "router"
                            and decorator.args and isinstance(decorator.args[0], ast.Constant)}
-        self.assertEqual(paths["contract"], {"/nl-query", "/data", "/sql-check", "/edit", "/pdf-jobs"})
+        self.assertEqual(paths["contract"], {"/nl-query", "/data", "/sql-check", "/edit", "/pdf-jobs",
+                                             "/decision-agent/compose", "/decision-agent/interpret-goal",
+                                             "/decision-agent/discover", "/decision-agent/assistant"})
         self.assertTrue({"/pdf-structure", "/report-data/months", "/report-data/resolve", "/report-data/gaps",
                          "/report-data/fill", "/report-data/sentences", "/report-data/cause-summary", "/report-data/chat"} <= paths["pdf_structure"])
         self.assertFalse({"/report-data/guess", "/report-data/guess-block"} & paths["pdf_structure"])

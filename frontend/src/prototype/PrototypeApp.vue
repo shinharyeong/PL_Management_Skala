@@ -16,6 +16,18 @@ const MonthlyPanel = defineAsyncComponent(() => import('./MonthlyPanel.vue'))
 const OrgPanel = defineAsyncComponent(() => import('./LiveOrgPanel.vue'))
 const ManagementPanels = defineAsyncComponent(() => import('./LiveManagementPanels.vue'))
 const ReportPanel = defineAsyncComponent(() => import('./LiveReportPanel.vue'))
+/** 목표 의사결정 화면을 해당 메뉴 진입 시 불러온다.
+ * Args: 없음. Returns: Vue 컴포넌트 모듈 Promise.
+ * Raises: 모듈 로드 오류. Side Effects: 화면 코드 지연 로드.
+ */
+function loadDecisionAgentPanel() { return import('./LiveDecisionAgentPanel.vue') }
+const DecisionAgentPanel = defineAsyncComponent(loadDecisionAgentPanel)
+/** 조직의 개선 검토·실행 화면을 진입 시 불러온다.
+ * Args: 없음. Returns: Vue 모듈 Promise. Raises: 모듈 로드 오류.
+ * Side Effects: 화면 코드 지연 로드.
+ */
+function loadOrgImprovementPanel() { return import('./OrgImprovementPanel.vue') }
+const OrgImprovementPanel = defineAsyncComponent(loadOrgImprovementPanel)
 import { clockText } from './auth-demo.js'
 import { pageTitles } from './router.js'
 import NavIcon from './NavIcon.vue'
@@ -62,8 +74,8 @@ async function localSignIn(account) {
 let timer
 onMounted(() => { timer = window.setInterval(() => { now.value = Date.now() }, 1000) })
 onUnmounted(() => window.clearInterval(timer))
-const plannerMenus = [{ id: 'notifications', label: '알림 모아보기' }, { id: 'home', label: '전사 손익 현황' }, { id: 'monthly', label: '월간 시트 관리' }, { id: 'annual', label: '연간 계획 관리' }, { id: 'organizations', label: '조직별 현황' }, { id: 'reports', label: '보고서 생성' }]
-const orgMenus = [{ id: 'org-requests', label: '요청함', icon: 'inbox' }, { id: 'org-history', label: '제출 이력 관리', icon: 'history' }]
+const plannerMenus = [{ id: 'notifications', label: '알림 모아보기' }, { id: 'home', label: '전사 손익 현황' }, { id: 'decision-agent', label: '목표 의사결정 Agent' }, { id: 'monthly', label: '월간 시트 관리' }, { id: 'annual', label: '연간 계획 관리' }, { id: 'organizations', label: '조직별 현황' }, { id: 'reports', label: '보고서 생성' }]
+const orgMenus = [{ id: 'org-requests', label: '요청함', icon: 'inbox' }, { id: 'org-improvements', label: '개선 검토·실행 과제' }, { id: 'org-history', label: '제출 이력 관리', icon: 'history' }]
 const menus = computed(() => store.actor?.role === 'org' ? orgMenus : plannerMenus)
 const menuModel = computed(() => menus.value.flatMap(menu => [
   { ...menu, label: copy.pages[menu.id] || menu.label, count: menu.id === 'notifications' ? store.unread : null },
@@ -208,7 +220,9 @@ watch(page,async value=>{
     <main id="main-content" class="main-content" :class="{ 'home-overview': page === 'home' }" tabindex="-1">
       <p v-if="store.error" class="notice error" role="alert">{{ store.error }}</p><p v-if="store.busy" class="muted" role="status"><span data-copy-key="shellText.text016">{{ copy.shellText.text016 }}</span></p>
       <HomePanel v-if="page === 'home'" @navigate="navigate" />
+      <DecisionAgentPanel v-else-if="page === 'decision-agent'" />
       <MonthlyPanel v-else-if="monthlyPages.includes(page)" :page="page" @navigate="navigate" />
+      <OrgImprovementPanel v-else-if="page === 'org-improvements'" />
       <OrgPanel v-else-if="page.startsWith('org-')" :page="page" @navigate="navigate" />
       <ReportPanel v-else-if="page==='reports'" /><ManagementPanels v-else :page="page" @navigate="navigate" />
     </main>

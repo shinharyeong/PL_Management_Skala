@@ -56,3 +56,26 @@ test('direct links and browser history cannot enter another role or an invalid w
   await router.push('/home')
   assert.equal(router.currentRoute.value.name, 'login')
 })
+
+/** 최신 업무 경로와 Agent의 기획자·조직 직접 진입이 함께 유지되는지 검사한다.
+ * Args: 없음. Returns: Promise<void>. Raises: 경로·역할 검증 실패.
+ * Side Effects: 메모리 라우터만 이동하며 API·파일·실제 로그인에 접근하지 않는다.
+ */
+test('Agent routes coexist with report and monthly pages while preserving role boundaries', async function agentRouteBoundaries() {
+  const store = { live: true, actor: { role: 'planner' }, items: {}, carts: {} }
+  const router = createPrototypeRouter(createMemoryHistory(), store)
+  for (const page of ['decision-agent', 'reports', 'monthly']) {
+    await router.push(`/${page}`)
+    assert.equal(router.currentRoute.value.name, page)
+  }
+  await router.push('/org-improvements')
+  assert.equal(router.currentRoute.value.name, 'home')
+  store.actor = { role: 'org' }
+  await router.push('/org-improvements')
+  assert.equal(router.currentRoute.value.name, 'org-improvements')
+  await router.push('/decision-agent')
+  assert.equal(router.currentRoute.value.name, 'org-requests')
+  store.actor = null
+  await router.push('/org-improvements')
+  assert.equal(router.currentRoute.value.name, 'login')
+})

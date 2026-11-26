@@ -69,3 +69,34 @@ test('실제 PrimeVue DataTable은 머리와 본문의 세로·가로 병합 및
   assert.match(body, />0<!--/)
   assert.equal((header.match(/<th\b/g) || []).length, 4)
 })
+
+/** 반복 부모의 key=0이 조건부 헤더 그룹과 충돌하지 않는지 PrimeVue 수집기로 확인한다.
+ * Args: 없음. Returns: Promise<void>. Raises: 소스 읽기·열 수 검증 실패.
+ * Side Effects: 컴포넌트 소스 읽기와 메모리 VNode 구성만 수행한다.
+ */
+test('반복 부모 key=0에서 헤더 그룹이 본문 열을 중복 등록하지 않는다', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const { HelperSet } = await import('@primevue/core/utils')
+  const source = await readFile(new URL('../components/ReportDataTable.vue', import.meta.url), 'utf8')
+  const groupKey = source.match(/<PColumnGroup\b[^>]*\bkey="([^"]+)"/)?.[1]
+  assert.ok(groupKey, '조건부 그룹은 반복 부모와 구별되는 명시적 키가 필요합니다.')
+  const parent = { vnode: { key: 0 }, parent: null }
+  const registered = [], body = []
+  for (let column = 0; column < 3; column++) {
+    const vnode = { type: { name: 'Column' }, key: column }
+    body.push(vnode); registered.push({ vnode, parent })
+  }
+  const helpers = new HelperSet({ type: 'Column', init: registered })
+  /** 실제 헤더 키로 등록된 본문 열 목록을 읽는다.
+   * Args: key 그룹 키. Returns: 수집된 본문 VNode. Raises: 없음. Side Effects: 없음.
+   */
+  function columns(key) {
+    /** 헤더 그룹과 본문 열을 실제 슬롯 형태로 반환한다.
+     * Args: 없음. Returns: VNode 목록. Raises: 없음. Side Effects: 없음.
+     */
+    function slotChildren() { return [{ type: { name: 'ColumnGroup' }, key }, ...body] }
+    return helpers.get(null, { default: slotChildren })
+  }
+  assert.equal(columns(0).length, 6, '이전 암시적 key=0 조건에서 중복을 재현합니다.')
+  assert.equal(columns(groupKey).length, 3)
+})
