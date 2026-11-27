@@ -1,6 +1,7 @@
 import { analysisBrief, assistantExecutionSummary, assistantIncompleteReason, successfulObservations } from './decision-conversation-api.js'
 import { decimalText } from './decision-agent-api.js'
 import { compare } from './exact-money.js'
+import { reportToolResults } from './decision-report-tools.js'
 
 const DIRECTIONS = new Set(['INCREASE', 'DECREASE', 'UNCHANGED', 'MISSING'])
 const FAVORABILITY = new Set(['FAVORABLE', 'UNFAVORABLE', 'NEUTRAL', 'UNKNOWN'])
@@ -35,6 +36,8 @@ export function buildPreviewResult(execution, scope = {}) {
   const result = emptyResult(state, state === 'READY' ? '실제로 조회한 자료를 같은 기준으로 정리했습니다.'
     : state === 'PARTIAL' ? '답변이 완료되지 않아 실제로 조회한 자료만 표시합니다.' : '표시할 성공 조회 자료가 없습니다.')
   result.context = { ...response.context }
+  result.executionId = typeof execution.executionId === 'string' ? execution.executionId : ''
+  result.toolResults = reportToolResults(observations, response.context)
   result.brief = brief
   result.status = response.status
   result.executionSummary = assistantExecutionSummary(response)
@@ -73,7 +76,7 @@ export function buildPreviewResult(execution, scope = {}) {
  */
 function emptyResult(state, message) {
   return { state, context: null, capturedAt: null, goal: null, organizations: [], organizationCount: null, organizationSource: null,
-    explanationCount: null, warnings: [], message, sources: [], brief: null, status: null, executionSummary: null, incompleteReason: null }
+    executionId: '', toolResults: null, explanationCount: null, warnings: [], message, sources: [], brief: null, status: null, executionSummary: null, incompleteReason: null }
 }
 
 /** 요청 또는 응답의 마스터·분석·revision이 현재 범위와 정확히 같은지 검사한다.

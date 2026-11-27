@@ -504,9 +504,10 @@ onBeforeUnmount(disposePanel)
       </aside>
 
       <section ref="previewReportElement" class="analysis-area" :class="{ 'preview-report-area': readOnly }" aria-live="polite" :aria-busy="busy || previewing">
-        <DecisionPreviewReport v-if="readOnly" :result="previewResult" :baseline-label="previewLabel" :year="year" @source="openPreviewSource" />
+        <DecisionPreviewReport v-if="readOnly || (!analysis && previewExecution && previewExecution.phase !== 'IDLE')" :result="previewResult" :baseline-label="previewLabel" :year="year" :api="api" @source="openPreviewSource" />
         <div v-else-if="!analysis" class="agent-empty"><span class="empty-symbol"><i class="pi pi-chart-line" aria-hidden="true" /></span><p class="eyebrow">A CLEAR BASIS FOR YOUR NEXT DECISION</p><h2>목표까지 남은 금액부터,<br>다음에 확인할 근거까지.</h2><p>확정 마스터를 선택하고 목표를 입력하면<br>조직별 개선 후보를 검토할 공간이 열립니다.</p><div class="empty-stages"><span>목표 Gap</span><i class="pi pi-arrow-right" aria-hidden="true" /><span>후보 검증</span><i class="pi pi-arrow-right" aria-hidden="true" /><span>의사결정서</span></div><small>가상 효과를 채우지 않습니다. 실제 조직의 개선 가능액과 근거를 입력해 주세요.</small></div>
         <template v-else>
+          <DecisionPreviewReport v-if="previewExecution && previewExecution.phase !== 'IDLE'" :result="previewResult" :baseline-label="previewLabel" :year="year" :api="api" @source="openPreviewSource" />
           <header class="analysis-header"><div><p class="eyebrow">ACTIVE ANALYSIS · v{{ analysis.revision }}</p><h2>{{ analysis.title }}</h2><p>{{ analysis.snapshot.masterLabel }} · {{ analysis.snapshot.year }}년 {{ analysis.snapshot.baseMonth }}월 기준 · {{ constraints }}</p></div><PTag :value="dirty ? '미저장 변경' : result ? '계산 완료 · 조건부' : '후보 검토 중'" :severity="dirty ? 'warn' : result ? 'success' : 'secondary'" /></header>
           <div class="baseline-strip"><div><span>고정한 연간 전망</span><strong>{{ money(analysis.snapshot.baselineProfitWon) }}<small>억</small></strong></div><div><span>경영 목표</span><strong>{{ money(analysis.targetProfitWon) }}<small>억</small></strong></div><div><span>후보 검토 기간</span><strong class="period-text">{{ analysis.snapshot.baseMonth < 12 ? `${analysis.snapshot.baseMonth + 1}–12월` : '잔여 월 없음' }}</strong></div></div>
           <PMessage v-if="dirty" severity="warn" :closable="false">후보가 변경되어 이전 결과를 숨겼습니다. 저장 후 다시 계산하면 최신 의사결정서를 확인할 수 있습니다.</PMessage>

@@ -27,9 +27,25 @@ FIELD_LABELS = {
     "profitImpactWon": "계획 차이의 이익 영향 (개선 가능액 아님)", "period": "조회 기간 구분",
     "availableCount": "현재 원천 범위의 필터 결과 수", "sourceLimitMayApply": "원천 조회 상한 적용 가능성",
     "reportItemId": "보고 항목 ID (원장 계정 ID 아님)",
+    "templateName": "보고서 자료 틀 이름", "templateVersion": "보고서 자료 틀 버전",
+    "sourceVersion": "보고서 조회 원천 버전", "dataStatus": "보고서 데이터 상태",
+    "ready": "임시 보고서 다운로드 준비 여부", "filename": "임시 보고서 파일 이름",
+    "byteSize": "임시 보고서 바이트 크기", "expiresAt": "임시 다운로드 만료 시각",
+    "acceptedCount": "수락 소명 건수 (summary는 전사, 최상위는 상세 선택 범위)",
+    "reviewingCount": "수락 소명 없는 검토 건수 (summary는 전사, 미회신 확정 아님)",
+    "unclassifiedAcceptedCount": "전사 미분류 수락 소명 건수", "fullyClassified": "미분류·수락 전 항목 없는 분류 완료 여부",
+    "gapAmountWon": "분류별 Gap 단순 합계 (영업이익 영향·개선액 아님)",
+    "gapAmount": "항목 Gap (영업이익 영향·개선액 아님)", "gapTotalWon": "전사 Gap 단순 합계",
+    "classifiedTotalWon": "전사 확정 분류 Gap 합계", "matchesGapTotal": "분류 금액 합계 일치 (분류 완료 판정 아님)",
+    "hasMore": "상세 다음 페이지 존재", "nextOffset": "다음 상세 페이지 위치",
+    "categoryId": "확정 분류 ID", "suggestedCategoryId": "검토할 제안 분류 ID (확정 아님)",
+    "itemYear": "소명 대상 연도", "itemMonth": "소명 대상 월 (기준월과 다를 수 있음)", "itemScenario": "소명 대상 실적·추정",
+    "hasApplicablePeriod": "소명 비교에 적용할 대상 기간 존재", "subtotal": "상위 분류 소계 (하위 분류와 중복 합산 금지)",
 }
-KEY_ORDER = ("period", "comparison", "companyScope", "selectedOrganizationId", "availableCount", "sourceLimit", "sourceLimitMayApply",
-             "comparisonSummary", "summary", "rankedByOpPlanDifference", "metrics", "kpis", "items", "columns",
+KEY_ORDER = ("period", "comparison", "companyScope", "selectedOrganizationId", "ready", "templateName", "dataStatus",
+             "hasApplicablePeriod", "itemYear", "itemMonth", "itemScenario", "hasMore", "nextOffset", "availableCount", "sourceLimit", "sourceLimitMayApply",
+             "comparisonSummary", "summary", "gapTotalWon", "classifiedTotalWon", "matchesGapTotal", "categoryTotals",
+             "rankedByOpPlanDifference", "metrics", "kpis", "items", "columns",
              "baselineProfitWon", "targetProfitWon", "gapWon", "surplusWon", "signedGapWon", "forecastMeetsTarget",
              "organization", "name", "key", "actualWon", "actual", "planDifferenceWon", "vsPlanAmount", "opDiff",
              "direction", "favorability", "rank", "missing", "id")
@@ -50,6 +66,19 @@ def projected_data(observation: dict[str, Any]) -> dict[str, Any] | list[Any] | 
         return data
     if observation["tool"] == "observation_detail":
         return {"value": data.get("value")}
+    if observation["tool"] == "report_templates":
+        return {key: data[key] for key in ("items", "nextCursor") if key in data}
+    if observation["tool"] == "report_preview":
+        return {key: data[key] for key in ("templateName", "templateId", "templateVersion", "blockId", "dataStatus",
+                                         "sourceVersion", "blocks", "masterId", "year", "month", "saved") if key in data}
+    if observation["tool"] == "report_export":
+        return {key: data[key] for key in ("ready", "filename", "format", "expiresAt", "byteSize", "artifactId",
+                                         "masterId", "templateId", "templateVersion", "saved") if key in data}
+    if observation["tool"] == "explanation_overview":
+        return {key: data[key] for key in ("comparison", "scope", "selectedOrganizationId", "summary", "hasMore", "nextOffset",
+                                         "itemYear", "itemMonth", "itemScenario", "hasApplicablePeriod", "categoryTotals",
+                                         "items", "reviewing", "gapTotalWon", "classifiedTotalWon", "matchesGapTotal", "offset", "limit",
+                                         "acceptedCount", "reviewingCount", "categories", "sourceVersion") if key in data}
     if observation["tool"] == "monthly_pnl":
         result = {key: data[key] for key in ("period", "year", "month", "unit", "companyScope", "selectedOrganizationId") if key in data}
         for key, tool in (("company", "company_pnl"), ("organizations", "organization_pnl")):

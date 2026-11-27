@@ -37,6 +37,8 @@ import org.junit.jupiter.api.Test;
 class DecisionAssistantTest {
     private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule()).disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     private final DecisionAssistantJson json = new DecisionAssistantJson(mapper);
+    private final DecisionReportTools reports = mock(DecisionReportTools.class);
+    private final DecisionExplanationTools explanationOverview = mock(DecisionExplanationTools.class);
     private final HomePnlQueryService home = mock(HomePnlQueryService.class);
     private final ArchiveQueryService archive = mock(ArchiveQueryService.class);
     private final VersionComparisonService comparison = mock(VersionComparisonService.class);
@@ -64,7 +66,7 @@ class DecisionAssistantTest {
         when(users.findById(7L)).thenReturn(Optional.of(user)); when(user.getRole()).thenReturn(UserRole.PLANNER); when(user.getActive()).thenReturn(true);
         when(baselines.load(3L)).thenReturn(snapshot());
         when(home.pnl(actor, "YEAR", 2026, 11, 3L)).thenReturn(new HomePnlResponse("READY", List.of(new HomePnlResponse.Kpi("OP", "-15000000000", null, "0")), List.of(), null));
-        tools = new DecisionAssistantTools(home, archive, comparison, calculator, workflow, research, discovery, baselines, analyses, submissions, users, json);
+        tools = new DecisionAssistantTools(home, archive, comparison, calculator, workflow, research, discovery, baselines, analyses, submissions, users, json, reports, explanationOverview);
         gateway = new DecisionAssistantGateway(tools, json, clock); validator = new DecisionAssistantResponseValidator(json);
         token = gateway.grant(actor, snapshot(), null);
     }
@@ -750,6 +752,33 @@ class DecisionAssistantTest {
                 Map.of("observationId", "obs-1", "path", "/data", "masterId", "7")))
             assertThatThrownBy(() -> tools.normalize("observation_detail", json.tree(input))).isInstanceOf(IllegalArgumentException.class);
         verifyNoInteractions(home, research, analyses, workflow, discovery);
+    }
+
+    /** 목적: 보고서·소명 Tool을 공통 권한 원장과 캐시에 연결하고 모델의 기준 주입을 막는다.
+     * Args: 없음. Returns: 없음. Raises: AssertionError. Side Effects: mock·메모리만 사용. */
+    @Test void routesReportAndExplanationApisWithoutAllowingModelScopeOrSql() {
+        when(reports.templates(any(), any())).thenReturn(new DecisionAssistantTools.ToolValue(Map.of("items", List.of()), "저장 틀", List.of()));
+        var first = call("report_templates", Map.of());
+        assertThat(first.status()).isEqualTo("SUCCESS");
+        assertThat(call("report_templates", Map.of("limit", 10))).isEqualTo(first);
+        verify(reports, times(1)).templates(any(), eq(json.tree(Map.of("limit", 10))));
+        when(explanationOverview.overview(any(), any())).thenReturn(new DecisionAssistantTools.ToolValue(Map.of("gapTotalWon", "0"), "소명 현황", List.of()));
+        assertThat(call("explanation_overview", Map.of()).status()).isEqualTo("SUCCESS");
+        verify(explanationOverview).overview(any(), eq(json.tree(Map.of("comparison", "ACTUAL_VS_PLAN", "offset", 0, "limit", 10))));
+        assertThat(call("report_preview", Map.of("templateId", "1", "version", 1, "sql", "SELECT 1")).status()).isEqualTo("ERROR");
+        assertThat(call("explanation_overview", Map.of("masterId", "99")).status()).isEqualTo("ERROR");
+        verify(reports, never()).preview(any(), any());
+    }
+
+    /** 목적: 조회한 틀 버전·현재 실행 관찰과 유효 페이지 인자만 허용한다.
+     * Args: 없음. Returns: 없음. Raises: AssertionError. Side Effects: 없음. */
+    @Test void requiresReportVersionAndValidExportObservationAndPageArguments() {
+        assertThatThrownBy(() -> tools.normalize("report_preview", json.tree(Map.of("templateId", "1")))).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> tools.normalize("report_preview", json.tree(Map.of("templateId", "1", "version", 1.5)))).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> tools.normalize("report_export", json.tree(Map.of("previewObservationId", "https://example.test")))).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> tools.normalize("explanation_overview", json.tree(Map.of("comparison", "FREE")))).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> tools.normalize("explanation_overview", json.tree(Map.of("limit", 21)))).isInstanceOf(IllegalArgumentException.class);
+        assertThat(tools.normalize("report_export", json.tree(Map.of("previewObservationId", "obs-3"))).path("previewObservationId").asText()).isEqualTo("obs-3");
     }
 
     /** 목적: 검증 경계 테스트에 사용할 현재 원장 자료만 메모리에서 교체한다. Args: data 합성 JSON. Returns: 없음. Raises: 없음. Side Effects: 테스트 실행의 첫 관찰만 교체. */

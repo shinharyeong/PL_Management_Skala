@@ -5,9 +5,10 @@
 ## 통합 경계
 
 - Vue → 백엔드 `/api/v1/report/*` → AI 계약 `/v1/pdf-jobs`, `/v1/data`, `/v1/nl-query`, `/v1/edit`, `/v1/sql-check` 순서로 연결합니다.
+- 대화형 Agent는 기존 Spring 서비스를 재사용하는 업무 도구 19개를 제공합니다. 보고서 틀 조회·값 채우기·임시 XLSX 준비와 전사 소명 현황 Tool의 범위·제약은 [통합 계약](docs/integration.md#agent의-보고서전사-소명-도구)에 정리했습니다.
 - AI의 DB 연결은 `AI_DATABASE_URL`과 `AI_DB_SCHEMA=report`를 사용하며 항상 읽기 전용입니다. 스키마 생성·값 적재 함수는 운영 앱에서 제거했습니다.
 - `ITEM_GAP`과 `gap_key`를 사용하고, 기준 월과 확정·잠정 상태는 백엔드 `dim_version` 값을 따릅니다. 소명 건수는 검토 항목별 최신 회차 기준입니다.
-- AI는 파일 결과·호출 로그·디스크 캐시를 만들지 않습니다. XLSX는 백엔드 RPT-16으로 내보내며 AI 채팅 응답의 `file`은 `null`입니다.
+- AI는 파일 결과·호출 로그·디스크 캐시를 만들지 않습니다. 일반 AI 채팅 `/v1/chat`의 `file`은 `null`입니다. Agent의 `report_export`는 백엔드가 기존 XLSX 내보내기 서비스로 준비한 임시 메모리 자료의 메타데이터만 받으며 업무 DB 저장·외부 발송은 수행하지 않습니다.
 - 개발 데모와 `/v1/dev/*`는 Vue의 필요한 기능이 모두 이관될 때까지 유지합니다. 개발 경로는 `AI_PDF_DEV=1`에서만 열립니다. `/v1/chat`, `/v1/report/key-messages`는 같은 핵심 서비스를 확인하는 얇은 개발 입구입니다. 호출이 없던 옛 `/v1/report-authoring/*`와 행·블록 추측 경로는 제거했습니다.
 
 ## LangChain과 LangGraph의 역할

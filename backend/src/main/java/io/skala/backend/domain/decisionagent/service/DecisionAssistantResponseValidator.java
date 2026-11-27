@@ -17,7 +17,7 @@ public class DecisionAssistantResponseValidator {
     private static final Pattern NUMERIC = Pattern.compile("[\\p{N}%]|퍼센트|절반|두\\s*배|세\\s*배|(?:[수일이삼사오육칠팔구십백천]*[십백천][수일이삼사오육칠팔구십백천]*\\s*(?:억|조|만)(?:\\s*원)?|(?<![가-힣])[수일이삼사오육칠팔구]+\\s*(?:(?:억|조)(?:\\s*원)?|만\\s*원))(?=$|[^가-힣]|[은는이가을를의에와과도]|으로|보다|부터|까지|입니다|이며|이고|인데|증가|감소|절감|달성|확보|필요|부족|초과|미달|수준|규모|가량|정도)|\\b(?:million|billion|percent)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern ASSERTED = Pattern.compile("확정|보장|반드시|(?:승인|달성|실현|검증|확보)\\s*완료|(?:달성|확보|실현|절감)(?:됩니다|합니다)");
     private static final Pattern DECIMAL = Pattern.compile("[+-]?(?:[0-9]+(?:\\.[0-9]+)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?");
-    private static final List<String> LIMITATIONS = List.of("이 대화는 조회와 사용자 확인용 초안만 제공하며 저장·발송·승인을 실행하지 않습니다.",
+    private static final List<String> LIMITATIONS = List.of("이 대화는 조회·보고서 준비·사용자 확인용 초안을 제공하며 업무 데이터 저장·발송·승인을 실행하지 않습니다.",
             "금액은 실제 관찰 인용에서 확인하고 비교 기준과 조건부 효과를 구분해 주세요.");
     private final DecisionAssistantJson json;
 

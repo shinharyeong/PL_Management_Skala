@@ -1,4 +1,4 @@
-"""조회 전용 대화형 Agent의 입력·native Tool·관찰·종료 계약."""
+"""업무 조회·초안·임시 보고서 준비 Agent의 입력·native Tool·관찰·종료 계약."""
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -72,6 +72,42 @@ class ReportItemArguments(MonthlyPnlArguments):
     reportItemId: StrictStr | None = Field(default=None, pattern=r"^[1-9][0-9]*$", max_length=100,
                                            description="기존 근거 facts.reportItemId에서 읽은 보고 항목 ID. 임의 계정 ID를 입력하지 않는다.")
     limit: StrictInt = Field(default=20, ge=1, le=50)
+
+
+class ReportTemplatesArguments(ContractModel):
+    """저장된 보고서 자료 틀의 식별자·버전·블록 목록을 페이지로 조회한다."""
+
+    limit: StrictInt = Field(default=10, ge=1, le=20)
+    cursor: StrictStr | None = Field(default=None, min_length=1, max_length=500,
+                                     description="앞선 report_templates의 nextCursor를 그대로 사용한다. 임의로 만들지 않는다.")
+
+
+class ReportPreviewArguments(ContractModel):
+    """앞선 자료 틀 목록에서 확인한 버전을 고정 기준으로 채울 인자."""
+
+    templateId: StrictStr = Field(pattern=r"^[1-9][0-9]{0,18}$",
+                                   description="이번 실행의 report_templates에서 읽은 templateId.")
+    version: StrictInt = Field(ge=1, le=2147483647, description="동일 목록 항목의 version. 최신 버전으로 생략하거나 임의 변경하지 않는다.")
+    blockId: StrictStr | None = Field(default=None, min_length=1, max_length=64,
+                                      description="생략하면 자료 틀 전체. 특정 블록은 같은 자료 틀 목록에서 확인한 blockId만 지정한다.")
+
+
+class ReportExportArguments(ContractModel):
+    """이번 실행의 성공한 보고서 미리보기만 임시 XLSX로 준비한다."""
+
+    previewObservationId: StrictStr = Field(pattern=r"^obs-[1-9][0-9]*$", max_length=100,
+                                             description="이번 실행에서 성공한 report_preview의 관찰 id. 이전 대화의 ID·직접 입력한 틀·기간을 사용하지 않는다.")
+
+
+class ExplanationOverviewArguments(ContractModel):
+    """고정 기준월의 전사 소명 분류·검토 현황과 페이지 상세를 읽는다."""
+
+    comparison: Literal["ACTUAL_VS_PLAN", "ACTUAL_VS_PREVIOUS", "ESTIMATE_VS_PREVIOUS", "ESTIMATE_VS_PLAN"] = Field(
+        default="ACTUAL_VS_PLAN", description="질문의 실제 비교 기준. 미지정이면 기준월 실적 대비 계획. 추정 질문은 ESTIMATE 비교를 명시하고 응답의 itemYear/itemMonth를 확인한다. 다른 비교를 합산하지 않는다.")
+    organizationId: StrictStr | None = Field(default=None, pattern=r"^[1-9][0-9]{0,18}$",
+                                             description="기존 관찰에서 확인한 조직 ID. 상세 필터이며 응답의 전사 합계 범위를 읽는다.")
+    offset: StrictInt = Field(default=0, ge=0, le=10000)
+    limit: StrictInt = Field(default=10, ge=1, le=20)
 
 
 class VersionArguments(ContractModel):
@@ -246,6 +282,10 @@ ARGUMENT_MODELS = {
     "observation_detail": ObservationDetailArguments,
     "monthly_pnl": MonthlyPnlArguments,
     "report_item_breakdown": ReportItemArguments,
+    "report_templates": ReportTemplatesArguments,
+    "report_preview": ReportPreviewArguments,
+    "report_export": ReportExportArguments,
+    "explanation_overview": ExplanationOverviewArguments,
 }
 TOOL_DESCRIPTIONS = {
     "analysis_context": "선택된 저장 analysis의 목표·후보·기존 계산이 질문에 필요한 경우 읽는다. context의 master·연도·기준월은 이미 고정되어 있으므로 단순 기준 재확인용 선행 조회로 쓰지 않는다. 저장 분석 없는 목표 비교는 goal_preview를 직접 사용한다.",
@@ -254,6 +294,10 @@ TOOL_DESCRIPTIONS = {
     "organization_pnl": "organizationId를 생략하면 모든 허용 조직의 손익·계획 대비 OP 차이·증감·유불리·순위를 한 번에 조회한다. signed 순위는 OP 차이 내림차순, absolute 순위는 절댓값순이다. 원인·개선 가능성은 이 수치만으로 단정하지 말고 필요한 소명이나 상세 근거를 추가로 확인한다.",
     "monthly_pnl": "선택한 마스터의 고정 기준월 손익을 조회한다. 연간 전망이 아닌 period=MONTH이며 company는 전사, organizations.columns/summary는 허용 또는 선택 조직이다. organizations.total은 전사 합계여서 조직 필터의 합계로 쓰지 않는다. 임의 다른 월·연도 조회나 시계열 전체 조회는 아니다.",
     "report_item_breakdown": "조직×보고 항목의 연간 전망·동일 제출본 PLAN·차이·이익 영향 근거를 읽는다. Home의 확정 연간 계획 비교와 기준이 다르므로 수치를 합치지 않는다. facts.reportItemId는 보고 항목 ID이며 개별 원장 계정행이 아니다. sourceLimit 전역 상한 뒤 필터하므로 availableCount와 sourceLimitMayApply를 보고 전체 자료인 것처럼 주장하지 않는다. 원인이나 절감 가능액은 이 차이만으로 확정하지 않는다.",
+    "report_templates": "기존 보고서 API에서 자료 틀의 실제 templateId·version·이름·블록 목록을 조회한다. nextCursor가 있으면 다음 페이지가 있다. blocksTruncated가 true이면 표시된 블록 목록은 일부이므로 전체라고 주장하지 않는다. 적합한 틀이 확인되면 report_preview로 채운다. 여러 틀 중 선택 근거가 없으면 사용자에게 선택을 요청하고 임의의 ID·버전·블록을 만들지 않는다.",
+    "report_preview": "이번 실행의 report_templates에서 확인한 자료 틀·버전을 기존 보고서 API로 채운다. master·연월은 서버가 고정하고, 보고서 API의 원천 기준과 다르면 오류로 중단한다. 현재 기준의 구조형 표와 계획·전월 비교를 지원하며 저장 SQL/metricId·다른 기간·다기간 블록은 Agent 경로에서 제한될 수 있다. 오류가 난 블록을 지원한다고 말하지 말고 해당 자료 틀·블록 선택을 확인한다. 자료 틀 저장·수정은 하지 않으며 미리보기 성공만으로 파일이 준비됐다고 말하지 않는다. 파일 요청은 성공한 관찰 id로 report_export를 호출한다.",
+    "report_export": "이번 실행의 성공한 report_preview와 동일한 기준·틀·블록으로 기존 XLSX 내보내기 API를 실행하고 임시 다운로드 자료를 준비한다. 결과의 ready=true일 때만 다운로드 가능하다고 안내한다. artifactId·만료 시각·파일 정보는 실제 응답에서 확인한다. DB 저장·외부 발송·승인은 하지 않으며 파일 링크나 ID를 직접 만들지 않는다. PDF 생성은 이 도구의 지원 범위가 아니다.",
+    "explanation_overview": "기존 전사 소명 API의 비교별 Gap·수락 소명·분류·수락 전 현황을 읽는다. 전사 summary/categoryTotals와 선택 조직 상세 범위를 구분한다. itemYear/itemMonth/itemScenario가 소명 대상 기간이며 추정 비교는 기준월 다음 월일 수 있다. hasApplicablePeriod=false이면 대상 기간이 없는 것이며 자료 누락으로 단정하지 않는다. hasMore이면 nextOffset으로 페이지를 더 읽을 수 있으며 observation_detail은 현재 페이지 원문만 확장한다. matchesGapTotal=true만으로 분류가 완료됐다고 판단하지 말고 summary의 unclassifiedAcceptedCount·reviewingCount·fullyClassified를 확인한다. categoryTotals의 subtotal=true는 상위 합계이므로 하위 분류와 다시 합산하지 않는다. Gap 단순 합계는 영업이익 영향·개선 가능액이 아니며 reviewing은 미회신 확정이 아니다. 분류 제안은 확정 분류가 아니고 다기간 추세·반복 원인 분석을 수행한 자료도 아니다.",
     "pnl_waterfall": "고정 master 손익의 워터폴 구성과 비교 기준을 조회한다.",
     "approved_explanations": "조직 ID를 생략하면 허용 조직의 승인 소명을 상한까지 읽는다. items.organizationId와 facts의 기간으로 분석 대상과 대조하고 label의 계정명이 아닌 items.text의 실제 회신에서 사유를 읽는다. total이 items 수보다 크면 일부 조회다. 필요한 조직이 목록에 없으면 실제 조회한 organizationId로 다시 요청하며, observation_detail은 이미 반환된 text의 잘린 내용만 더 읽을 수 있다. 계정명을 원인으로 바꾸거나 소명 승인을 새 과제 승인·개선액 증명으로 해석하지 않는다.",
     "submission_versions": "조직의 승인된 과거 제출 목록을 읽는다. 비교하려면 먼저 이 도구로 base ID를 확인한다.",

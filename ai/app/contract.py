@@ -46,11 +46,25 @@ def _orig_month(blocks: list[dict]) -> tuple[int, int] | None:
 
 
 def data(base: dict, blocks: list[dict]) -> dict:
+    """기존 보고서 값 채우기 결과와 실제 조회 기준을 함께 반환한다.
+
+    Args: base 기준 연월, blocks 저장된 자료 틀의 블록.
+    Returns: 기존 dataStatus·blocks와 확인된 source 또는 원천이 없으면 null.
+    Raises: 기존 보고서 조회·블록 처리 오류.
+    Side Effects: 기존 fill_report의 읽기 경로만 호출하며 파일·DB를 쓰지 않는다.
+    """
     from .pdf_structure import data_select
     # 원래 월을 알려 주어야 선택한 기준 월로 날짜 표기('26.11월 등)가 바뀐다.
     r = data_select.fill_report(base, [_flat_table(b) for b in blocks], _orig_month(blocks))
     status = _STATE.get(r.get("state") or "", "NONE") if r.get("version") else "NONE"
-    return {"dataStatus": status, "blocks": r.get("blocks", [])}
+    resolved_base = r.get("base")
+    version = r.get("version")
+    source = None
+    if (isinstance(version, str) and version.strip() and isinstance(resolved_base, dict)
+            and type(resolved_base.get("year")) is int and 2000 <= resolved_base["year"] <= 9999
+            and type(resolved_base.get("month")) is int and 1 <= resolved_base["month"] <= 12):
+        source = {"version": version, "year": resolved_base["year"], "month": resolved_base["month"]}
+    return {"dataStatus": status, "blocks": r.get("blocks", []), "source": source}
 
 
 def sql_check(sql: str) -> dict:

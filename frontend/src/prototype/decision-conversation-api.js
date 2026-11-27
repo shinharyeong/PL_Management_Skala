@@ -2,18 +2,20 @@ import { formatMoney } from '../lib/decimal-display.js'
 import { compare } from './exact-money.js'
 import { decimalText } from './decision-agent-api.js'
 const ACTIONS = { OPEN_DISCOVERY: { label: '근거 조사·제안 열기', tab: 'discovery' }, OPEN_SCENARIOS: { label: '시나리오 비교 열기', tab: 'scenarios' }, OPEN_WORKFLOW: { label: '조직 검토·실행 열기', tab: 'workflow' } }
-const HISTORY_TOOLS = new Set(['analysis_context', 'company_pnl', 'profit_drivers', 'organization_pnl', 'monthly_pnl', 'report_item_breakdown', 'pnl_waterfall', 'approved_explanations', 'submission_versions', 'submission_comparison', 'scenario_preview', 'work_items', 'review_request_draft', 'goal_preview', 'observation_detail'])
+const HISTORY_TOOLS = new Set(['analysis_context', 'company_pnl', 'profit_drivers', 'organization_pnl', 'monthly_pnl', 'report_item_breakdown', 'pnl_waterfall', 'approved_explanations', 'submission_versions', 'submission_comparison', 'scenario_preview', 'work_items', 'review_request_draft', 'goal_preview', 'observation_detail', 'report_templates', 'report_preview', 'report_export', 'explanation_overview'])
 const MONEY_FIELDS = {
   company_pnl: ['actual', 'plan', 'vsPlanAmount', 'vsPreviousAmount', 'op', 'revenue', 'cost', 'total'],
   profit_drivers: ['opDiff', 'actualOp', 'planOp', 'actual', 'plan', 'total'],
   organization_pnl: ['revenue', 'op', 'opDiff', 'vsPlanAmount', 'vsPreviousAmount', 'actual', 'plan', 'operatingProfit'],
   monthly_pnl: ['actual', 'plan', 'vsPlanAmount', 'vsPreviousAmount', 'op', 'revenue', 'cost', 'total', 'opDiff'],
   pnl_waterfall: ['total', 'amount', 'value', 'start', 'end', 'base', 'current'],
+  explanation_overview: ['gapAmount'],
   submission_comparison: ['baseAmount', 'targetAmount', 'currentAmount', 'previousAmount', 'diff', 'gapAmount'],
 }
 const LABELS = { name: '이름', label: '항목', organizationName: '조직', organizationId: '조직 ID', code: '코드', actual: '현재 전망', plan: '계획', diff: '차이', gap: '차이', rate: '비율', revenueWon: '매출', costWon: '비용', profitWon: '영업이익', baselineProfitWon: '기준 영업이익', targetProfitWon: '목표 영업이익', netEffectWon: '추가 이익', title: '제목', content: '내용', text: '근거 내용', note: '검토 내용', status: '상태', state: '업무 상태', category: '분류', id: 'ID', amount: '금액', value: '값', year: '연도', month: '월', baseMonth: '기준 월', submissionId: '제출 ID' }
 Object.assign(LABELS, { dataStatus: '자료 상태', kpis: '전사 손익 지표', rows: '손익 상세', items: '조회 내역', columns: '조직별 손익', total: '전체 합계', organizationCode: '조직 코드', opDiff: '영업이익 차이', opDiffRate: '영업이익 차이율 (%)', revenue: '매출', op: '영업이익', opContributionRate: '영업이익 기여도 (%)', opMarginRate: '영업이익률 (%)', opMargin: '영업이익률 (%)', vsPlanAmount: '계획 대비 차이', snapshot: '고정 기준', result: '계산 결과', message: '확인 요청 내용', sourceKind: '근거 유형', sourceId: '근거 ID', needsConfirmation: '사용자 확인 필요', analysisId: '분석 ID', expectedAnalysisRevision: '분석 버전' })
 Object.assign(LABELS, { key: '손익 항목', actualWon: '현재 연간 전망', planDifferenceWon: '계획 대비 차이', direction: '변동 방향', favorability: '손익 영향', missing: '비교 자료 누락', rank: '순위', summary: '비교 범위', scopeOrganizationCount: '기준 조직 수', returnedOrganizationCount: '조회 조직 수', targetProfitEok: '입력 목표', gapWon: '목표까지 부족액', surplusWon: '목표 초과 전망액', signedGapWon: '목표 − 현재 전망', forecastMeetsTarget: '연간 전망이 목표 이상', capturedAt: '근거 포착 시각', refId: '근거 ID' })
+Object.assign(LABELS, { templateId: '자료 틀 ID', templateVersion: '자료 틀 버전', templateName: '자료 틀', version: '자료 틀 버전', blockCount: '블록 수', sourceVersion: '조회 출처 버전', filename: '파일 이름', format: '파일 형식', byteSize: '파일 크기 (bytes)', expiresAt: '다운로드 유효 기한', ready: '다운로드 준비됨', previewObservationId: '보고서 미리보기 출처', gapTotalWon: '전사 Gap 단순 합계', classifiedTotalWon: '전사 분류된 Gap 합계', gapAmount: '항목 Gap', gapAmountWon: '분류 Gap 합계', acceptedCount: '수락 소명 수', reviewingCount: '수락 소명 없는 항목 수', unclassifiedAcceptedCount: '미분류 수락 소명 수', fullyClassified: '분류·수락 범위 확인', hasMore: '추가 조회 페이지 있음', nextOffset: '다음 상세 위치', itemYear: '소명 대상 연도', itemMonth: '소명 대상 월', itemScenario: '소명 대상 구분', subtotal: '상위 분류 합계' })
 Object.assign(LABELS, { forecastWon: '연간 전망', planWon: '같은 제출본의 계획', varianceWon: '전망 − 계획', profitImpactWon: '영업이익 영향', period: '조회 기간', sourceLimitMayApply: '원천 조회 상한 적용 가능' })
 
 /** 대화 기준의 변경을 식별한다.
@@ -102,7 +104,8 @@ export function observationForExecution(turns, executionId, observationId) {
  * Raises: 없음. Side Effects: 없음; 소명 문장을 요약하거나 사실을 추가하지 않는다.
  */
 export function observationExplanations(observation) {
-  if (observation.tool !== 'approved_explanations' || !Array.isArray(observation.data?.items)) return []
+  if (!['approved_explanations', 'explanation_overview'].includes(observation.tool) || !Array.isArray(observation.data?.items)) return []
+  if (observation.tool === 'explanation_overview') return observation.data.items.slice(0, 20).filter(item => typeof item?.answer === 'string').map((item, index) => ({ id: String(item.explanationId) + '-' + index, label: [item.organization?.name, item.item].filter(Boolean).join(' · '), text: item.answer, refId: item.explanationId, organizationId: item.organization?.id || '', reviewedAt: null }))
   const items = []
   for (const [index, item] of observation.data.items.slice(0, 20).entries()) {
     if (typeof item?.text !== 'string') continue
@@ -416,6 +419,10 @@ export function observationTables(observation, order = 'SIGNED_DESC') {
   if (observation.tool === 'goal_preview') return goalPreviewTables(data)
   if (observation.tool === 'monthly_pnl') return monthlyPnlTables(data, order)
   if (observation.tool === 'report_item_breakdown') return reportItemTables(data)
+  if (observation.tool === 'report_templates') return [rowsTable('보고서 자료 틀', (data.items || []).map(item => ({ templateId: item.templateId, name: item.name, version: item.version, blockCount: item.blockCount })), observation.tool)]
+  if (observation.tool === 'report_preview') return [rowsTable('보고서 기준', [{ templateName: data.templateName, templateVersion: data.templateVersion, year: data.year, month: data.month, sourceVersion: data.sourceVersion, dataStatus: data.dataStatus }], observation.tool)]
+  if (observation.tool === 'report_export') return [rowsTable('준비한 보고서 파일', [{ filename: data.filename, format: data.format, byteSize: data.byteSize, expiresAt: data.expiresAt, ready: data.ready }], observation.tool)]
+  if (observation.tool === 'explanation_overview') return [rowsTable('전사 소명·분류 현황', [{ ...data.summary, gapTotalWon: data.gapTotalWon, classifiedTotalWon: data.classifiedTotalWon }], observation.tool), rowsTable('전사 분류별 Gap · 상위 합계 중복 주의', data.categoryTotals || [], observation.tool), rowsTable('수락 소명 없는 조회 항목 · 미회신 판정 아님', data.reviewing || [], observation.tool)]
   const ranked = order === 'ABS_DESC' ? data.summary?.rankedByAbsoluteOpPlanDifference : data.summary?.rankedByOpPlanDifference || data.summary?.rankedByAbsoluteOpPlanDifference
   if (observation.tool === 'organization_pnl' && Array.isArray(ranked)) tables.push(rowsTable('조직별 영업이익', ranked, observation.tool, 'planDifferenceWon', ['organizationName', 'actualWon', 'planDifferenceWon', 'direction', 'favorability', 'missing'], order))
   if (observation.tool === 'company_pnl' && Array.isArray(data.summary?.metrics)) tables.push(rowsTable('전사 손익의 계획 대비 차이', data.summary.metrics, observation.tool))
