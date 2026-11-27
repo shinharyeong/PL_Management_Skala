@@ -11,7 +11,9 @@ import dataclasses
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import dotenv_values
 
@@ -46,6 +48,25 @@ def _path(value: str | None) -> Path | None:
         return None
     p = Path(value).expanduser()
     return p if p.is_absolute() else (REPO_ROOT / p)
+
+
+def _daily_call_limit() -> int:
+    """선택한 만료일이 지난 경우 한국 시간 기준으로 복구 호출 한도를 반환한다.
+
+    Args:
+        없음. 환경 설정의 만료일은 YYYY-MM-DD 형식이며 해당 날짜까지 포함한다.
+    Returns:
+        현재 적용할 일일 호출 한도. 만료일이 없으면 기존 한도를 그대로 사용한다.
+    Raises:
+        ValueError: 적용할 한도가 정수가 아니거나 만료일이 올바르지 않은 경우.
+    Side Effects:
+        설정 파일과 현재 시각을 읽는다. 파일 생성·설정 변경·결과 캐시는 없다.
+    """
+    limit = int(_read("AI_DAILY_CALL_LIMIT", "30")[0])
+    expires_on = _read("AI_DAILY_CALL_LIMIT_EXPIRES_ON")[0]
+    if expires_on and datetime.now(ZoneInfo("Asia/Seoul")).date() > date.fromisoformat(expires_on):
+        return int(_read("AI_DAILY_CALL_LIMIT_AFTER_EXPIRY", "30")[0])
+    return limit
 
 
 @dataclass
@@ -105,9 +126,9 @@ def get_settings() -> Settings:
     Args:
         없음.
     Returns:
-        AI 서비스 Settings. 보고서 스키마 기본값은 report.
+        AI 서비스 Settings. 보고서 스키마 기본값은 report이며 호출 한도 만료는 매번 재평가한다.
     Raises:
-        ValueError: 숫자 환경 설정이 올바르지 않은 경우.
+        ValueError: 숫자 환경 설정 또는 호출 한도 만료일이 올바르지 않은 경우.
     Side Effects:
         설정 파일이 있으면 읽는다. 경로 값 조회로 파일·폴더를 생성하지 않는다.
     """
@@ -126,7 +147,7 @@ def get_settings() -> Settings:
         ai_max_output_tokens=int(_read("AI_MAX_OUTPUT_TOKENS", "500")[0]),
         ai_timeout_seconds=float(_read("AI_TIMEOUT_SECONDS", "30")[0]),
         ai_max_retries=int(_read("AI_MAX_RETRIES", "0")[0]),
-        ai_daily_call_limit=int(_read("AI_DAILY_CALL_LIMIT", "30")[0]),
+        ai_daily_call_limit=_daily_call_limit(),
         ai_review_max_rounds=max(0, min(5, int(_read("AI_REVIEW_MAX_ROUNDS", "2")[0]))),
         ai_cache_dir=_path(_read("AI_CACHE_DIR", "ai/.cache")[0]),
         output_dir=_path(_read("OUTPUT_DIR", "ai/output")[0]),

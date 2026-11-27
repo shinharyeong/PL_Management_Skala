@@ -31,7 +31,7 @@
 | `Authorization` | 로그인·공개 API 외 전부 | `Bearer <token>` | AUTH-02에서 받은 세션 토큰. 없거나 만료되면 `401 UNAUTHENTICATED` |
 | `Content-Type` | 본문이 있는 요청 | `application/json`, 파일 업로드는 `multipart/form-data` | 파일은 multipart의 `file` 필드로 보냄 |
 | `Accept` | 선택 | `application/json` | 파일 다운로드 API는 파일 스트림(`200`) |
-| `Idempotency-Key` | POST·PUT·PATCH·DELETE 명령 전부 | 클라이언트가 만든 고유 문자열(UUID 권장, 최대 128자) | 같은 사용자·경로·키로 다시 보내면 첫 성공 응답을 그대로 돌려줌(24시간 보관). 같은 키에 다른 본문이면 `409 IDEMPOTENCY_KEY_REUSED`, 첫 요청이 처리 중이면 `409 REQUEST_IN_PROGRESS` |
+| `Idempotency-Key` | 업무 상태를 저장하는 POST·PUT·PATCH·DELETE 명령 | 클라이언트가 만든 고유 문자열(UUID 권장, 최대 128자) | 같은 사용자·경로·키로 다시 보내면 첫 성공 응답을 그대로 돌려줌(24시간 보관). 같은 키에 다른 본문이면 `409 IDEMPOTENCY_KEY_REUSED`, 첫 요청이 처리 중이면 `409 REQUEST_IN_PROGRESS`. 인증·저장 없는 조회형 POST·아래 명시한 메모리 로그아웃은 예외 |
 | `X-Request-ID` | 선택 | 클라이언트 추적 ID | 보내면 그대로 쓰고, 없으면 서버가 만들어 응답 헤더로 돌려줌 |
 
 ### 0-2. 공통 성공 응답
@@ -137,9 +137,13 @@ API별 업무 오류 코드(`REQUEST_ALREADY_EXISTS`, `PENDING_ALREADY_EXISTS`, 
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | AUTH-01 | POST | `/auth/codes` | 인증 메일 요청·재전송. 등록된 사내 도메인·계정만 허용, 재전송은 1분 후 | `email` | `202` `expiresAt`(3분), `resendAvailableAt` · 오류 `UNREGISTERED_EMAIL`, `CODE_RESEND_WAIT`(429) | 공개 | AUTH-001, 002 | app_user |
 | AUTH-02 | POST | `/auth/sessions` | 인증코드로 로그인 | `email`, `code` | `token`, `expiresAt`, `me{user,role,organization,homePath,menus}` · 오류 `INVALID_AUTH_CODE`, 상세 `errors[].code`=MISMATCH·EXPIRED·TOO_MANY_ATTEMPTS | 공개 | AUTH-002, 003, 004 | app_user |
-| AUTH-03 | DELETE | `/auth/session` | 로그아웃(세션 종료) | — | `204` | P·O | AUTH-007 | — |
+| AUTH-03 | DELETE | `/auth/session` | 인증된 현재 메모리 세션 종료. DB 멱등 기록 없음 | 본문 없음, 기존 `Idempotency-Key`는 선택이며 무시 | `204`; 종료된 토큰의 후속 요청은 `401 UNAUTHENTICATED` | P·O | AUTH-007 | — |
 | AUTH-04 | GET | `/me` | 로그인 사용자·역할·조직. 메뉴 구성과 조직 고정에 사용 | — | `user`, `role`, `organization{id,code,name}`(O만), `menus[]` | P·O | AUTH-004, MENU-001, 002 | app_user, organization |
 | AUTH-05 | GET | `/me/badges` | 메뉴 배지 건수. 0이면 프론트에서 숨김 | — | P: `unreadNotifications`, `monthlyReviewNeeded`, `annualReviewNeeded` · O: `openRequests` | P·O | MENU-004 | notification, review_item, submission, request_target |
+
+AUTH-03은 인증 확인 후 현재 토큰만 메모리에서 폐기한다. 멱등 키가 없어도 실행하며,
+기존 클라이언트가 보낸 키는 검증·저장하지 않는다. 다른 세션은 유지하고, 폐기한 토큰으로
+재호출하면 인증 단계에서 거부하므로 이전 성공 응답을 DB에서 재생하지 않는다.
 
 ## 2. 알림 모아보기 (FR-NOTI-A) — 경영기획팀
 
@@ -276,7 +280,192 @@ HOME-03~06 계산 기준:
 | RPT-15 | POST | `/report/ai/edit` | 대화로 자료 편집 → 변경안(블록 추가·삭제·이동·글꼴). 숫자는 바꾸지 않음 | `definition`, `instruction` | `status: EDIT·CLARIFY·REFUSED·UNAVAILABLE`, `message`, `proposals[{op: add_block·remove_block·move_block·set_style·add_column, target, description, patch}]` | P | RPT-012 | — (저장 안 함) |
 | RPT-16 | POST | `/report/export` | 자료 XLSX 내보내기(1개씩, 저장 안 함). 틀·기준 월로 다시 채워 숫자는 원 단위 값 그대로. PNG·PDF는 화면(브라우저)에서 만든다 | `templateId`, `version?`(기본 최신), `period{year, month}`, `blockId?`, `format`=XLSX | xlsx 스트림 · 오류 `REPORT_AI_UNAVAILABLE`(503) | P | RPT-008, 009 | — |
 
+## 11-1. 경영 의사결정 에이전트
+
+계산 계약은 [decision-agent.yaml](decision-agent.yaml), 근거 조사·조직 워크플로 계약은
+[decision-workflow.yaml](decision-workflow.yaml), 읽기 전용 대화 계약은
+[decision-assistant.yaml](decision-assistant.yaml), 업무·계산 규칙은
+[개발 설계](../development/pnl-decision-agent.md)를 따른다. 기존 제출·Gap 소명을 변경하지 않고
+확정 원천을 활용하는 별도 분석·개선 과제 기능이다. ERP 연동은 포함하지 않는다.
+분석과 전체 근거에는 소유 PLANNER만 접근한다. ORG_MANAGER는 자기 조직에 발행된 확인 요청과
+회신·진행 상태만 다루며 전사 분석이나 다른 조직 금액을 받지 않는다.
+
+| Method | 경로(`/api/v1` 기준) | 동작 |
+| --- | --- | --- |
+| POST | `/decision-agent/assistant` | 선택 master·선택 분석으로 읽기 전용 대화, 멱등 저장 없음 |
+| GET | `/decision-agent/baselines?year=` | 확정 월간 마스터 선택지 |
+| GET | `/decision-agent/analyses` | 본인의 분석 목록, 최신 수정 순 |
+| POST | `/decision-agent/analyses` | 목표·조건·확정 기준 스냅샷 생성 |
+| GET | `/decision-agent/analyses/{id}` | 고정 기준과 저장된 분석 조회 |
+| PUT | `/decision-agent/analyses/{id}/candidates` | 후보 전체 교체·이전 결과 무효화 |
+| POST | `/decision-agent/analyses/{id}/runs` | 저장한 후보 계산·의사결정서 초안 생성 |
+| POST | `/decision-agent/goal-proposals` | 자연어 목표·연도·보호 조건 제안, 사용자 확인 필수 |
+| GET | `/decision-agent/analyses/{id}/research` | 최초 고정 근거와 마지막 가설, 미조사는 204 |
+| POST | `/decision-agent/analyses/{id}/discover` | 고정 원천 손익·수락 소명에서 금액 미정 개선 가설 발굴 |
+| GET | `/decision-agent/work-items?analysisId=` | 소유 분석 또는 발행된 자기 조직 요청함 |
+| POST | `/decision-agent/analyses/{analysisId}/work-items` | candidateId/hypothesisId 중 하나로 확인 요청 초안 생성 |
+| GET | `/decision-agent/work-items/{id}` | 요청·회신·검토·결정·추적 이력 |
+| POST | `/decision-agent/work-items/{id}/issue` | 기획자 확인 후 인앱 요청함에 발행 |
+| POST | `/decision-agent/work-items/{id}/replies` | 조직의 실현 가능 여부·후보·근거 회신 |
+| POST | `/decision-agent/work-items/{id}/reviews` | 기획자 수락·보완 요청·거절 |
+| POST | `/decision-agent/work-items/{id}/decisions` | 외부 경영 결정자·증빙·추진 여부 기록 |
+| GET | `/decision-agent/work-items/{id}/followup-baselines` | 같은 연도 후속월·담당 조직의 확정 기준 선택지 |
+| POST | `/decision-agent/work-items/{id}/progress` | 조직의 실행 경과와 후속 확정본 전망 비교 |
+| POST | `/decision-agent/work-items/{id}/cancel` | 사유를 남겨 요청/미완료 과제 취소 |
+
+상태 변경은 공통 `Idempotency-Key`를 쓰고, 후보 저장·분석 실행은
+`expectedStateToken` 대신 정수 `expectedRevision`을 보낸다. 불일치는
+`409 RESOURCE_CHANGED`다. 분석·요청 목록은 `{items}`이며 아직 cursor를 제공하지 않는다.
+마스터 ID·금액은 문자열이고 미계산 `result`·`narrative`는 null이다.
+
+기준은 생성할 때 복사해 고정한다. 근거 검토 후보와 가정을 구분하고 보호 비용·기간·
+사용자 지정 중복 그룹·순효과를 검증한다. `COMPLETED`는 계산/초안 완료,
+후보 `REVIEWED`는 기획자의 근거 검토 표시다. 수동 후보의 근거 검토 표시와 조직 회신을
+수락하여 반영한 후보를 구분하려면 연결된 WorkItem과 그 검토 이력을 함께 확인한다.
+이 표시 자체는 추진 승인·효과 실현을 의미하지 않는다.
+자연어 조건을 임의로 강제하거나 과거 Gap 소명을 미래 개선액으로 자동 변환하지 않는다.
+
+### 읽기 전용 대화와 실제 Tool 호출
+
+`POST /decision-agent/assistant`는 PLANNER용이며 `masterId`, `message`, `history`를 받는다.
+저장 분석은 선택 사항이지만 선택하면 `analysisId`와 `expectedRevision`을 함께 보내고
+본인 소유·고정 master 일치를 검사한다. 질문 최대 2,000자, 문맥 최대 8개·각 2,000자이며
+과거 assistant 답변은 현재 사실의 근거가 아니다. 프론트는 이전 요구 항목의 질문·상태와
+종류별 번호가 붙은 짧은 설명을 후속 참조 문맥에 포함할 수 있지만, 인용·관찰 원문·원문 수치를
+재전송하지 않는다. 이 POST는 `Idempotency-Key`나 업무 저장을 사용하지 않는다.
+
+첫 모델 호출은 로컬 `plan_analysis`로 현재 질문의 실제 부분 인용(`requestQuote`)과 확인할 항목을
+선언한다. 그다음 모델이 관찰에 따라 조회·상세 읽기를 선택하고 `finish_answer`에서 각 요구 항목의
+해결 여부와 설명을 구조화한다. 수락한 계획의 ID·사용자 부분 인용·확인 질문은 종료 때 변경하지 않는다.
+
+모델이 고른 Tool을 기존 Spring 서비스에 직접 연결한다. `company_pnl`, `profit_drivers`,
+`organization_pnl`, `pnl_waterfall`은 HomePnlQueryService, `submission_versions`는
+ArchiveQueryService, `submission_comparison`은 VersionComparisonService를 재사용한다.
+`analysis_context`는 고정 snapshot과 선택 분석, `approved_explanations`는 저장 Research 또는
+기존 ResearchStore의 읽기 추출, `scenario_preview`는 저장 후보의 기존 정밀 계산,
+`work_items`는 소유 분석의 상태, `review_request_draft`는 저장된 후보·가설의 확인용 초안이다.
+분석이 필요한 Tool에서 분석이 없으면 ERROR와 선택 안내를 반환한다. 신규 집계 SQL은 추가하지 않는다.
+`goal_preview`는 선택 마스터의 연간 전망과 입력 목표를 기존 정밀 계산기로 비교하며 저장하지 않는다.
+`observation_detail`은 이번 실행의 성공 관찰 중 `/data` 아래 원문을 상세 읽기한다. 새 DB·URL·파일을
+조회하거나 다른 실행·실패 관찰·상세 읽기 결과를 다시 원천으로 사용할 수 없다. 인자는
+`observationId`, `path`, `offset`(기본 0, 최대 10000), `limit`(기본 5, 1~10)이다.
+배열은 limit개 행, 객체는 limit개 속성, 문자열은 limit×400자(최대 4000자), scalar는 offset 0만
+반환한다. 결과는 `sourceObservationId/path/offset/nextOffset/total/value`이며 `nextOffset=null`은
+남은 자료가 없다는 뜻이다. 모델에는 제한 문맥의 축약 여부와 상세 읽기 가능한 경로도 제공한다.
+
+현재 전망은 고정 마스터 원천이며 Home의 계획·전월 비교와 현재 소명은 조회 시점 기준이다.
+`profit_drivers`는 계획 대비 영업이익 차이 순위로 인과 원인·개선 가능액을 증명하지 않는다.
+제출 버전은 기준월·APPROVED·마스터 발행 이전으로 제한하고, 성공한 버전 관찰에 실제 반환된
+기준 ID만 고정 제출본과 비교한다. 소명 승인은 새 과제의 승인·실현이 아니며 후속 전망 차이도
+개별 과제의 실현 성과로 해석하지 않는다. 파일·URL·변경용 토큰은 관찰에서 제거한다.
+
+`mode`는 MODEL/UNAVAILABLE, `status`는 COMPLETED/NEEDS_INPUT/LIMIT_REACHED/FAILED다.
+서버는 모델의 context·toolCalls·observations를 실제 메모리 호출 원장과 전부 대조하고,
+RFC6901 pointer의 scalar 인용을 재검사한다. 금액 등 숫자 문자열은 부호와 모든 자릿수가 정확히
+일치해야 하고 일반 원문 문자열만 부분 인용할 수 있다. boolean·null도 정확 표기만 허용한다.
+`brief`는 질문별 `summary`, `requirements`, `findings`를 포함하며 `answer`는 `brief.summary`와 같다.
+이전 응답과 호환되도록 `brief` 누락·null도 처리한다. 현재 구조화 계약은 다음과 같다.
+
+| 필드 | 계약 |
+| --- | --- |
+| `requirements` | 1~6개. 계획의 `id/requestQuote/question`과 `status`, `findingIds`, `missingInformation`, `followUpQuestion` |
+| 요구 항목 `status` | `ANSWERED`는 실제 findingIds가 필요하며 부족 정보·확인 질문은 null. `NEEDS_INPUT/UNSUPPORTED`는 부족 정보·확인 질문이 모두 필요 |
+| `findings` | 최대 8개. `id/kind/text/citations/uncertainty`를 포함하며 kind는 `FACT/INTERPRETATION/HYPOTHESIS` |
+| 설명별 `citations` | 같은 실행의 성공 원장과 일치하는 인용 1~4개. 실제 업무 `/data` 근거를 포함하며 최상위 citations는 중복 없는 동일 합집합, 최대 32개 |
+| `uncertainty` | 해석·가설은 필수. 원인의 확정이나 검증된 개선 효과로 표시하지 않음 |
+| 길이 상한 | summary 1000자, 설명 700자, uncertainty 400자, question/부족 정보/확인 질문 각 400자, requestQuote 500자 |
+
+모든 요구 항목이 근거에 연결된 `ANSWERED`일 때만 `COMPLETED`다. 남은 항목이 있으면
+`NEEDS_INPUT`이며, 관찰이 없어도 구체적인 확인 질문을 반환할 수 있다. 모델 장애·호출 한도는
+기존 실패·한도 상태로 유지하고 완료로 바꾸지 않는다. 설명에는 새 숫자·금액·비율·미검증 효과나
+저장·발송 완료 주장을 넣지 않는다. 실제 인용한 이름 필드와 정확히 같은 숫자 포함 조직명만 예외다.
+금액은 원문 인용으로 정밀 표시한다. 이 검증은 형식과 근거 연결을 확인하며 설명의 의미나
+가설의 실현 가능성을 보증하지 않는다.
+
+서버 검증 실패는 UNAVAILABLE/FAILED로 표시하고 실제 관찰만 남긴다. 프론트에서 같은 기준의
+유효한 응답 중 brief만 잘못된 경우에는 해당 설명과 원래 answer를 숨기고 FAILED와 고정 안내를
+표시하며 성공 관찰의 수치·출처를 부분 보고서에 유지한다. master·analysis·revision 불일치는
+응답 표시를 차단한다. 후속 행동은 조회·시나리오·업무 화면 이동이며 초안 저장·발송은
+별도 사용자 확인과 기존 업무 API로 처리한다.
+
+상세 DTO·도구 인자는 [decision-assistant.yaml](decision-assistant.yaml), 계획·설명·완료 의미는
+[근거 기반 대화 분석 계약](../development/agent-analysis-contract.md)을 따른다.
+
+capability는 180초·동시 200실행, 실제 고유 조회는 8회, 모델 호출은 6회·AI 루프는 70초다.
+기존 AI HTTP timeout 기본값은 90초다. 모델 대기 중 DB 연결·트랜잭션을 보유하지 않는다.
+매 Tool 요청과 최종 반환 전 사용자 활성·PLANNER·분석 revision을 다시 확인한다.
+동일 정규 인자 결과는 같은 실행 안에서 재사용한다. 관찰 누적 192KiB 예산과 공개 응답 256KiB
+상한을 적용하고 큰 자료는 범위를 좁히라는 ERROR로 반환한다. 현재 구조화 brief 흐름의 실제 모델·
+읽기 전용 RDS 왕복 검증은 진행 중이다. 단위/native 어댑터·HTTP 대역 검증과 기존 종료 계약의
+실제 API 검증 기록을 새 분석 흐름의 검증 완료로 확대하지 않는다.
+
+### 근거·가설과 요청의 연결
+
+첫 조사에서 분석의 `sourceSubmissionIds`에 속한 손익 최대 100항목과 수락 소명 최대 50개를
+복사해 보존한다. 손익 비교는 **동일 제출본의 계획 대비 연간 전망**이며, 12개월 계획이
+불완전하면 계획·차이 금액은 null이다. 다른 확정 연간 계획이나 인과 원인으로 해석하지 않는다.
+재발굴은 같은 근거에서 가설만 교체한다. `Research.revision`은 해당 실행의 분석 버전이며
+`discover`가 Analysis.revision을 증가시키지는 않는다.
+
+`Hypothesis.amountWon`·`recognitionMonth`는 null, `needsConfirmation`은 true다.
+가설로 요청 초안을 만들 때 서버가 회신용 candidateId를 발급한다. 담당 조직은
+`FEASIBLE`일 때 후보와 근거를, `NOT_FEASIBLE`일 때 금액 후보 없이 사유·근거를 회신한다.
+회신 후보는 ASSUMPTION으로 저장되며 기획자가 ACCEPT해야 REVIEWED 후보로 분석에 반영된다.
+요청 발행은 인앱 요청함 상태 변경이며 외부 메일·메신저 전송은 없다.
+
+### 상태·권한·버전과 효과 반영
+
+기본 전이는 `DRAFT → REQUESTED → REPLIED → ACCEPTED → APPROVED → IN_PROGRESS/COMPLETED`다.
+회신 검토의 `REQUEST_CHANGES`는 회신 round를 증가시키고 재회신을 허용한다.
+`REJECTED`, `DECLINED`, `CANCELLED`로 종료할 수도 있다. 조직 조회는 자기 조직 조건과
+**ISSUED 이력 존재**를 모두 검사하므로 발행 전에 취소한 초안도 노출하지 않는다.
+멱등 응답을 재사용하기 전 현재 역할·조직을 다시 검사한다.
+
+요청 수정은 요청의 `expectedRevision`을 사용한다. 초안 생성은 `expectedAnalysisRevision`,
+검토·외부 결정 기록·취소는 두 버전을 모두 받는다. 성공마다 요청 revision을 증가시키며,
+ACCEPT로 후보를 추가·교체하거나 REJECT/DECLINE/CANCEL로 후보를 제거하면 분석 revision도
+증가하고 result/narrative를 null로 만든다. 연결 후보가 이미 없으면 요청만 바꾼다.
+원본/수락 후보와 현재 편집이 다르면 409로 차단해 새 편집을 지우지 않는다.
+
+APPROVE 기록에는 최신 계산에서 같은 REVIEWED 후보가 포함되어야 한다. 결정자 이름·증빙·기한과
+당시 해당 후보의 `candidateEffectWon`을 고정한다. **PLANNER가 외부 경영 결정을 기록**하는 기능이며
+별도 EXECUTIVE 역할 인증이나 전자 결재를 수행하지 않는다. DECLINE의 candidateEffectWon은 null이다.
+
+실행 완료에는 같은 연도·기준월 이후·담당 조직을 포함한 확정 master와 증빙이 필요하다.
+`Progress.profitChangeWon`은 해당 조직의 후속 연간 전망에서 고정 연간 전망을 뺀 값이다.
+**조직 전망 변화는 해당 과제의 실현 성과나 인과 효과를 확정하지 않는다.**
+모든 요청 전이는 기존 이력을 유지하면서 감사 이벤트 한 건을 추가한다.
+
+### 적용·검증 범위
+
+새 API는 분석·조사·요청 migration이 적용된 환경에서 동작한다. 이 개발 작업에서는 migration
+소스만 작성했으며 운영 DB 쓰기·migration 적용·독립 DB 생성·실제 알림 전송은 수행하지 않는다.
+운영 DB는 허용된 조회만 사용한다. 단위·mock·대역 검증과 실제 DB 통합 검증을 구분하며,
+실제 DB migration 및 업무 흐름 통합은 아직 검증하지 않았다. 실행 결과는 개발 문서에 기록한다.
+
 ## 12. backend ↔ report-ai 내부 API (클러스터 내부)
+
+`POST /v1/decision-agent/compose`는 Spring이 보낸 고정 `snapshot`, `candidates`,
+`result`와 분석 맥락으로 `mode`, `summary`, `decisionRequests`, `limitations`,
+`steps`를 반환한다. 기존 내부 토큰 검사를 적용하고 실제 수신 본문을 256KiB로 제한한다.
+이 compose 흐름의 LangGraph는 금액 계산·업무 상태 변경 없이 설명과 검토 안건을 구성한다.
+모델에는 허용 문장의 식별자 선택만 맡긴다. 모델 미설정·장애·계약 위반 또는 AI 서비스
+장애는 `TEMPLATE`로 표시하며 Spring 계산 결과는 유지한다.
+
+`POST /v1/decision-agent/interpret-goal`은 목표 확인 제안을, `/v1/decision-agent/discover`는
+금액 미정 가설을 반환한다. discover는 Spring이 전달한 근거 목록과 단기 capability로
+`POST /internal/decision-agent/evidence/read`를 호출해 고정 근거를 읽는다. 내부 토큰과
+`X-Decision-Tool-Token`, 분석 ID·revision·허용 참조를 모두 검사하며 capability는 3분 후 만료되고
+AI 실행 종료 시 폐기한다. 내부 읽기는 DB나 업무 상태를 변경하지 않으며 Ingress에 공개하지 않는다.
+
+`POST /v1/decision-agent/assistant`는 message/history/context와 실행 capability를 받아 로컬
+`plan_analysis → native 조회/상세 읽기 → 구조화 finish_answer` 흐름을 실행한다. 종료 제안의
+`citationIds`를 실제 원문 인용으로 복원한 뒤 요구 항목의 해결 상태와 `brief`를 검증한다.
+형식 오류는 안전한 고정 코드와 허용된 필드 경로·오류 종류만 모델에 돌려 수정할 수 있게 한다.
+Pydantic 입력값·원문·임의 키 이름은 오류 안내와 로그에서 제외한다. 실제 읽기 도구 13개는
+내부 `POST /internal/decision-agent/tools/call`의 `{tool, arguments}`로
+호출하며 내부 토큰과 실행 capability를 모두 검사한다. 도구 오류도 원장에 남기지만 SQL·비밀값은
+반환하지 않는다. 대화·도구 경로는 DB 상태와 멱등 응답을 기록하지 않는다.
 
 report-ai app은 상태를 저장하지 않는다. 저장·권한·감사는 backend가 맡고, 프론트는 report-ai를 직접 부르지 않는다. report-ai가 백엔드를 거치지 않는 것은 보고서용 뷰 읽기(읽기 전용) 하나뿐이다.
 

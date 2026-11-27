@@ -11,6 +11,8 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+# 로컬 Agent API 키 설정은 명시적으로도 제외한다.
+/ai/.env
 
 # 로그
 *.log

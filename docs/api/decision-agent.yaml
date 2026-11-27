@@ -1,0 +1,362 @@
+openapi: 3.1.0
+info:
+  title: 경영 의사결정 에이전트
+  version: 0.2.0
+  description: |
+    PLANNER가 본인의 확정 기준 분석을 생성·조회·계산한다. 근거 조사·조직 요청·검토·외부 결정 기록·후속 비교는 decision-workflow.yaml을 따른다.
+    조직 요청은 인앱 요청함에 발행하며 실제 외부 알림·임원 전자결재·ERP 쓰기는 수행하지 않는다.
+    모든 금액은 원 단위 십진 문자열이다. 분석 수정은 expectedRevision, 명령 재전송은 Idempotency-Key를 사용한다.
+    REVIEWED는 사용자가 입력한 근거 검토 상태이며 승인·실현을 뜻하지 않는다.
+    자연어 prompt에 적은 임의 조건은 자동 강제하지 않고 protectedCategories와 구조화된 필드만 검사한다.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: 경영 의사결정 에이전트
+paths:
+  /decision-agent/assistant:
+    $ref: './decision-assistant.yaml#/paths/~1decision-agent~1assistant'
+  /internal/decision-agent/tools/call:
+    $ref: './decision-assistant.yaml#/paths/~1internal~1decision-agent~1tools~1call'
+  /decision-agent/baselines:
+    get:
+      operationId: listDecisionAgentBaselines
+      tags: [경영 의사결정 에이전트]
+      summary: 해당 연도의 확정 월간 마스터 선택지
+      parameters:
+        - name: year
+          in: query
+          schema: {type: integer, minimum: 2000, maximum: 9999}
+          description: 생략 시 서울 시간 기준 올해
+      responses:
+        '200':
+          description: 마스터 버전 목록. 기준 데이터가 불완전하면 분석 생성에서 거부한다.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Baseline'}}
+        default: {$ref: '#/components/responses/Problem'}
+  /decision-agent/analyses:
+    get:
+      operationId: listDecisionAgentAnalyses
+      tags: [경영 의사결정 에이전트]
+      summary: 본인이 생성한 분석 목록
+      description: 최신 수정 순. P0는 cursor 페이지를 사용하지 않는다.
+      responses:
+        '200':
+          description: 본인 분석 요약
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, title, revision, createdAt]
+                      properties:
+                        id: {$ref: '#/components/schemas/Id'}
+                        title: {type: string}
+                        revision: {type: integer, minimum: 1}
+                        createdAt: {type: string, format: date-time}
+        default: {$ref: '#/components/responses/Problem'}
+    post:
+      operationId: createDecisionAgentAnalysis
+      tags: [경영 의사결정 에이전트]
+      summary: 확정 기준을 복사하여 목표 분석 생성
+      description: |
+        master_source의 승인 제출본에 포함된 조직별 ACTUAL(1월~기준월)과 ESTIMATE(다음 월~12월)를 고정한다.
+        불완전한 기준이나 잘못된 입력은 INVALID_REQUEST, 없는 월간 기준은 RESOURCE_NOT_FOUND다.
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateRequest'}
+      responses:
+        '201':
+          description: revision=1, status=DRAFT, 후보 없음, result/narrative=null
+          headers:
+            Location: {schema: {type: string}, description: 생성한 분석 조회 경로}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Analysis'}
+        default: {$ref: '#/components/responses/Problem'}
+  /decision-agent/analyses/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/AnalysisId'}
+    get:
+      operationId: getDecisionAgentAnalysis
+      tags: [경영 의사결정 에이전트]
+      summary: 고정 기준·입력·마지막 계산과 설명 조회
+      responses:
+        '200': {$ref: '#/components/responses/Analysis'}
+        default: {$ref: '#/components/responses/Problem'}
+  /decision-agent/analyses/{id}/candidates:
+    parameters:
+      - {$ref: '#/components/parameters/AnalysisId'}
+    put:
+      operationId: replaceDecisionAgentCandidates
+      tags: [경영 의사결정 에이전트]
+      summary: 후보 목록 전체 교체 및 이전 결과 무효화
+      description: |
+        후보 ID는 분석 안에서 고유하고 organizationId는 snapshot에 포함되어야 한다.
+        REVIEWED에는 evidenceNote와 evidenceRef가 필요하다. 저장 성공 시 revision 증가, DRAFT, result/narrative=null.
+        expectedRevision 불일치는 409 RESOURCE_CHANGED다.
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, candidates]
+              properties:
+                expectedRevision: {type: integer, minimum: 1}
+                candidates: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/Candidate'}}
+      responses:
+        '200': {$ref: '#/components/responses/Analysis'}
+        default: {$ref: '#/components/responses/Problem'}
+  /decision-agent/analyses/{id}/runs:
+    parameters:
+      - {$ref: '#/components/parameters/AnalysisId'}
+    post:
+      operationId: runDecisionAgentAnalysis
+      tags: [경영 의사결정 에이전트]
+      summary: 저장한 후보의 시나리오 계산과 의사결정서 초안 생성
+      description: |
+        BigDecimal 계산 후 내부 LangGraph에 설명 구성을 요청한다. 모델 미설정·실패 시 TEMPLATE로 수치를 보존한다.
+        성공 시 revision 증가, COMPLETED. COMPLETED는 계산·초안 완료이며 실제 추진 승인이 아니다.
+        기본/검토/조건부 전망을 분리한다. 미검증 가정 포함 전망의 충족률은 확률이 아니다.
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                expectedRevision: {type: integer, minimum: 1}
+      responses:
+        '200': {$ref: '#/components/responses/Analysis'}
+        default: {$ref: '#/components/responses/Problem'}
+  /decision-agent/goal-proposals:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1goal-proposals'
+  /decision-agent/analyses/{id}/research:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1analyses~1{id}~1research'
+  /decision-agent/analyses/{id}/discover:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1analyses~1{id}~1discover'
+  /internal/decision-agent/evidence/read:
+    $ref: './decision-workflow.yaml#/paths/~1internal~1decision-agent~1evidence~1read'
+  /decision-agent/work-items:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items'
+  /decision-agent/analyses/{analysisId}/work-items:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1analyses~1{analysisId}~1work-items'
+  /decision-agent/work-items/{id}:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}'
+  /decision-agent/work-items/{id}/followup-baselines:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1followup-baselines'
+  /decision-agent/work-items/{id}/issue:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1issue'
+  /decision-agent/work-items/{id}/replies:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1replies'
+  /decision-agent/work-items/{id}/reviews:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1reviews'
+  /decision-agent/work-items/{id}/decisions:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1decisions'
+  /decision-agent/work-items/{id}/progress:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1progress'
+  /decision-agent/work-items/{id}/cancel:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1cancel'
+components:
+  securitySchemes:
+    internalToken: {type: apiKey, in: header, name: X-Internal-Token}
+    decisionToolToken: {type: apiKey, in: header, name: X-Decision-Tool-Token}
+    bearerAuth: {type: http, scheme: bearer}
+  parameters:
+    AnalysisId:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Id'}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 같은 사용자·경로·키·본문의 성공 응답 재전송. 다른 본문은 409 IDEMPOTENCY_KEY_REUSED.
+      schema: {type: string, pattern: '^[A-Za-z0-9._:-]{8,128}$'}
+  responses:
+    Analysis:
+      description: 분석 상태
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Analysis'}
+    Problem:
+      description: |
+        RFC 9457 오류. 400 INVALID_REQUEST, 401 UNAUTHENTICATED, 403 FORBIDDEN,
+        404 RESOURCE_NOT_FOUND(타인 분석 포함), 409 RESOURCE_CHANGED/IDEMPOTENCY_KEY_REUSED/REQUEST_IN_PROGRESS.
+      content:
+        application/problem+json:
+          schema: {$ref: './openapi.yaml#/components/schemas/Problem'}
+  schemas:
+    Id:
+      type: string
+      pattern: '^[1-9][0-9]*$'
+      description: 양의 정수 식별자. Java Long 범위.
+    InputMoney:
+      type: string
+      pattern: '^(0|[1-9][0-9]{0,23})(\.[0-9]{1,6})?$'
+      description: 음수가 아닌 원 단위 문자열. targetProfitWon과 amountWon은 0보다 커야 한다.
+    Money:
+      type: string
+      pattern: '^-?[0-9]+(\.[0-9]+)?$'
+      description: 지수 없는 정밀 계산 결과. 매출×이익률 결과에는 입력보다 많은 소수 자릿수가 생길 수 있다.
+    Category:
+      type: string
+      enum: [OPERATIONS, PROCUREMENT, REVENUE, HEADCOUNT, RND, UNKNOWN]
+    ProtectedCategories:
+      type: array
+      maxItems: 2
+      uniqueItems: true
+      items: {type: string, enum: [HEADCOUNT, RND]}
+    Baseline:
+      type: object
+      required: [masterId, label, year, month, createdAt, sourceCount]
+      properties:
+        masterId: {$ref: '#/components/schemas/Id'}
+        label: {type: string}
+        year: {type: integer}
+        month: {type: integer, minimum: 1, maximum: 12}
+        createdAt: {type: string, format: date-time}
+        sourceCount: {type: integer, minimum: 1}
+    Snapshot:
+      type: object
+      required: [masterId, masterLabel, year, baseMonth, asOf, sourceSubmissionIds, organizations, baselineProfitWon]
+      properties:
+        masterId: {$ref: '#/components/schemas/Id'}
+        masterLabel: {type: string}
+        year: {type: integer}
+        baseMonth: {type: integer, minimum: 1, maximum: 12}
+        asOf: {type: string, format: date-time, description: 기준 마스터 발행 시각}
+        sourceSubmissionIds: {type: array, items: {$ref: '#/components/schemas/Id'}}
+        baselineProfitWon: {$ref: '#/components/schemas/Money'}
+        organizations:
+          type: array
+          items:
+            type: object
+            required: [id, code, name, revenueWon, costWon, profitWon]
+            properties:
+              id: {$ref: '#/components/schemas/Id'}
+              code: {type: string}
+              name: {type: string}
+              revenueWon: {$ref: '#/components/schemas/Money'}
+              costWon: {$ref: '#/components/schemas/Money'}
+              profitWon: {$ref: '#/components/schemas/Money'}
+    CreateRequest:
+      type: object
+      required: [title, prompt, masterId, targetProfitWon, protectedCategories]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 200}
+        prompt: {type: string, minLength: 1, maxLength: 4000}
+        masterId: {$ref: '#/components/schemas/Id'}
+        targetProfitWon: {$ref: '#/components/schemas/InputMoney'}
+        protectedCategories: {$ref: '#/components/schemas/ProtectedCategories'}
+    Candidate:
+      type: object
+      required: [id, organizationId, title, type, amountWon, implementationCostWon, embeddedEffectWon, recognitionMonth, category, duplicateGroup, evidenceStatus, evidenceNote, evidenceRef]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 100}
+        organizationId: {$ref: '#/components/schemas/Id'}
+        title: {type: string, minLength: 1, maxLength: 200}
+        type:
+          type: string
+          enum: [NET_PROFIT, REVENUE]
+          description: NET_PROFIT는 실행 비용과 기존 반영 효과 차감 전 직접 증익, REVENUE는 추가 매출.
+        amountWon: {$ref: '#/components/schemas/InputMoney'}
+        contributionMarginPercent:
+          type: [string, 'null']
+          description: REVENUE에서 0~100 십진 문자열(소수 최대 6자리), NET_PROFIT에서는 null.
+        implementationCostWon: {$ref: '#/components/schemas/InputMoney'}
+        embeddedEffectWon:
+          allOf: [{$ref: '#/components/schemas/InputMoney'}]
+          description: 기준 전망에 이미 반영된 이익 효과. 원 매출액이 아니다.
+        recognitionMonth: {type: integer, minimum: 1, maximum: 24, description: 13~24는 다음 연도로 간주하여 제외}
+        category: {$ref: '#/components/schemas/Category'}
+        duplicateGroup: {type: string, maxLength: 100, description: 비어 있지 않은 같은 그룹이 2개 이상이면 모두 제외}
+        evidenceStatus: {type: string, enum: [ASSUMPTION, REVIEWED]}
+        evidenceNote: {type: string, maxLength: 4000}
+        evidenceRef: {type: string, maxLength: 2000, description: 외부 자료를 자동 조회·검증하지 않는 사용자 참조}
+    Result:
+      type: object
+      required: [baselineProfitWon, targetProfitWon, initialGapWon, reviewedEffectWon, conditionalEffectWon, reviewedOutlookWon, conditionalOutlookWon, reviewedGapWon, conditionalGapWon, targetCoveragePercent, effects, warnings]
+      properties:
+        baselineProfitWon: {$ref: '#/components/schemas/Money'}
+        targetProfitWon: {$ref: '#/components/schemas/Money'}
+        initialGapWon: {$ref: '#/components/schemas/Money'}
+        reviewedEffectWon: {$ref: '#/components/schemas/Money'}
+        conditionalEffectWon: {$ref: '#/components/schemas/Money'}
+        reviewedOutlookWon: {$ref: '#/components/schemas/Money'}
+        conditionalOutlookWon: {$ref: '#/components/schemas/Money'}
+        reviewedGapWon: {$ref: '#/components/schemas/Money'}
+        conditionalGapWon: {$ref: '#/components/schemas/Money'}
+        targetCoveragePercent: {type: string, description: 조건부 전망/양수 목표×100, 소수 최대 6자리. 확률이 아니다.}
+        warnings: {type: array, items: {type: string}}
+        effects:
+          type: array
+          items:
+            type: object
+            required: [candidateId, netEffectWon, included, reviewed, exclusionReasons]
+            properties:
+              candidateId: {type: string}
+              netEffectWon: {$ref: '#/components/schemas/Money'}
+              included: {type: boolean}
+              reviewed: {type: boolean}
+              exclusionReasons:
+                type: array
+                items:
+                  type: string
+                  enum: [PROTECTED_CATEGORY, UNCLASSIFIED_PROTECTED_SCOPE, ALREADY_ACTUAL_PERIOD, OUTSIDE_TARGET_YEAR, DUPLICATE_EFFECT, NON_POSITIVE_NET_EFFECT]
+    Narrative:
+      type: object
+      required: [mode, summary, decisionRequests, limitations, steps]
+      properties:
+        mode: {type: string, enum: [MODEL, TEMPLATE]}
+        summary: {type: string}
+        decisionRequests: {type: array, items: {type: string}}
+        limitations: {type: array, items: {type: string}}
+        steps:
+          type: array
+          items:
+            type: object
+            required: [key, label, status]
+            properties:
+              key: {type: string}
+              label: {type: string}
+              status: {type: string}
+    Analysis:
+      type: object
+      required: [id, title, prompt, revision, status, createdAt, updatedAt, targetProfitWon, protectedCategories, snapshot, candidates, result, narrative]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        title: {type: string}
+        prompt: {type: string}
+        revision: {type: integer, minimum: 1}
+        status: {type: string, enum: [DRAFT, COMPLETED]}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        targetProfitWon: {$ref: '#/components/schemas/InputMoney'}
+        protectedCategories: {$ref: '#/components/schemas/ProtectedCategories'}
+        snapshot: {$ref: '#/components/schemas/Snapshot'}
+        candidates: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+        result: {anyOf: [{$ref: '#/components/schemas/Result'}, {type: 'null'}]}
+        narrative: {anyOf: [{$ref: '#/components/schemas/Narrative'}, {type: 'null'}]}

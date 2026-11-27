@@ -41,6 +41,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/actuator/prometheus").permitAll()
                         // report-ai → backend 내부 보고(명세 12절). Ingress에 열지 않고, 컨트롤러가 X-Internal-Token을 확인한다.
                         .requestMatchers(HttpMethod.POST, "/internal/pdf-jobs/*/result").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/internal/decision-agent/evidence/read").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/internal/decision-agent/tools/call").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(handling -> handling
                         .authenticationEntryPoint((request, response, e) ->
