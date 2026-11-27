@@ -972,7 +972,7 @@ def q_cost_top(base, limit=None, org=None, metric="영업비용"):
         if not rows:
             return {"text": f"{base['year']}년 {base['month']}월 {metric} 항목: 데이터 없음."}
         who = next((o["name"] for o in info["orgs"] if o["code"] == org), None) or "전사"
-        return {"text": f"{base['year']}년 {base['month']}월 {who} {metric} 상위 {len(rows)}개 항목입니다(소분류 기준, 억원).",
+        return {"text": f"{base['year']}년 {base['month']}월 {who} {metric} 상위 {len(rows)}개 항목입니다(억원).",
                 "table": _tbl(["순위", "항목", "금액(억원)"], [[str(i), r["nm"], eok(r["s"])] for i, r in enumerate(rows, 1)])}
     finally:
         con.close()

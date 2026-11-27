@@ -354,4 +354,4 @@ def _plan_edits(edits, blocks, metrics, res, request="", info_orgs=None):
                 return res("edit", f"이미 “{cmp_}” 열이 있는 표입니다. 바꿀 것이 없습니다.", plan=[], notes=[])
             plan.append({"op": "add_column", "ids": ids[:1], "compare": cmp_})
             notes.append(f"열 추가: {ids[0]} 에 “{cmp_} 대비”")
-    return res("edit", "편집안을 만들었습니다. 왼쪽에서 미리보고 적용하세요.", plan=plan, notes=notes)
+    return res("edit", "편집안을 만들었습니다. 아래 미리보기를 확인하고 적용하세요.", plan=plan, notes=notes)
