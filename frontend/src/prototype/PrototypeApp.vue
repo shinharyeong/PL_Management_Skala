@@ -143,12 +143,15 @@ async function signIn(){if(await store.run(()=>store.login(authResponse.value.em
  */
 async function logout(){if(await store.run(()=>store.logout())){changeEmail();email.value='';logoutVisible.value=false;logoutDialog.value?.close();router.replace({name:'login'})}}
 watch(()=>store.actor,actor=>{if(!actor)router.replace({name:'login'})})
+let pageLoad=0
+onUnmounted(()=>pageLoad++)
 watch(page,async value=>{
+  const current=++pageLoad
   if(!store.actor)return
-  await store.run(async()=>{
+  try{
     await store.refreshBadge()
-    if(['monthly','monthly-request'].includes(value))await store.loadMonthly()
-  })
+    if(current===pageLoad&&['monthly','monthly-request'].includes(value))await store.loadMonthly()
+  }catch(error){if(current===pageLoad&&error.name!=='AbortError')store.error=error.message}
 }, { immediate: true })
 </script>
 
@@ -156,7 +159,7 @@ watch(page,async value=>{
   <CopyEditor v-if="developmentEntry" />
   <div v-if="developmentEntry" class="dev-entry-notice">개발용 화면 · 계정 선택 로그인 · 공통 문구 편집 <a href="/">일반 화면</a></div>
   <FeedbackToast />
-  <div class="prototype-banner"><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span> <span><span data-copy-key="shellText.text002">{{ copy.shellText.text002 }}</span></span></div>
+  <div v-if="developmentEntry && !store.actor" class="prototype-banner"><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span> <span><span data-copy-key="shellText.text002">{{ copy.shellText.text002 }}</span></span></div>
   <div v-if="page === 'login'" class="auth-page">
     <a class="brand auth-brand" href="#/login"><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span></a>
     <main class="auth-main">

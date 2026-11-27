@@ -93,10 +93,10 @@ class ExplanationSubmitIntegrationTest extends PostgresIntegrationTest {
 
         // 10월: 적재 → 변경 확인(기준 없음) → 승인, 실적 항목에 승인 소명
         long octSubmission = draft(oct, "oct", data(List.of(
-                line(10, SALES_KEY, "REVENUE", value(10, "ACTUAL", "1000", "N10"), value(11, "ESTIMATE", "1100", "O10")))));
+                line(10, SALES_KEY, "REVENUE", value(10, "ACTUAL", "1000", "N10"), value(11, "ESTIMATE", "1100", "O10"), value(12, "ESTIMATE", "100", "P10")))));
         validate(octSubmission).andExpect(jsonPath("$.baseline.kind").value("NONE"));
         jdbc.update("update submission set status = 'APPROVED', seq = 1, approved_seq = 1 where id = ?", octSubmission);
-        long octActual = jdbc.queryForObject("select id from review_item where submission_id = ? and month = 10",
+        long octActual = jdbc.queryForObject("select id from review_item where submission_id = ? and month = 12",
                 Long.class, octSubmission);
         jdbc.update("""
                 insert into review_explanation(review_item_id, round, answer, answered_by, answered_at, verdict)
@@ -104,8 +104,8 @@ class ExplanationSubmitIntegrationTest extends PostgresIntegrationTest {
 
         // 11월: 10월 실적 그대로(이어받음), 11월 추정 변경, 임차료 신규
         long novSubmission = draft(nov, "nov", data(List.of(
-                line(10, SALES_KEY, "REVENUE", value(10, "ACTUAL", "1000", "N10"), value(11, "ESTIMATE", "1300", "O10")),
-                line(5, RENT_KEY, "COST", value(11, "ESTIMATE", "50", "O5")))));
+                line(10, SALES_KEY, "REVENUE", value(10, "ACTUAL", "1000", "N10"), value(11, "ACTUAL", "1300", "O10"), value(12, "ESTIMATE", "100", "P10")),
+                line(5, RENT_KEY, "COST", value(11, "ACTUAL", "50", "O5")))));
         validate(novSubmission)
                 .andExpect(jsonPath("$.baseline.kind").value("PREV_MONTH_APPROVED"))
                 .andExpect(jsonPath("$.progress.required").value(2));
@@ -116,22 +116,22 @@ class ExplanationSubmitIntegrationTest extends PostgresIntegrationTest {
         assertThat(list.at("/progress/required").asInt()).isEqualTo(2);
         assertThat(list.at("/baseline/label").asText()).isEqualTo("2026-10-01");
         assertThat(list.findValuesAsText("group")).containsExactly("REVENUE", "COST");
-        JsonNode salesEstimate = find(list, "11", "ESTIMATE", "제품매출");
+        JsonNode salesEstimate = find(list, "11", "ACTUAL", "제품매출");
         assertThat(salesEstimate.get("baseline").asText()).isEqualTo("1100");
         assertThat(salesEstimate.get("current").asText()).isEqualTo("1300");
         assertThat(salesEstimate.get("rate").asText()).isEqualTo("18.2");
         assertThat(salesEstimate.get("answerState").asText()).isEqualTo("EMPTY");
         assertThat(salesEstimate.get("sourceCell").asText()).isEqualTo("매출!O10");
-        JsonNode inherited = find(list, "10", "ACTUAL", "제품매출");
+        JsonNode inherited = find(list, "12", "ESTIMATE", "제품매출");
         assertThat(inherited.get("answerState").asText()).isEqualTo("INHERITED");
-        JsonNode rent = find(list, "11", "ESTIMATE", "임차료");
+        JsonNode rent = find(list, "11", "ACTUAL", "임차료");
         assertThat(rent.get("baseline").isNull()).isTrue();
         assertThat(rent.get("rate").isNull()).isTrue();
 
         // PROOF-03 상세
         mvc.perform(get("/api/v1/review-items/{id}", salesEstimate.get("reviewItemId").asText()).with(manager))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.path").value("매출 › 제품매출 › 11월 추정"))
+                .andExpect(jsonPath("$.path").value("매출 › 제품매출 › 11월 실적"))
                 .andExpect(jsonPath("$.rows[0].sourceCell").value("매출!O10"))
                 .andExpect(jsonPath("$.rows[0].diff").value("200"))
                 .andExpect(jsonPath("$.summary").doesNotExist());

@@ -43,7 +43,7 @@ class GapRulesTest {
         assertThat(GapRules.typeOf(Scenario.ACTUAL, GapBasis.PLAN)).isEqualTo(GapComparisonType.ACTUAL_VS_PLAN);
         assertThat(GapRules.typeOf(Scenario.ESTIMATE, GapBasis.PLAN)).isEqualTo(GapComparisonType.ESTIMATE_VS_PLAN);
         assertThat(GapRules.typeOf(Scenario.ESTIMATE, GapBasis.PREVIOUS)).isEqualTo(GapComparisonType.ESTIMATE_VS_PREVIOUS);
-        assertThat(GapRules.typeOf(Scenario.ACTUAL, GapBasis.PREVIOUS)).isNull();
+        assertThat(GapRules.typeOf(Scenario.ACTUAL, GapBasis.PREVIOUS)).isEqualTo(GapComparisonType.ACTUAL_VS_PREVIOUS);
         assertThat(GapRules.typeOf(Scenario.PLAN, GapBasis.PLAN)).isNull();
         assertThat(GapRules.baselineScenarioOf(GapComparisonType.ESTIMATE_VS_PREVIOUS)).isEqualTo(Scenario.ESTIMATE);
         assertThat(GapRules.baselineScenarioOf(GapComparisonType.ACTUAL_VS_PLAN)).isEqualTo(Scenario.PLAN);

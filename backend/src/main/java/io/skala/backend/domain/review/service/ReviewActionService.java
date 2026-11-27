@@ -40,7 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * GAP-07 선택 항목 처리. 같은 제출 요청의 검토 대기(PENDING) 제출본 항목만 한 번에 처리하며, 한 항목이라도 안 되면 전부 취소한다.
  * <ul>
- *   <li>EXCLUDE: 검토 필요·선정 → 제외(사유 기록)</li>
+ *   <li>APPROVE: 검토 필요·선정 → 직접 승인(EXCLUDE는 이전 클라이언트 호환용 별칭)</li>
  *   <li>SELECT: 검토 필요 → 선정</li>
  *   <li>REQUEST_EXPLANATION(기한·메시지 필수): 소명이 없으면 현재 회차로 요청, 판단 전인 소명이 있으면 그 회차를 닫고 다음 회차로 요청</li>
  * </ul>
@@ -103,16 +103,16 @@ public class ReviewActionService {
             if (!Boolean.TRUE.equals(item.getActive())) {
                 throw ReviewErrorCode.REVIEW_STAGE_CONFLICT.exception();
             }
-            if (item.getWorkflowState() == WorkflowState.EXCLUDED) {
+            if ((item.getWorkflowState() == WorkflowState.EXCLUDED || item.getWorkflowState() == WorkflowState.APPROVED)) {
                 throw ReviewErrorCode.REVIEW_EXCLUDED.exception();
             }
             String tab = ReviewTabs.of(item, current);
             ReviewExplanation after = current;
             switch (request.action()) {
-                case EXCLUDE -> {
+                case EXCLUDE, APPROVE -> {
                     requireTab(tab, "NEEDS_REVIEW", "SELECTED");
-                    item.exclude(note);
-                    event(item, WorkflowAction.EXCLUDE, item.getCurrentRound(), note, null, planner, now);
+                    item.approveWithoutExplanation(note);
+                    event(item, WorkflowAction.APPROVE, item.getCurrentRound(), note, null, planner, now);
                 }
                 case SELECT -> {
                     requireTab(tab, "NEEDS_REVIEW");

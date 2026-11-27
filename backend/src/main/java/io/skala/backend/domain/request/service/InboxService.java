@@ -37,7 +37,9 @@ public class InboxService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.FORBIDDEN));
         List<InboxResponse.Item> items = new ArrayList<>();
         jdbc.query("""
-                SELECT r.id, r.type, p.year, r.month, r.due_at, ls.id AS sub_id, ls.status AS sub_status
+                SELECT r.id, r.type, p.year, r.month, COALESCE(t.dispatch_due_at, r.due_at) AS due_at,
+                       COALESCE(t.dispatch_message, r.message) AS message, ls.id AS sub_id, ls.status AS sub_status,
+                       ds.id AS draft_id
                   FROM submission_request r
                   JOIN annual_plan p ON p.id = r.annual_plan_id
                   JOIN request_target t ON t.request_id = r.id AND t.organization_id = ? AND t.selected AND NOT t.excluded
@@ -45,6 +47,11 @@ public class InboxService {
                        SELECT s.id, s.status FROM submission s
                         WHERE s.request_id = r.id AND s.organization_id = t.organization_id AND s.status <> 'DRAFT'
                         ORDER BY s.seq DESC LIMIT 1) ls ON true
+                  LEFT JOIN LATERAL (
+                       SELECT s.id FROM submission s
+                        WHERE s.request_id = r.id AND s.organization_id = t.organization_id AND s.status = 'DRAFT'
+                          AND s.id > COALESCE(ls.id, 0)
+                        ORDER BY s.id DESC LIMIT 1) ds ON true
                  WHERE r.status = 'OPEN' AND (ls.status IS NULL OR ls.status = 'REJECTED')""",
                 rs -> {
                     boolean resubmit = "REJECTED".equals(rs.getString("sub_status"));
@@ -53,8 +60,9 @@ public class InboxService {
                             title(rs.getString("type"), rs.getInt("year"), (Integer) rs.getObject("month"))
                                     + (resubmit ? " 재제출" : " 제출"),
                             String.valueOf(requestId), resubmit ? String.valueOf(rs.getLong("sub_id")) : null,
+                            rs.getObject("draft_id") == null ? null : String.valueOf(rs.getLong("draft_id")),
                             utc(rs.getObject("due_at", OffsetDateTime.class)), "START_SUBMISSION",
-                            new InboxResponse.Link(resubmit ? "/submissions/" + rs.getLong("sub_id") : "/requests/" + requestId + "/upload")));
+                            new InboxResponse.Link(resubmit ? "/submissions/" + rs.getLong("sub_id") : "/requests/" + requestId + "/upload"), rs.getString("message")));
                 }, org.getId());
         jdbc.query("""
                 SELECT s.id AS sub_id, r.id, r.type, p.year, r.month, min(e.due_at) AS due_at
@@ -69,9 +77,9 @@ public class InboxService {
                     long submissionId = rs.getLong("sub_id");
                     items.add(new InboxResponse.Item("EXPLANATION",
                             title(rs.getString("type"), rs.getInt("year"), (Integer) rs.getObject("month")) + " 소명 요청",
-                            String.valueOf(rs.getLong("id")), String.valueOf(submissionId),
+                            String.valueOf(rs.getLong("id")), String.valueOf(submissionId), null,
                             utc(rs.getObject("due_at", OffsetDateTime.class)), "START_EXPLANATION",
-                            new InboxResponse.Link("/submissions/" + submissionId)));
+                            new InboxResponse.Link("/submissions/" + submissionId), null));
                 }, org.getId());
         items.sort(Comparator.comparing(InboxResponse.Item::dueAt, Comparator.nullsLast(Comparator.naturalOrder())));
         return new InboxResponse(new OrganizationResponse(String.valueOf(org.getId()), org.getCode(), org.getName(), null),
@@ -79,7 +87,7 @@ public class InboxService {
     }
 
     private static String title(String type, int year, Integer month) {
-        return "ANNUAL_PLAN".equals(type) ? year + "년 연간 계획" : month + "월 실적·추정";
+        return "ANNUAL_PLAN".equals(type) ? year + "년 연간 계획" : year + "년 " + month + "월 실적·추정";
     }
 
     private static OffsetDateTime utc(OffsetDateTime value) {

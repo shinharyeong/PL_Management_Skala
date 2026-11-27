@@ -17,7 +17,7 @@ public enum ReviewErrorCode {
     ANSWER_MISSING(HttpStatus.UNPROCESSABLE_ENTITY, "아직 답변이 없는 소명입니다."),
     REVIEW_LOCKED(HttpStatus.CONFLICT, "검토 대기 중인 제출본의 항목만 처리할 수 있습니다."),
     REVIEW_STAGE_CONFLICT(HttpStatus.CONFLICT, "지금 단계에서는 이 처리를 할 수 없는 항목이 있습니다."),
-    REVIEW_EXCLUDED(HttpStatus.CONFLICT, "이미 제외한 항목이 있습니다."),
+    REVIEW_EXCLUDED(HttpStatus.CONFLICT, "이미 승인된 항목이 있습니다."),
     ATTACHMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "첨부 파일을 찾을 수 없습니다.");
 
     private final HttpStatus status;

@@ -20,6 +20,7 @@ import io.skala.backend.domain.submission.entity.Submission;
 import io.skala.backend.domain.user.entity.Organization;
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -71,7 +72,7 @@ public class FinancialIngestionService {
         financialLineRepository.deleteAllBySubmissionId(submission.getId());
 
         Map<String, ReportItem> reportItems = resolveReportItems(data.reportItems());
-        Map<String, AccountItem> accounts = new HashMap<>();
+        Map<AccountKey, AccountItem> accounts = resolveAccounts(data.lines());
         Set<String> seenDetails = new HashSet<>();
         Set<String> seenRows = new HashSet<>();
         List<FinancialValue> values = new ArrayList<>();
@@ -101,7 +102,7 @@ public class FinancialIngestionService {
 
             FinancialLine saved = financialLineRepository.save(FinancialLine.builder()
                     .submission(submission)
-                    .accountItem(resolveAccount(line, accounts))
+                    .accountItem(accounts.get(accountKey(line)))
                     .reportItem(reportItem)
                     .detailId(truncate(line.detailId(), 500))
                     .detailRevision(truncate(line.detailRevision(), 80))
@@ -174,35 +175,62 @@ public class FinancialIngestionService {
                 List<String> prefix = path.subList(0, depth);
                 String code = ReportItemCodes.of(kind.name(), prefix);
                 String parentCode = depth == 1 ? null : ReportItemCodes.of(kind.name(), path.subList(0, depth - 1));
-                wanted.putIfAbsent(code, new Node(code, prefix.get(depth - 1), parentCode, kind, false));
+                wanted.putIfAbsent(code, new Node(code, prefix.get(depth - 1), parentCode, kind, false, depth));
             }
             String parentCode = path.size() == 1 ? null
                     : ReportItemCodes.of(kind.name(), path.subList(0, path.size() - 1));
             String leafCode = ReportItemCodes.shorten(item.key());
             String name = item.name() != null ? item.name() : path.get(path.size() - 1);
-            wanted.merge(leafCode, new Node(leafCode, name, parentCode, kind, true),
-                    (old, leaf) -> new Node(old.code, old.name, old.parentCode, old.kind, true));
+            wanted.merge(leafCode, new Node(leafCode, name, parentCode, kind, true, path.size()),
+                    (old, leaf) -> new Node(old.code, old.name, old.parentCode, old.kind, true, old.depth));
         }
 
         Map<String, ReportItem> existing = new HashMap<>();
         reportItemRepository.findAllByCodeIn(wanted.keySet()).forEach(r -> existing.put(r.getCode(), r));
         int order = reportItemRepository.findMaxDisplayOrder();
-        // LinkedHashMap 순서상 상위 항목이 항상 먼저 나온다.
-        for (Node node : wanted.values()) {
+        Map<String, Integer> displayOrders = new HashMap<>();
+        for (String code : wanted.keySet()) {
+            displayOrders.put(code, ++order);
+        }
+        // 상위를 먼저 만들고, 파일 행 순서가 달라도 같은 순서로 잠가 교착을 피한다.
+        List<Node> ordered = wanted.values().stream()
+                .sorted(Comparator.comparingInt(Node::depth).thenComparing(Node::code)).toList();
+        for (Node node : ordered) {
             ReportItem found = existing.get(node.code);
             if (found == null) {
                 ReportItem parent = node.parentCode == null ? null : existing.get(node.parentCode);
-                found = reportItemRepository.save(ReportItem.create(node.code, truncate(node.name, 500), parent,
-                        node.kind, node.leaf, ++order));
+                reportItemRepository.insertIfAbsent(node.code, truncate(node.name, 500),
+                        parent == null ? null : parent.getId(), node.kind.name(), node.leaf, displayOrders.get(node.code));
+                found = reportItemRepository.findByCode(node.code).orElseThrow();
                 existing.put(node.code, found);
-            } else if (node.leaf && !Boolean.TRUE.equals(found.getIsLeaf())) {
+            }
+            if (node.leaf && !Boolean.TRUE.equals(found.getIsLeaf())) {
                 found.markLeaf();
             }
         }
         return existing;
     }
 
-    private AccountItem resolveAccount(Line line, Map<String, AccountItem> cache) {
+    private Map<AccountKey, AccountItem> resolveAccounts(List<Line> lines) {
+        Map<AccountKey, AccountItem> accounts = new HashMap<>();
+        // 계정도 보고 항목처럼 조직들이 공유한다. 엑셀 행 순서 대신 키 순서로 등록한다.
+        lines.stream().map(FinancialIngestionService::accountKey).filter(Objects::nonNull).distinct()
+                .sorted(Comparator.comparing((AccountKey key) -> key.type.name())
+                        .thenComparing(AccountKey::code).thenComparing(AccountKey::name))
+                .forEach(key -> {
+                    AccountItem item = accountItemRepository
+                            .findBySourceTypeAndSourceCodeAndSourceName(key.type, key.code, key.name)
+                            .orElseGet(() -> {
+                                accountItemRepository.insertIfAbsent(key.type.name(), key.code, key.name);
+                                return accountItemRepository.findBySourceTypeAndSourceCodeAndSourceName(
+                                        key.type, key.code, key.name).orElseThrow();
+                            });
+                    accounts.put(key, item);
+                });
+        return accounts;
+    }
+
+    private static AccountKey accountKey(Line line) {
         if (line.account() == null || line.account().code() == null || line.account().name() == null) {
             return null;
         }
@@ -211,11 +239,7 @@ public class FinancialIngestionService {
         if (type == null) {
             return null;
         }
-        String code = truncate(line.account().code(), 160);
-        String name = truncate(line.account().name(), 500);
-        return cache.computeIfAbsent(type + "\u0000" + code + "\u0000" + name, k ->
-                accountItemRepository.findBySourceTypeAndSourceCodeAndSourceName(type, code, name)
-                        .orElseGet(() -> accountItemRepository.save(AccountItem.create(type, code, name))));
+        return new AccountKey(type, truncate(line.account().code(), 160), truncate(line.account().name(), 500));
     }
 
     /** @return 요청 연도 금액 열(빈 칸 포함)이 하나라도 있으면 true */
@@ -299,6 +323,9 @@ public class FinancialIngestionService {
         return value == null || value.length() <= max ? value : value.substring(0, max);
     }
 
-    private record Node(String code, String name, String parentCode, ReportItemKind kind, boolean leaf) {
+    private record Node(String code, String name, String parentCode, ReportItemKind kind, boolean leaf, int depth) {
+    }
+
+    private record AccountKey(AccountSourceType type, String code, String name) {
     }
 }

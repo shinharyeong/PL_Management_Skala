@@ -13,7 +13,8 @@ public record RequestDetailResponse(SubmissionRequestResponse request, List<Targ
             OffsetDateTime requestedAt,
             OffsetDateTime dueAt,
             String displayStatus,
-            LatestSubmission latestSubmission
+            LatestSubmission latestSubmission,
+            String workflowStatus
     ) {
     }
 

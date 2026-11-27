@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { resizeGapColumn, fitGapColumns, gapColumnMinimums } from './resizable-columns.js'
-const initial=[408,168,168,168,120,168]
+const initial=[408,168,168,168,144,168]
 const sum=values=>values.reduce((a,b)=>a+b,0)
 test('drag transfers width to the adjacent column and fixes the right table edge',()=>{
-  assert.deepEqual(resizeGapColumn(initial,1,50),[408,218,118,168,120,168])
-  assert.deepEqual(resizeGapColumn(initial,0,-60),[348,228,168,168,120,168])
+  assert.deepEqual(resizeGapColumn(initial,1,50),[408,208,128,168,144,168])
+  assert.deepEqual(resizeGapColumn(initial,0,-60),[348,228,168,168,144,168])
   for(let i=0;i<5;i++)for(const delta of [-10000,-60,0,70,10000]){
     const next=resizeGapColumn(initial,i,delta)
     assert.equal(sum(next),sum(initial))

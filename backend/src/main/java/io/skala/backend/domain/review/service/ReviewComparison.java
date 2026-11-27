@@ -14,6 +14,7 @@ import io.skala.backend.domain.submission.value.SubmissionStatus;
 import io.skala.backend.global.exception.BusinessException;
 import io.skala.backend.global.exception.ErrorCode;
 import java.math.BigDecimal;
+import io.skala.backend.domain.financial.value.Scenario;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -37,8 +38,14 @@ public class ReviewComparison {
                        List<FinancialValue> baselineCells, List<FinancialValue> previousCells) {
 
         public BigDecimal baselineOf(Key key) {
-            Aggregate a = baseline.get(key);
+            Aggregate a = baseline.get(baselineKey(key));
             return a == null ? null : a.total();
+        }
+
+        public Key baselineKey(Key key) {
+            if (request.getMonth() == null || approved == null || approved.getRequestId().equals(request.getId())) return key;
+            Scenario scenario = kind == BaselineKind.ANNUAL_PLAN ? Scenario.PLAN : Scenario.ESTIMATE;
+            return new Key(key.reportItemId(), key.year(), key.month(), scenario);
         }
 
         public BigDecimal previousOf(Key key) {
@@ -68,7 +75,8 @@ public class ReviewComparison {
         } else {
             previous = submission.getPreviousSubmission();
         }
-        Baseline approvedBaseline = baselineResolver.resolveApproved(submission, request);
+        Baseline approvedBaseline = request.getMonth() == null ? baselineResolver.resolveApproved(submission, request)
+                : baselineResolver.comparisonBaseline(submission, request);
         Submission approved = approvedBaseline.submission();
         BaselineKind kind = previous != null ? BaselineKind.REJECTED : approvedBaseline.kind();
 

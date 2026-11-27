@@ -26,6 +26,7 @@
 .live-management .badge.mg-status-purple { background:#f2eafe; color:#7435b6; }
 .live-management .badge.mg-status-red { background:#fff0f2; color:#c23246; }
 .live-management .badge.mg-status-gray { background:#eff2f6; color:#526174; }
+.live-management .badge.mg-status-green { background:#e6f5ed; color:#236347; border:1px solid #a8d8be; font-weight:700; }
 
 .live-management .mg-unread { background:#f1f6ff; border:2px solid #8cafe9; border-left:6px solid #245fdb; }
 .live-management .mg-read { background:#f8fafc; border:1px solid #dce3ed; border-left:4px solid #b8c3d3; }

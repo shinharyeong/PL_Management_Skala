@@ -45,11 +45,11 @@ public class NotificationQueryService {
      * 파라미터: 기준 시각
      */
     static final String OVERDUE_TARGETS_SQL = """
-            SELECT r.id AS request_id, t.organization_id, r.type, p.year, r.month, r.due_at
+            SELECT r.id AS request_id, t.organization_id, r.type, p.year, r.month, COALESCE(t.dispatch_due_at, r.due_at) AS due_at
               FROM submission_request r
               JOIN annual_plan p ON p.id = r.annual_plan_id
               JOIN request_target t ON t.request_id = r.id AND t.selected AND NOT t.excluded
-             WHERE r.status = 'OPEN' AND r.due_at < ?
+             WHERE r.status = 'OPEN' AND COALESCE(t.dispatch_due_at, r.due_at) < ?
                AND COALESCE((SELECT s.status FROM submission s
                               WHERE s.request_id = r.id AND s.organization_id = t.organization_id AND s.status <> 'DRAFT'
                               ORDER BY s.seq DESC LIMIT 1), 'REJECTED') = 'REJECTED'""";
@@ -57,7 +57,7 @@ public class NotificationQueryService {
     private static final String LIST_SQL = """
             SELECT n.id, n.type, n.title, n.occurred_at, n.read_at, n.request_id, n.organization_id, n.submission_id,
                    o.code AS org_code, o.name AS org_name, r.type AS request_type, e.review_item_id,
-                   COALESCE(ea.id, sa.id) AS actor_id, COALESCE(ea.name, sa.name) AS actor_name
+                   %s AS workflow_status, COALESCE(ea.id, sa.id) AS actor_id, COALESCE(ea.name, sa.name) AS actor_name
               FROM notification n
               JOIN organization o ON o.id = n.organization_id
               JOIN submission_request r ON r.id = n.request_id
@@ -65,7 +65,7 @@ public class NotificationQueryService {
               LEFT JOIN app_user sa ON sa.id = s.submitted_by
               LEFT JOIN review_explanation e ON e.id = n.review_explanation_id
               LEFT JOIN app_user ea ON ea.id = e.answered_by
-            """;
+            """.formatted(io.skala.backend.domain.request.service.WorkflowStatusSql.forTarget("n.request_id", "n.organization_id"));
 
     private final NotificationRepository notificationRepository;
     private final JdbcTemplate jdbc;
@@ -84,7 +84,7 @@ public class NotificationQueryService {
         int size = OffsetCursor.limit(limit);
         int offset = OffsetCursor.decode(cursor, scope);
 
-        StringBuilder where = new StringBuilder(" WHERE n.recipient_id = ?");
+        StringBuilder where = new StringBuilder(" WHERE n.recipient_id = ? AND " + NotificationRepository.VISIBLE_SQL);
         List<Object> args = new ArrayList<>(List.of(actor.id()));
         if (unread) {
             where.append(" AND n.read_at IS NULL");
@@ -129,7 +129,7 @@ public class NotificationQueryService {
         } else {
             notificationRepository.markRead(actor.id(), input.ids(), now);
         }
-        return new UnreadCountResponse(notificationRepository.countByRecipientIdAndReadAtIsNull(actor.id()));
+        return new UnreadCountResponse(notificationRepository.countVisibleUnread(actor.id()));
     }
 
     private Summary summary(Long recipientId) {
@@ -139,7 +139,7 @@ public class NotificationQueryService {
                   JOIN submission s ON s.id = ri.submission_id
                  WHERE s.status = 'PENDING' AND e.answer IS NOT NULL AND e.verdict = 'PENDING'""");
         long overdue = count("SELECT count(*) FROM (" + OVERDUE_TARGETS_SQL + ") o", OffsetDateTime.now(clock));
-        return new Summary(notificationRepository.countByRecipientIdAndReadAtIsNull(recipientId), replyPending, overdue);
+        return new Summary(notificationRepository.countVisibleUnread(recipientId), replyPending, overdue);
     }
 
     private Map<String, Long> typeCounts(String where, List<Object> args) {
@@ -193,7 +193,7 @@ public class NotificationQueryService {
                 type == NotificationType.OVERDUE || actorId == null ? null : new UserRef(String.valueOf(actorId), rs.getString("actor_name")),
                 occurredAt, rs.getObject("read_at") != null,
                 link(rs.getString("request_type"), rs.getLong("request_id"), rs.getLong("organization_id"),
-                        (Long) rs.getObject("submission_id"), (Long) rs.getObject("review_item_id")));
+                        (Long) rs.getObject("submission_id"), (Long) rs.getObject("review_item_id")), rs.getString("workflow_status"));
         return new Row(occurredAt.atZoneSameInstant(KST).toLocalDate(), item);
     }
 

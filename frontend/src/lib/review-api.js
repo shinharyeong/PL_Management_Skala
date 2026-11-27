@@ -21,7 +21,7 @@ export function reviewEvidencePath(reviewItemId) {
  * @returns {object}
  */
 export function reviewActionBody(action, rows, extra = {}) {
-  if (!['SELECT', 'EXCLUDE', 'REQUEST_EXPLANATION'].includes(action)) throw new Error('지원하지 않는 검토 처리입니다.')
+  if (!['SELECT', 'EXCLUDE', 'APPROVE', 'REQUEST_EXPLANATION'].includes(action)) throw new Error('지원하지 않는 검토 처리입니다.')
   if (!rows?.length || rows.length > 500) throw new Error('검토할 항목을 1~500개 선택해 주세요.')
   const items = []
   const seen = new Set()
@@ -31,7 +31,7 @@ export function reviewActionBody(action, rows, extra = {}) {
     items.push({ reviewItemId: row.id, expectedStateToken: row.stateToken })
   }
   const body = { action, items }
-  if (action === 'EXCLUDE') {
+  if (action === 'EXCLUDE' || action === 'APPROVE') {
     // 제외 사유는 선택이다(와이어프레임 4-2의 하단 바에는 사유 입력이 없다). 서버는 note를 비워도 받는다.
     const note = extra.note?.trim()
     if (note && note.length > 4000) throw new Error('제외 사유는 4000자 이내로 입력해 주세요.')

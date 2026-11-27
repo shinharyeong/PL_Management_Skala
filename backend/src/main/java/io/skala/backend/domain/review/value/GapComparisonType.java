@@ -5,6 +5,8 @@ public enum GapComparisonType {
 
     /** 실적 vs 계획 */
     ACTUAL_VS_PLAN,
+    /** 당월 실적 vs 전월 추정 또는 당월 직전 실적 */
+    ACTUAL_VS_PREVIOUS,
     /** 추정 vs 직전 추정 */
     ESTIMATE_VS_PREVIOUS,
     /** 추정 vs 계획 */

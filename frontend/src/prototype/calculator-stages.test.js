@@ -5,15 +5,15 @@ import { usePrototypeStore } from './live-store.js'
 import { createMonthlySession, statuses } from './domain.js'
 import { calculatorStageCounts, matchesCalculatorStage } from './calculator-stages.js'
 
-test('전체 includes every workflow state; replies awaiting review get their own tab', () => {
+test('four tabs include every state; direct approvals and accepted explanations share approval', () => {
   const items = statuses.map((status, id) => ({ id, status }))
   assert.equal(createMonthlySession().stage, '전체')
   assert.deepEqual(items.filter(item => matchesCalculatorStage(item, '전체')), items)
-  assert.deepEqual(items.filter(item => matchesCalculatorStage(item, '검토중')).map(item => item.status), ['검토 필요', '검토 완료'])
-  assert.deepEqual(items.filter(item => matchesCalculatorStage(item, '회신 검토')).map(item => item.status), ['재검토 필요'])
+  assert.deepEqual(items.filter(item => matchesCalculatorStage(item, '검토 필요')).map(item => item.status), ['검토 필요', '검토 완료', '재검토 필요'])
+  assert.ok(items.filter(item => matchesCalculatorStage(item, '검토 필요')).some(item=>item.status==='재검토 필요'))
   const counts = calculatorStageCounts(items)
-  assert.deepEqual(counts, { 전체: 6, 검토중: 2, '회신 검토': 1, '소명 중': 1, 제외됨: 1, 승인됨: 1 })
-  assert.equal(counts.전체, counts.검토중 + counts['회신 검토'] + counts['소명 중'] + counts.제외됨 + counts.승인됨)
+  assert.deepEqual(counts, { 전체: 6, '검토 필요': 3, '회신 대기': 1, 승인됨: 2 })
+  assert.equal(counts.전체, counts['검토 필요'] + counts['회신 대기'] + counts.승인됨)
 })
 
 test('a selected item remains visible in both all and review after opening its workspace', () => {
@@ -21,15 +21,14 @@ test('a selected item remains visible in both all and review after opening its w
   for (const status of ['검토 필요', '검토 완료']) {
     item.status = status
     assert.ok(matchesCalculatorStage(item, '전체'))
-    assert.ok(matchesCalculatorStage(item, '검토중'))
-    assert.equal(matchesCalculatorStage(item, '소명 중'), false)
+    assert.ok(matchesCalculatorStage(item, '검토 필요'))
+    assert.equal(matchesCalculatorStage(item, '회신 대기'), false)
   }
   item.status = '재검토 필요'
-  assert.ok(matchesCalculatorStage(item, '회신 검토'))
-  assert.equal(matchesCalculatorStage(item, '검토중'), false)
+  assert.ok(matchesCalculatorStage(item, '검토 필요'))
   item.status = '소명 진행중'
-  assert.equal(matchesCalculatorStage(item, '검토중'), false)
-  assert.ok(matchesCalculatorStage(item, '소명 중'))
+  assert.equal(matchesCalculatorStage(item, '검토 필요'), false)
+  assert.ok(matchesCalculatorStage(item, '회신 대기'))
 })
 
 test('reopening selected items skips duplicate SELECT; a mixed selection only sends new items', async () => {

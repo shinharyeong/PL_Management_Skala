@@ -1,6 +1,7 @@
 package io.skala.backend.domain.user.service;
 
 import io.skala.backend.domain.user.dto.BadgeResponse;
+import io.skala.backend.domain.notification.repository.NotificationRepository;
 import io.skala.backend.domain.user.dto.MeResponse;
 import io.skala.backend.domain.user.entity.AppUser;
 import io.skala.backend.domain.user.entity.Organization;
@@ -32,6 +33,7 @@ public class MeService {
             new MeResponse.Menu("HISTORY", "제출 이력 관리", "/history"));
 
     private final AppUserRepository userRepository;
+    private final NotificationRepository notificationRepository;
     private final JdbcTemplate jdbc;
 
     @Transactional(readOnly = true)
@@ -54,7 +56,7 @@ public class MeService {
     public BadgeResponse badges(AuthenticatedUser user) {
         if (user.isPlanner()) {
             return new BadgeResponse(
-                    count("SELECT count(*) FROM notification WHERE recipient_id=? AND read_at IS NULL", user.id()),
+                    notificationRepository.countVisibleUnread(user.id()),
                     count("""
                             SELECT count(*) FROM review_item ri
                             JOIN submission s ON s.id = ri.submission_id

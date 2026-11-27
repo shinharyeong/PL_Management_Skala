@@ -138,10 +138,22 @@ class SubmissionRequestIntegrationTest extends PostgresIntegrationTest {
         assertThat(cards(inboxA, id).getFirst().at("/link/path").asText()).isEqualTo("/requests/" + id + "/upload");
         assertThat(cards(read(mvc.perform(auth(get("/api/v1/inbox"), managerB))), id)).isEmpty();
 
+        long initialDraft = insertSubmission(Long.parseLong(id), orgA, "PENDING", 1);
+        jdbc.update("update submission set status='DRAFT',seq=null,submitted_by=null,submitted_at=null where id=?", initialDraft);
+        inboxA = read(mvc.perform(auth(get("/api/v1/inbox"), managerA)));
+        assertThat(cards(inboxA, id).getFirst().get("draftSubmissionId").asText()).isEqualTo(String.valueOf(initialDraft));
+
         long rejected = insertSubmission(Long.parseLong(id), orgA, "REJECTED", 1);
         inboxA = read(mvc.perform(auth(get("/api/v1/inbox"), managerA)));
         assertThat(cards(inboxA, id).getFirst().get("title").asText()).endsWith("재제출");
         assertThat(cards(inboxA, id).getFirst().at("/link/path").asText()).isEqualTo("/submissions/" + rejected);
+        assertThat(cards(inboxA, id).getFirst().get("draftSubmissionId").isNull()).isTrue();
+
+        long resubmissionDraft = insertSubmission(Long.parseLong(id), orgA, "PENDING", 2);
+        jdbc.update("update submission set status='DRAFT',seq=null,submitted_by=null,submitted_at=null where id=?", resubmissionDraft);
+        inboxA = read(mvc.perform(auth(get("/api/v1/inbox"), managerA)));
+        assertThat(cards(inboxA, id).getFirst().get("draftSubmissionId").asText()).isEqualTo(String.valueOf(resubmissionDraft));
+        assertThat(cards(inboxA, id).getFirst().get("submissionId").asText()).isEqualTo(String.valueOf(rejected));
 
         insertSubmission(Long.parseLong(id), orgA, "PENDING", 2);
         assertThat(cards(read(mvc.perform(auth(get("/api/v1/inbox"), managerA))), id)).isEmpty();
@@ -168,6 +180,66 @@ class SubmissionRequestIntegrationTest extends PostgresIntegrationTest {
         assertThat(target(detail, orgA).get("displayStatus").asText()).isEqualTo("SUBMITTED");
         assertThat(detail.at("/request/submittedCount").asInt()).isEqualTo(1);
         mvc.perform(auth(get("/api/v1/me/badges"), managerA)).andExpect(jsonPath("$.openRequests").value(0));
+    }
+
+    @Test
+    void monthlyAdditionalDispatchPreservesExistingSubmissionAndUsesOwnDeadline() throws Exception {
+        jdbc.update("INSERT INTO annual_plan(year,status,confirmed_by,confirmed_at) VALUES (?,'CONFIRMED',?,now())", year, plannerId);
+        String id = createRequest("MONTHLY_ACTUAL", 11, OffsetDateTime.now(ZoneOffset.UTC).minusDays(1), List.of(orgA))
+                .andExpect(status().isCreated()).andReturn().getResponse().getHeader("Location").replaceAll(".*/", "");
+        long submission = insertSubmission(Long.parseLong(id), orgA, "PENDING", 1);
+        JsonNode before = read(mvc.perform(auth(get("/api/v1/submission-requests/" + id), planner)));
+        OffsetDateTime due = OffsetDateTime.now(ZoneOffset.UTC).plusDays(7).withNano(0);
+        String key = UUID.randomUUID().toString();
+        for (int i = 0; i < 2; i++) {
+            addTargets(id, planner, List.of(orgB), due, key).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.targetCount").value(2));
+        }
+        JsonNode after = read(mvc.perform(auth(get("/api/v1/submission-requests/" + id), planner)));
+        assertThat(after.get("request").get("dueAt")).isEqualTo(before.get("request").get("dueAt"));
+        assertThat(target(after, orgA)).isEqualTo(target(before, orgA));
+        assertThat(target(after, orgA).at("/latestSubmission/id").asText()).isEqualTo(String.valueOf(submission));
+        assertThat(target(after, orgB).get("selected").asBoolean()).isTrue();
+        assertThat(target(after, orgB).get("displayStatus").asText()).isEqualTo("WAITING");
+        assertThat(OffsetDateTime.parse(target(after, orgB).get("dueAt").asText())).isEqualTo(due);
+        JsonNode inbox = read(mvc.perform(auth(get("/api/v1/inbox"), managerB)).andExpect(status().isOk()));
+        assertThat(cards(inbox, id)).hasSize(1);
+        assertThat(cards(inbox, id).getFirst().get("message").asText()).isEqualTo("추가 요청입니다.");
+        assertThat(OffsetDateTime.parse(cards(inbox, id).getFirst().get("dueAt").asText())).isEqualTo(due);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM submission_request WHERE id = ?", Integer.class, Long.parseLong(id))).isEqualTo(1);
+        addTargets(id, planner, List.of(orgB), due, UUID.randomUUID().toString()).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("REQUEST_TARGET_ALREADY_SELECTED"));
+    }
+
+    @Test
+    void additionalDispatchRejectsMixedBatchWithoutChangingUnselectedTarget() throws Exception {
+        jdbc.update("INSERT INTO annual_plan(year,status,confirmed_by,confirmed_at) VALUES (?,'CONFIRMED',?,now())", year, plannerId);
+        String id = createRequest("MONTHLY_ACTUAL", 11, OffsetDateTime.now(ZoneOffset.UTC).plusDays(1), List.of(orgA))
+                .andReturn().getResponse().getHeader("Location").replaceAll(".*/", "");
+        OffsetDateTime due = OffsetDateTime.now(ZoneOffset.UTC).plusDays(3);
+        addTargets(id, managerB, List.of(orgB), due, UUID.randomUUID().toString()).andExpect(status().isForbidden());
+        addTargets(id, planner, List.of(orgB, orgA), due, UUID.randomUUID().toString()).andExpect(status().isConflict());
+        addTargets(id, planner, List.of(orgB, Long.MAX_VALUE), due, UUID.randomUUID().toString()).andExpect(status().isBadRequest());
+        addTargets(id, planner, List.of(orgB), due.minusDays(5), UUID.randomUUID().toString()).andExpect(status().isBadRequest());
+        JsonNode detail = read(mvc.perform(auth(get("/api/v1/submission-requests/" + id), planner)));
+        assertThat(target(detail, orgB).get("selected").asBoolean()).isFalse();
+        jdbc.update("UPDATE submission_request SET status='CLOSED' WHERE id=?", Long.parseLong(id));
+        addTargets(id, planner, List.of(orgB), due, UUID.randomUUID().toString()).andExpect(status().isBadRequest());
+        addTargets("9223372036854775807", planner, List.of(orgB), due, UUID.randomUUID().toString()).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void additionalDispatchDoesNotExtendAnnualRequestScope() throws Exception {
+        String id = createRequest("ANNUAL_PLAN", null, OffsetDateTime.now(ZoneOffset.UTC).plusDays(1), List.of(orgA))
+                .andReturn().getResponse().getHeader("Location").replaceAll(".*/", "");
+        addTargets(id, planner, List.of(orgB), OffsetDateTime.now(ZoneOffset.UTC).plusDays(3), UUID.randomUUID().toString())
+                .andExpect(status().isBadRequest());
+    }
+
+    private ResultActions addTargets(String id, String token, List<Long> ids, OffsetDateTime due, String key) throws Exception {
+        return mvc.perform(auth(post("/api/v1/submission-requests/" + id + "/targets"), token)
+                .header("Idempotency-Key", key).contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("organizationIds", ids, "dueAt", due.toString(), "message", "추가 요청입니다."))));
     }
 
     @Test

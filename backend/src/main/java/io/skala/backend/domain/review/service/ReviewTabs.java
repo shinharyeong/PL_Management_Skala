@@ -22,8 +22,8 @@ public final class ReviewTabs {
     }
 
     public static String of(ReviewItem item, ReviewExplanation current) {
-        if (item.getWorkflowState() == WorkflowState.EXCLUDED) {
-            return "EXCLUDED";
+        if ((item.getWorkflowState() == WorkflowState.EXCLUDED || item.getWorkflowState() == WorkflowState.APPROVED)) {
+            return "ACCEPTED";
         }
         if (current != null && current.getVerdict() == ExplanationVerdict.ACCEPTED) {
             return "ACCEPTED";

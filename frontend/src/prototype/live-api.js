@@ -11,7 +11,7 @@ export function createApiClient(credentials) {
     const encoded = body == null ? undefined : multipart ? body : JSON.stringify(body)
     if (encoded && !multipart) headers.set('Content-Type', 'application/json')
     const command = method !== 'GET' && !['/api/v1/auth/codes', '/api/v1/auth/sessions'].includes(path)
-    const fingerprint = `${method}:${path}:${multipart ? [...body].map(([k,v]) => `${k}:${typeof v === 'string' ? v : `${v.name}:${v.size}:${v.lastModified}`}`).join('|') : encoded || ''}`
+    const fingerprint = `${token}:${method}:${path}:${multipart ? [...body].map(([k,v]) => `${k}:${typeof v === 'string' ? v : `${v.name}:${v.size}:${v.lastModified}`}`).join('|') : encoded || ''}`
     if (command) {
       if (!pendingKeys.has(fingerprint)) pendingKeys.set(fingerprint, crypto.randomUUID())
       headers.set('Idempotency-Key', pendingKeys.get(fingerprint))
@@ -27,8 +27,11 @@ export function createApiClient(credentials) {
       throw error
     }
     if (token && token !== credentials.token()) throw new DOMException('인증 정보가 변경되었습니다.', 'AbortError')
+    // 헤더 수신 뒤 본문 연결이 끊겨도 서버 명령은 완료됐을 수 있다. 본문까지 읽은 뒤에만 키를 해제한다.
+    const result = response.status === 204 ? null : await (blob ? response.blob() : response.json())
+    if (token && token !== credentials.token()) throw new DOMException('인증 정보가 변경되었습니다.', 'AbortError')
     if (command) pendingKeys.delete(fingerprint)
-    return response.status === 204 ? null : blob ? response.blob() : response.json()
+    return result
   }
 }
 
@@ -48,7 +51,12 @@ export function flattenGapTree(tree, type, organizationName) {
       const path = classification(parents)
       if (node.reviewItemId) result.push({ id: node.reviewItemId, key:node.reviewItemId, stateToken:node.stateToken,
         name:[path.at(-1),node.name].filter(Boolean).join(' · '), major:path[0] || '항목', group:path[1] || path[0] || '항목', category:path.slice(2).join(' / ') || path.at(-1) || '항목',
-        cell:node.name, plan:node.plan, actual:node.actual, estimate:node.actual, previousEstimate:node.plan,
+        cell:node.name, comparisons:node.comparisons, month:node.month, scenario:node.scenario || (type === '실적 vs 계획' ? 'ACTUAL' : 'ESTIMATE'),
+        plan:node.plan, actual:node.actual, estimate:node.actual,
+        planAmount:type === '추정 vs 추정' ? null : node.plan,
+        actualAmount:(node.scenario || (type === '실적 vs 계획' ? 'ACTUAL' : 'ESTIMATE')) === 'ACTUAL' ? node.actual : null,
+        estimateAmount:(node.scenario || (type === '실적 vs 계획' ? 'ACTUAL' : 'ESTIMATE')) === 'ESTIMATE' ? node.actual : null,
+        previousEstimate:node.previousEstimate ?? (type === '추정 vs 추정' ? node.plan : null),
         baselineAmount:node.plan, currentAmount:node.actual, gapAmount:node.diff, gapRate:node.rate, status:stages[node.tab] || node.tab,
         conditions:{ type }, reportItemId:node.reportItemId })
       visit(node.children, node.reviewItemId ? parents : [...parents,node.name])

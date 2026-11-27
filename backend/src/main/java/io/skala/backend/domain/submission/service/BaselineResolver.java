@@ -102,6 +102,18 @@ public class BaselineResolver {
                 .orElse(Baseline.NONE);
     }
 
+    /** Fixed comparison source for submitted files; a draft resolves the current prior submission. */
+    public Baseline comparisonBaseline(Submission submission, SubmissionRequest request) {
+        if (submission.getStatus() == SubmissionStatus.DRAFT) return resolve(submission, request);
+        Submission baseline = submission.getReviewBaseline();
+        if (baseline != null) return new Baseline(baseline.getStatus() == SubmissionStatus.REJECTED
+                ? BaselineKind.REJECTED : baseline.getRequestId().equals(request.getId())
+                ? BaselineKind.PREV_MONTH_APPROVED : request.getMonth() != null && request.getMonth() == 1
+                ? BaselineKind.ANNUAL_PLAN : BaselineKind.PREV_MONTH_APPROVED, baseline);
+        if (submission.getReviewPolicyVersion() != null) return Baseline.NONE;
+        return resolveApproved(submission, request);
+    }
+
     private Baseline checked(Baseline baseline) {
         if (!financialLineRepository.existsBySubmissionId(baseline.submission().getId())) {
             throw SubmissionErrorCode.COMPARISON_SOURCE_UNAVAILABLE.exception();

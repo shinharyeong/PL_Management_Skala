@@ -207,7 +207,32 @@ public class ReviewItemQueryService {
     private List<ReviewItemDetailResponse.Row> rows(View view, Key key) {
         Map<String, BigDecimal[]> cells = new TreeMap<>();
         collect(cells, view.currentCells(), key, 0);
-        collect(cells, view.baselineCells(), key, 1);
+        collect(cells, view.baselineCells(), view.baselineKey(key), 1);
+        if (!view.baselineKey(key).equals(key)) {
+            // Align the previous forecast/plan column with the current actual column of the same source line.
+            for (FinancialValue current : view.currentCells()) {
+                if (!current.getLine().getReportItem().getId().equals(key.reportItemId()) || current.getYear()!=key.year()
+                        || current.getMonth()!=key.month() || current.getScenario()!=key.scenario()) continue;
+                String address=current.getLine().getSourceSheet()+"!"+current.getSourceCell();
+                for (FinancialValue previous : view.baselineCells()) {
+                    if (previous.getLine().getReportItem().getId().equals(key.reportItemId()) && previous.getYear()==key.year()
+                        && previous.getMonth()==key.month() && previous.getScenario()==view.baselineKey(key).scenario()
+                        && previous.getLine().getSourceSheet().equals(current.getLine().getSourceSheet())
+                        && previous.getLine().getSourceRow().equals(current.getLine().getSourceRow())) {
+                        String old=previous.getLine().getSourceSheet()+"!"+previous.getSourceCell();
+                        if (!old.equals(address)) {
+                            BigDecimal[] oldValues=cells.get(old);
+                            if (oldValues!=null && oldValues[1]!=null) {
+                                BigDecimal[] target=cells.computeIfAbsent(address,c->new BigDecimal[3]);
+                                target[1]=target[1]==null?oldValues[1]:target[1].add(oldValues[1]);
+                                oldValues[1]=null;
+                            }
+                        }
+                    }
+                }
+            }
+            cells.entrySet().removeIf(entry -> java.util.Arrays.stream(entry.getValue()).allMatch(java.util.Objects::isNull));
+        }
         if (view.kind() == BaselineKind.REJECTED) {
             collect(cells, view.previousCells(), key, 2);
         }

@@ -72,13 +72,20 @@ public class ReviewEvidenceService {
         List<Submission> approved = new ArrayList<>(submissionRepository
                 .findAllByRequestIdAndOrganizationIdAndStatusOrderByApprovedSeqAsc(owner.getRequestId(),
                         owner.getOrganizationId(), SubmissionStatus.APPROVED));
+        approved.removeIf(s -> owner.getSeq()!=null && s.getSeq()!=null && s.getSeq()>owner.getSeq());
+        Submission comparisonSource = request.getMonth() == null ? baselineResolver.resolveApproved(owner, request).submission()
+                : baselineResolver.comparisonBaseline(owner, request).submission();
+        if (comparisonSource != null
+                && approved.stream().noneMatch(s -> s.getId().equals(comparisonSource.getId()))) approved.add(comparisonSource);
         if (approved.isEmpty()) {
             // 이 요청에 승인본이 아직 없으면 직전 기준(전월 승인본·확정 계획)을 현재 기준으로 보여 준다.
-            Submission fallback = baselineResolver.resolveApproved(owner, request).submission();
+            Submission fallback = comparisonSource;
             if (fallback != null) {
                 approved.add(fallback);
             }
         }
+        approved.sort(Comparator.comparing((Submission s) -> s.getRequestId().equals(owner.getRequestId()) ? 1 : 0)
+                .thenComparing(Submission::getSeq, Comparator.nullsLast(Comparator.naturalOrder())));
         List<Submission> columns = new ArrayList<>(approved);
         boolean ownerIsNew = owner.getStatus() != SubmissionStatus.APPROVED;
         if (ownerIsNew) {
@@ -103,8 +110,21 @@ public class ReviewEvidenceService {
         Map<String, BigDecimal[]> values = new TreeMap<>(Comparator.comparing(ReviewEvidenceService::cellSortKey));
         Map<String, FinancialValue> latest = new LinkedHashMap<>();
         for (int i = 0; i < columns.size(); i++) {
-            for (FinancialValue v : cellsOf(columns.get(i), key)) {
+            Submission column = columns.get(i);
+            Key columnKey = key;
+            if (request.getMonth()!=null && !column.getRequestId().equals(request.getId())) {
+                SubmissionRequest sourceRequest=submissionRequestRepository.findById(column.getRequestId()).orElseThrow();
+                columnKey=new Key(key.reportItemId(),key.year(),key.month(),sourceRequest.getMonth()==null
+                        ? io.skala.backend.domain.financial.value.Scenario.PLAN : io.skala.backend.domain.financial.value.Scenario.ESTIMATE);
+            }
+            for (FinancialValue v : cellsOf(column, columnKey)) {
                 String cell = v.getLine().getSourceSheet() + "!" + v.getSourceCell();
+                if (columnKey.scenario()!=key.scenario()) {
+                    FinancialValue matching = cellsOf(owner,key).stream().filter(now ->
+                        now.getLine().getSourceSheet().equals(v.getLine().getSourceSheet())
+                        && now.getLine().getSourceRow().equals(v.getLine().getSourceRow())).findFirst().orElse(null);
+                    if (matching!=null) cell=matching.getLine().getSourceSheet()+"!"+matching.getSourceCell();
+                }
                 BigDecimal[] slot = values.computeIfAbsent(cell, c -> new BigDecimal[columns.size()]);
                 slot[i] = slot[i] == null ? v.getAmount() : slot[i].add(v.getAmount());
                 latest.put(cell, v);

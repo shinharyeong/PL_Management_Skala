@@ -79,11 +79,11 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         long octJob = job(octSubmission);
         IngestionResult octResult = complete(octJob, data(SHA_OCT, List.of(
                 line("1:10", "REVENUE", SALES_KEY, "매출", 10, "A-1",
-                        value(10, "ACTUAL", "1000", "N10"), value(11, "ESTIMATE", "1100", "O10"),
+                        value(10, "ACTUAL", "1000", "N10"), value(11, "ESTIMATE", "1100", "O10"), value(12, "ESTIMATE", "100", "P10"),
                         priorYear(10, "800", "B10")))));
         assertThat(octResult.diagnostics()).isEmpty();
         assertThat(octResult.lineCount()).isEqualTo(1);
-        assertThat(octResult.valueCount()).isEqualTo(3); // 전년 실적 열도 참고값으로 저장
+        assertThat(octResult.valueCount()).isEqualTo(4); // 미래 추정과 전년 참고값도 저장
         // 상세 행의 이름·담당자도 저장한다(#58). 본부 코드는 파서가 주지 않으므로 비워 둔다.
         assertThat(jdbc.queryForMap("""
                 select headquarters_code, headquarters_name, team_name, task_name, person_in_charge
@@ -100,7 +100,7 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
 
         jdbc.update("update submission set status = 'APPROVED', seq = 1, approved_seq = 1 where id = ?", octSubmission);
         long octActualItem = jdbc.queryForObject("""
-                select id from review_item where submission_id = ? and month = 10 and scenario = 'ACTUAL'
+                select id from review_item where submission_id = ? and month = 12 and scenario = 'ESTIMATE'
                 """, Long.class, octSubmission);
         jdbc.update("""
                 insert into review_explanation(review_item_id, round, answer, answered_by, answered_at, verdict)
@@ -112,14 +112,14 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         long novJob = job(novSubmission);
         IngestionResult novResult = complete(novJob, data(SHA_NOV, List.of(
                 line("1:10", "REVENUE", SALES_KEY, "매출", 10, "A-1",
-                        value(10, "ACTUAL", "1000.000000", "N10"), value(11, "ESTIMATE", "1300", "O10"),
+                        value(10, "ACTUAL", "1000.000000", "N10"), value(11, "ACTUAL", "1300", "O10"), value(12, "ESTIMATE", "100", "P10"),
                         priorYear(10, "900", "B10")),
                 line("2:5", "COST", RENT_KEY, "비용", 5, "C-9",
-                        value(11, "ESTIMATE", "50", "O5"),
+                        value(11, "ACTUAL", "50", "O5"),
                         new Value(2026, 12, "ESTIMATE", null, "MISSING", "STORED_BLANK", "P5", "slot:x"))),
                 List.of(new ReportItem(RENT_KEY, "COST", "임차료", List.of("판관비", "임차료"), "RESOLVED"))));
         assertThat(novResult.diagnostics()).isEmpty();
-        assertThat(novResult.valueCount()).isEqualTo(4);
+        assertThat(novResult.valueCount()).isEqualTo(5);
 
         assertThatThrownBy(() -> validationService.validate(novSubmission, token(novSubmission),
                 new AuthenticatedUser(outsider, UserRole.ORG_MANAGER, otherOrgId)))
@@ -141,7 +141,7 @@ class SubmissionValidationIntegrationTest extends PostgresIntegrationTest {
         Map<String, Object> inherited = jdbc.queryForMap("""
                 select e.verdict, e.answer, e.inherited_from_id from review_explanation e
                 join review_item i on i.id = e.review_item_id
-                where i.submission_id = ? and i.month = 10 and i.scenario = 'ACTUAL'
+                where i.submission_id = ? and i.month = 12 and i.scenario = 'ESTIMATE'
                 """, novSubmission);
         assertThat(inherited).containsEntry("verdict", "ACCEPTED").containsEntry("answer", "대형 수주 반영");
         assertThat(((Number) inherited.get("inherited_from_id")).longValue()).isPositive();
