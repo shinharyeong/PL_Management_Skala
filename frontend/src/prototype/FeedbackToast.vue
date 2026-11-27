@@ -17,8 +17,8 @@ onBeforeUnmount(()=>clearTimeout(timer))
 </template>
 <style>
 .feedback-toast-host{position:fixed;z-index:1000;bottom:max(24px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);width:min(620px,calc(100% - 32px));pointer-events:none}
-.feedback-toast{display:flex;align-items:flex-start;gap:20px;padding:18px 20px;border:1px solid #acc4ef;border-left:6px solid #386bc8;border-radius:14px;background:#f4f8ff;color:#213c61;box-shadow:0 12px 48px #14243b55;pointer-events:auto;max-height:40dvh;overflow:auto;font:14px/1.6 system-ui,sans-serif;overflow-wrap:anywhere}
-.feedback-toast-error{background:#fff0e8;border:2px solid #d45b3d;border-left:7px solid #bd3821;color:#762417}
+.feedback-toast{display:flex;align-items:flex-start;gap:20px;padding:18px 20px;border:1px solid #cececd;border-left:6px solid #82827e;border-radius:14px;background:#f4f4f3;color:#424240;box-shadow:0 12px 48px #20202055;pointer-events:auto;max-height:40dvh;overflow:auto;font:14px/1.6 system-ui,sans-serif;overflow-wrap:anywhere}
+.feedback-toast-error{background:#fff0e8;border:2px solid #ba6b57;border-left:7px solid #9e4e40;color:#762417}
 .feedback-toast-content{flex:1;min-width:0}.feedback-toast strong{font-weight:700}.feedback-toast p{margin:5px 0 0}.feedback-toast details{margin-top:8px;font-size:12px}.feedback-toast summary{cursor:pointer;text-decoration:underline}.feedback-toast button{flex-shrink:0;border:1px solid currentColor;color:inherit;background:transparent;border-radius:8px;min-height:40px;padding:6px 12px;font:inherit;cursor:pointer}
 @media(max-width:600px){.feedback-toast-host{bottom:max(12px,env(safe-area-inset-bottom))}.feedback-toast{padding:14px;gap:12px}}
 </style>

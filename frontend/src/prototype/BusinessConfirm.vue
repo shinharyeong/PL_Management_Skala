@@ -11,9 +11,9 @@ onBeforeUnmount(() => settle(false))
   </PDialog>
 </template>
 <style>
-.business-confirm-content {font-size:13px;color:#40516a;line-height:1.7;}
+.business-confirm-content {font-size:13px;color:#565654;line-height:1.7;}
 .business-confirm-content p {margin:0 0 14px;white-space:pre-line;}
-.business-confirm-content dl {display:grid;grid-template-columns:75px minmax(0,1fr);gap:8px 12px;margin:0;padding:12px;background:#f5f7fa;border-radius:8px;font-size:12px;}
-.business-confirm-content dt {color:#7a8799;}
+.business-confirm-content dl {display:grid;grid-template-columns:75px minmax(0,1fr);gap:8px 12px;margin:0;padding:12px;background:#f8f8f7;border-radius:8px;font-size:12px;}
+.business-confirm-content dt {color:#8b8b88;}
 .business-confirm-content dd {margin:0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:170px;overflow:auto;}
 </style>

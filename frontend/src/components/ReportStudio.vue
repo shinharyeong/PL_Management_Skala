@@ -120,7 +120,7 @@ function send(text) {
       <span class="rs-cap">{{ current ? `선택: ${current.title || current.kind}` : '블록을 눌러 서식을 바꾸세요' }}</span>
       <select aria-label="글꼴" :disabled="!current || busy" :value="style.family || 'gothic'" @change="setStyle({ family: $event.target.value === 'serif' ? 'serif' : '' })"><option value="gothic">고딕</option><option value="serif">명조</option></select>
       <input type="number" aria-label="글자 크기(pt)" min="8" max="40" step="1" style="width:64px;height:34px;border:1px solid var(--rs-line);border-radius:8px;padding:0 6px" :disabled="!current || busy" :value="style.size || ''" placeholder="크기" @change="setStyle({ size: $event.target.value === '' ? '' : Math.max(8, Math.min(40, Math.round(Number($event.target.value)))) })" />
-      <input type="color" aria-label="글자 색" :disabled="!current || busy" :value="style.color || '#15171c'" @input="setStyle({ color: $event.target.value })" />
+      <input type="color" aria-label="글자 색" :disabled="!current || busy" :value="style.color || '#191918'" @input="setStyle({ color: $event.target.value })" />
       <button type="button" class="tb" :class="{ on: style.bold }" :disabled="!current || busy" aria-label="굵게" @click="toggle('bold')">B</button>
       <button type="button" class="tb" :class="{ on: style.italic }" :disabled="!current || busy" aria-label="기울임" style="font-style:italic" @click="toggle('italic')">I</button>
       <button type="button" class="tb" :class="{ on: style.underline }" :disabled="!current || busy" aria-label="밑줄" style="text-decoration:underline" @click="toggle('underline')">U</button>
@@ -131,7 +131,7 @@ function send(text) {
 
     <div class="rs-rep">
       <div>
-        <div class="rs-hl-legend"><span><span class="sw" style="background:rgba(47,91,216,.25)"></span>파랑 = 데이터에서 가져온 값</span><span><span class="sw" style="background:var(--rs-warn-chip)"></span>노랑 = 아직 채우지 못한 값</span>
+        <div class="rs-hl-legend"><span><span class="sw" style="background:rgba(86,116,79,.25)"></span>파랑 = 데이터에서 가져온 값</span><span><span class="sw" style="background:var(--rs-warn-chip)"></span>노랑 = 아직 채우지 못한 값</span>
           <label><input v-model="highlight" type="checkbox" /> 값 표시</label>
           <span>· 블록을 끌어 순서 바꾸기, 모서리를 끌어 크기 조절, 글자 블록은 더블클릭으로 직접 고치기</span></div>
         <div ref="docEl" class="rs-doc report-preview" :class="{ 'hl-off': !highlight }">

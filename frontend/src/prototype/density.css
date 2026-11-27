@@ -24,7 +24,7 @@
 .app-layout .main-content:not(.home-overview) :is(.mg-table,.org-history-table) { font-size:13px; }
 .app-layout .main-content:not(.home-overview) :is(.mg-table,.org-history-table,.org-status table,.monthly-request-form table,.monthly-panel[data-page=workspace] table) :is(th,td) { padding:8px 12px; vertical-align:middle; line-height:22px; }
 .app-layout .main-content:not(.home-overview) :is(.mg-table,.org-history-table,.org-status table,.monthly-request-form table) thead { position:sticky; top:0; z-index:2; }
-.app-layout .main-content:not(.home-overview) :is(.mg-table,.org-history-table,.org-status table,.monthly-request-form table) thead th { background:#edf2f8; font-size:12px; }
+.app-layout .main-content:not(.home-overview) :is(.mg-table,.org-history-table,.org-status table,.monthly-request-form table) thead th { background:#f3f3f2; font-size:12px; }
 .app-layout .main-content:not(.home-overview) :is(.mg-row-link,.org-link-button,.mg-icon-button) { min-height:28px; font-size:13px; }
 .app-layout .main-content:not(.home-overview) :is(.mg-table-scroll,.org-table-scroll):focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 
@@ -165,7 +165,7 @@
 .app-layout .main-content:not(.home-overview) .current-reviews .review-layout { grid-template-columns:240px minmax(0,1fr); gap:12px; }
 .app-layout .main-content:not(.home-overview) .current-reviews .review-list { padding:10px; gap:6px; max-height:calc(100dvh - 200px); overflow:auto; }
 .app-layout .main-content:not(.home-overview) .current-reviews .review-item { padding:8px 10px; font-size:13px; }
-.app-layout .main-content:not(.home-overview) .current-reviews .review-item.active { color:#17458f; }
+.app-layout .main-content:not(.home-overview) .current-reviews .review-item.active { color:#545452; }
 .app-layout .main-content:not(.home-overview) .current-reviews .review-detail { padding:14px; gap:12px; }
 .app-layout .main-content:not(.home-overview) .current-reviews .review-detail > h3 { padding-bottom:8px; }
 .app-layout .main-content:not(.home-overview) .current-reviews .review-detail :is(th,td) { padding:8px 10px; font-size:13px; }
@@ -199,7 +199,7 @@
   .app-layout .main-content:not(.home-overview) .report-panel .report-question { margin-top:12px; }
   .app-layout .main-content:not(.home-overview) .report-panel .report-step-actions { margin-top:12px; }
 
-  /* PR #114's five report stages keep their controls and generated document styles. */
+  /* PR #2b2b2a's five report stages keep their controls and generated document styles. */
   .app-layout .main-content .rs { --rs-bg:var(--canvas); --rs-line:var(--line); --rs-ink:var(--text); --rs-blue:var(--accent); border-radius:10px; }
   .app-layout .main-content .rs-top { min-height:48px; padding:10px 14px; gap:8px 12px; }
   .app-layout .main-content .rs-brand { gap:8px; flex-wrap:wrap; }
@@ -296,34 +296,34 @@
 }
 
 /* Notification inbox: scan title first, with origin and action in consistent columns. */
-.app-layout .main-content:not(.home-overview) .notification-date-heading { display:flex; align-items:center; gap:9px; margin:8px 0 2px; color:#7b8797; font-size:12px; }
-.app-layout .main-content:not(.home-overview) .notification-date-heading h2 { margin:0; color:#344257; font-size:13px; font-weight:650; }
-.notification-date-unread { color:#3465bd; font-size:11px; }
-.notification-date-line { flex:1; height:1px; background:#e1e6ee; margin-left:3px; }
-.app-layout .main-content:not(.home-overview) .mg-notification { --notification-color:#3767be; --notification-tint:#edf3ff; display:grid; grid-template-columns:36px minmax(0,1fr) auto; align-items:center; gap:14px; padding:14px 16px; border:1px solid #e0e6ef; border-left:3px solid transparent; border-radius:10px; background:#fff; box-shadow:none; transition:border-color .15s,box-shadow .15s; }
+.app-layout .main-content:not(.home-overview) .notification-date-heading { display:flex; align-items:center; gap:9px; margin:8px 0 2px; color:#8b8b87; font-size:12px; }
+.app-layout .main-content:not(.home-overview) .notification-date-heading h2 { margin:0; color:#474744; font-size:13px; font-weight:650; }
+.notification-date-unread { color:#7a7a77; font-size:11px; }
+.notification-date-line { flex:1; height:1px; background:#e8e8e7; margin-left:3px; }
+.app-layout .main-content:not(.home-overview) .mg-notification { --notification-color:#7c7c79; --notification-tint:#ededec; display:grid; grid-template-columns:36px minmax(0,1fr) auto; align-items:center; gap:14px; padding:14px 16px; border:1px solid #e8e8e7; border-left:3px solid transparent; border-radius:10px; background:#fff; box-shadow:none; transition:border-color .15s,box-shadow .15s; }
 .app-layout .main-content:not(.home-overview) .mg-notification.notification-kind-reply { --notification-color:#8060aa; --notification-tint:#f2edf9; }
-.app-layout .main-content:not(.home-overview) .mg-notification.notification-kind-overdue { --notification-color:#bd5648; --notification-tint:#fff0eb; }
-.app-layout .main-content:not(.home-overview) .mg-notification.mg-unread { border-left-color:var(--notification-color); background:#fafcff; }
-.app-layout .main-content:not(.home-overview) .mg-notification:hover { border-color:#bdcde2; border-left-color:var(--notification-color); box-shadow:0 2px 8px #263c5710; }
+.app-layout .main-content:not(.home-overview) .mg-notification.notification-kind-overdue { --notification-color:#b75b4e; --notification-tint:#fff0eb; }
+.app-layout .main-content:not(.home-overview) .mg-notification.mg-unread { border-left-color:var(--notification-color); background:#fdfdfc; }
+.app-layout .main-content:not(.home-overview) .mg-notification:hover { border-color:#d0d0cf; border-left-color:var(--notification-color); box-shadow:0 2px 8px #3f3f3e10; }
 .notification-type-icon { display:flex; align-items:center; justify-content:center; width:36px; height:36px; border-radius:10px; background:var(--notification-tint); color:var(--notification-color); }
 .notification-type-icon svg { width:19px; height:19px; }
 .app-layout .main-content:not(.home-overview) .mg-notification-body { display:flex; flex-direction:column; gap:5px; }
 .app-layout .main-content:not(.home-overview) .mg-notification-meta { display:flex; align-items:center; gap:9px; font-size:11px; }
 .notification-type-label { color:var(--notification-color); font-weight:650; }
-.app-layout .main-content:not(.home-overview) .mg-notification .notification-read-label { display:inline-flex; align-items:center; gap:4px; padding:0; background:transparent; font-size:10px; font-weight:500; color:#9aa4b3; }
-.app-layout .main-content:not(.home-overview) .mg-notification .notification-read-label.is-unread { color:#3767be; }
+.app-layout .main-content:not(.home-overview) .mg-notification .notification-read-label { display:inline-flex; align-items:center; gap:4px; padding:0; background:transparent; font-size:10px; font-weight:500; color:#a8a8a5; }
+.app-layout .main-content:not(.home-overview) .mg-notification .notification-read-label.is-unread { color:#7c7c79; }
 .notification-unread-indicator { width:5px; height:5px; border-radius:50%; background:currentColor; }
-.app-layout .main-content:not(.home-overview) .mg-notification h3 { margin:0; color:#253249; font-size:14px; line-height:1.5; font-weight:650; }
-.app-layout .main-content:not(.home-overview) .mg-notification.mg-read h3 { font-weight:500; color:#586477; }
-.notification-source { display:flex; flex-wrap:wrap; align-items:center; gap:6px 9px; color:#788497; font-size:12px; }
-.notification-source strong { font-weight:500; color:#59677b; }
-.notification-org-code { font-size:10px; color:#8b96a6; font-variant-numeric:tabular-nums; }
-.notification-actor { padding-left:9px; border-left:1px solid #dce2ea; line-height:1; }
+.app-layout .main-content:not(.home-overview) .mg-notification h3 { margin:0; color:#383836; font-size:14px; line-height:1.5; font-weight:650; }
+.app-layout .main-content:not(.home-overview) .mg-notification.mg-read h3 { font-weight:500; color:#696966; }
+.notification-source { display:flex; flex-wrap:wrap; align-items:center; gap:6px 9px; color:#898986; font-size:12px; }
+.notification-source strong { font-weight:500; color:#6c6c68; }
+.notification-org-code { font-size:10px; color:#9a9a97; font-variant-numeric:tabular-nums; }
+.notification-actor { padding-left:9px; border-left:1px solid #e3e3e3; line-height:1; }
 .app-layout .main-content:not(.home-overview) .mg-notification-action { display:flex; flex-direction:column; align-items:flex-end; gap:12px; min-width:190px; }
 .notification-action-line { display:flex; align-items:center; gap:10px; }
 .app-layout .main-content:not(.home-overview) .notification-action-line .badge { font-size:11px; padding:3px 7px; border-radius:5px; white-space:nowrap; }
-.app-layout .main-content:not(.home-overview) .mg-notification-action .btn { display:inline-flex; align-items:center; justify-content:center; gap:9px; min-width:94px; min-height:30px; padding:5px 10px; font-size:12px; color:#345a91; border:1px solid #d4dfed; background:#fff; border-radius:6px; }
-.app-layout .main-content:not(.home-overview) .mg-notification-action .btn:hover { background:#edf3fc; border-color:#aebfd8; }
+.app-layout .main-content:not(.home-overview) .mg-notification-action .btn { display:inline-flex; align-items:center; justify-content:center; gap:9px; min-width:94px; min-height:30px; padding:5px 10px; font-size:12px; color:#646461; border:1px solid #e1e1e0; background:#fff; border-radius:6px; }
+.app-layout .main-content:not(.home-overview) .mg-notification-action .btn:hover { background:#f5f5f4; border-color:#c4c4c2; }
 @media(max-width:900px) {
  .app-layout .main-content:not(.home-overview) .mg-notification { grid-template-columns:30px minmax(0,1fr); gap:10px; padding:12px; }
  .notification-type-icon { width:30px; height:30px; border-radius:8px; align-self:start; }
@@ -332,12 +332,12 @@
 }
 
 .notification-inbox { display:flex; flex-direction:column; gap:10px; min-width:0; padding-bottom:var(--read-dock-space,68px); }
-.notification-read-dock { position:fixed; bottom:12px; z-index:30; box-sizing:border-box; overflow:hidden; border:1px solid #ced8e6; border-radius:11px; background:#f8fafc; box-shadow:0 -4px 22px #253a5814; }
-.notification-read-toggle { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:48px; padding:12px 18px; border:0; background:#f4f7fb; color:#40516a; cursor:pointer; text-align:left; font:inherit; font-size:13px; font-weight:650; }
+.notification-read-dock { position:fixed; bottom:12px; z-index:30; box-sizing:border-box; overflow:hidden; border:1px solid #dbdbd9; border-radius:11px; background:#fafafa; box-shadow:0 -4px 22px #3f3f3e14; }
+.notification-read-toggle { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:48px; padding:12px 18px; border:0; background:#f8f8f7; color:#565654; cursor:pointer; text-align:left; font:inherit; font-size:13px; font-weight:650; }
 .notification-read-toggle > span { display:flex; align-items:center; gap:8px; }
-.notification-read-toggle b { padding:1px 7px; background:#e3e9f1; border-radius:5px; font-size:12px; }
-.notification-read-toggle-hint { color:#758196; font-size:12px; font-weight:400; }
-.notification-read-toggle:hover { background:#eaf0f8; }
-.notification-read-toggle:focus-visible { outline:2px solid #527ec2; outline-offset:-3px; }
-.notification-read-list { max-height:min(48dvh,480px); overflow:auto; overscroll-behavior:contain; border-top:1px solid #dce4ef; padding:4px 14px 14px; display:flex; flex-direction:column; gap:8px; }
+.notification-read-toggle b { padding:1px 7px; background:#eaeaea; border-radius:5px; font-size:12px; }
+.notification-read-toggle-hint { color:#878784; font-size:12px; font-weight:400; }
+.notification-read-toggle:hover { background:#f1f1f1; }
+.notification-read-toggle:focus-visible { outline:2px solid #8c8c88; outline-offset:-3px; }
+.notification-read-list { max-height:min(48dvh,480px); overflow:auto; overscroll-behavior:contain; border-top:1px solid #e6e6e5; padding:4px 14px 14px; display:flex; flex-direction:column; gap:8px; }
 @media(max-width:600px) { .notification-read-dock { bottom:8px; } .notification-read-list { padding:4px 8px 8px; } }

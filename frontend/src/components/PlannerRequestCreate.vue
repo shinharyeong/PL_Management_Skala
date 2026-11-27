@@ -278,8 +278,8 @@ onBeforeUnmount(dispose)
 }
 
 .recipient-table-wrap td:first-child { font-weight: 500; }
-.recipient-table-wrap .recipient-name { color: #9ea2a9; }
-.recipient-name span { color:#4a4844; }.remove-recipient { float:right; background:transparent; color:#9ea2a9; font-size:18px; }.recipient-controls { display:flex; justify-content:space-between; font-size:12px; color:#777; }
+.recipient-table-wrap .recipient-name { color: #a3a5a2; }
+.recipient-name span { color:#4a4844; }.remove-recipient { float:right; background:transparent; color:#a3a5a2; font-size:18px; }.recipient-controls { display:flex; justify-content:space-between; font-size:12px; color:#777; }
 .actual-recipient { display:block; }
 
 .recipient-table-wrap .recipient-empty {
@@ -306,7 +306,7 @@ onBeforeUnmount(dispose)
   padding: 9px 12px;
   border-color: #e7e4de;
   border-radius: 8px;
-  color: #16181d;
+  color: #1a1a19;
   background: #fff;
   font-size: 13px;
   line-height: 1.45;
