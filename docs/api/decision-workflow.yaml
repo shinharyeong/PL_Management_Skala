@@ -1,0 +1,1177 @@
+openapi: 3.1.0
+info:
+  title: 의사결정 Agent 근거 조사·조직 실행 워크플로
+  version: 0.2.0
+  description: ERP 없이 기존 확정 제출본을 활용한다. 분석과 조직 요청의 revision은 별도이며 상태 변경 POST는 Idempotency-Key 필수다. 목표 해석 제안은 저장 없는 읽기 요청으로 멱등 헤더를 사용하지 않는다. 조직/역할을 멱등 응답 재사용
+    전에도 검사한다. 숫자는 Spring 계산 결과만 사용한다. 실제 임원 결재·외부 알림·ERP 쓰기는 포함하지 않는다.
+servers:
+- url: /api/v1
+security:
+- bearerAuth: []
+tags:
+- name: 경영 의사결정 에이전트
+paths:
+  /decision-agent/goal-proposals:
+    post:
+      operationId: proposeDecisionGoal
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 자연어 목표 해석 제안
+      description: PLANNER 전용. 금액·연도·보호 조건을 제안하며 needsConfirmation=true다. 자동 분석 생성이나 실행을 하지 않는다. 내부 AI HTTP만 호출하며 멱등 기록·업무 DB를 저장하지 않는다. Idempotency-Key는 필요 없고 기존 클라이언트가 전달해도 무시한다. 동일 요청을 다시 보내면 새로 해석하며 이전 응답을 재생하지 않는다.
+      responses:
+        '200':
+          description: 저장되지 않은 사용자 확인용 목표 해석 제안
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalResponse'
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GoalRequest'
+  /decision-agent/analyses/{id}/research:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getDecisionResearch
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 고정 근거와 마지막 가설 조회
+      description: 분석 소유 PLANNER 전용. 첫 조사 전에는 204.
+      responses:
+        '200':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Research'
+        default:
+          $ref: '#/components/responses/Problem'
+        '204':
+          description: 아직 조사하지 않은 분석
+  /decision-agent/analyses/{id}/discover:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: discoverDecisionHypotheses
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 고정 원천으로 금액 미정 개선 가설 발굴
+      description: 분석 소유 PLANNER 전용. expectedRevision은 분석 버전. 최초 근거를 복사하고 후속 실행은 같은 근거에서 가설만 교체한다. 분석 revision과
+        기존 계산은 바꾸지 않는다. 최신 재발굴에 없는 hypothesisId로 새 요청을 만들면 404.
+      responses:
+        '200':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Research'
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscoverRequest'
+  /internal/decision-agent/evidence/read:
+    servers:
+    - url: /
+    post:
+      operationId: readDecisionEvidence
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 실행 중 분석의 고정 근거 읽기
+      description: 외부 브라우저용이 아니다. 내부 인증과 3분 분석 capability를 모두 검사하며 analysisId/revision/허용 refIds가 일치해야 한다. 메모리만
+        읽고 DB·업무 상태를 바꾸지 않는다.
+      responses:
+        '200':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadEvidenceResponse'
+        default:
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReadEvidenceRequest'
+      security:
+      - internalToken: []
+        decisionToolToken: []
+  /decision-agent/work-items:
+    get:
+      operationId: listDecisionWorkItems
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 역할별 개선 요청함
+      description: PLANNER는 본인 분석의 모든 요청, ORG_MANAGER는 자기 조직이면서 ISSUED 이력이 있는 요청만 조회한다. 발행 전 취소한 초안도 조직에 보이지 않는다.
+        전사 분석과 다른 조직 자료를 반환하지 않는다. 현재 목록은 cursor 없이 반환한다.
+      responses:
+        '200':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WorkItem'
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - name: analysisId
+        in: query
+        schema:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+  /decision-agent/analyses/{analysisId}/work-items:
+    parameters:
+    - $ref: '#/components/parameters/AnalysisId'
+    post:
+      operationId: createDecisionWorkItem
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 조직 확인 요청 초안 생성
+      description: 분석 소유 PLANNER 전용. 동일 후보·가설에 진행 중인 요청은 409. 원본 후보/가설과 조직 기준을 복사하고 DRAFT, revision=1, round=1로
+        생성한다.
+      responses:
+        '201':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItem'
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkItemCreateRequest'
+  /decision-agent/work-items/{id}:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getDecisionWorkItem
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 요청·회신·결정·추적 이력 조회
+      description: 소유 기획자 또는 발행된 자기 조직 요청만 조회. 미소유/미존재는 404.
+      responses:
+        '200':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItem'
+        default:
+          $ref: '#/components/responses/Problem'
+  /decision-agent/work-items/{id}/followup-baselines:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    get:
+      operationId: listDecisionFollowupBaselines
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 후속 확정 master 선택지
+      description: 요청 권한 검사 후 같은 연도·기준월 이후·해당 조직 원천이 있는 월간 master를 반환한다. sourceCount는 해당 조직 원천 수인 1이다.
+      responses:
+        '200':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: ./decision-agent.yaml#/components/schemas/Baseline
+        default:
+          $ref: '#/components/responses/Problem'
+  /decision-agent/work-items/{id}/issue:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: issueDecisionWorkItem
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 확인한 초안을 조직 인앱 요청함에 발행
+      description: 소유 PLANNER. DRAFT→REQUESTED. 기한이 미래이고 원본 후보가 바뀌지 않아야 한다. 외부 메일·메신저 알림을 발송하지 않는다. 성공마다 요청 revision+1,
+        감사 이력 한 건을 추가한다.
+      responses:
+        '200':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItem'
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevisionRequest'
+  /decision-agent/work-items/{id}/replies:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: replyDecisionWorkItem
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 조직의 가능액·기한·근거 회신
+      description: 해당 ORG_MANAGER. REQUESTED/CHANGES_REQUESTED→REPLIED. 실현 불가는 candidate=null과 사유·근거만 회신한다. 성공마다
+        요청 revision+1, 감사 이력 한 건을 추가한다.
+      responses:
+        '200':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItem'
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplyRequest'
+  /decision-agent/work-items/{id}/reviews:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: reviewDecisionWorkItem
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 기획자 회신 검토
+      description: 소유 PLANNER. REPLIED에서 ACCEPT/REQUEST_CHANGES/REJECT. ACCEPT는 실현 가능 회신만 REVIEWED 후보로 append/replace하고
+        분석 revision 증가·결과 무효화. 보완은 round 증가. REJECT는 연결 후보를 제거한다. 후보가 요청/수락 이후 수정됐으면 409로 편집을 보호한다. 성공마다 요청 revision+1,
+        감사 이력 한 건을 추가한다.
+      responses:
+        '200':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItem'
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+  /decision-agent/work-items/{id}/decisions:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: recordDecisionWorkItem
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 외부 경영 결정 기록
+      description: 소유 PLANNER. ACCEPTED→APPROVED/DECLINED. APPROVE는 최신 완료 계산에 같은 REVIEWED 후보가 포함되어야 하고 후보 순효과를 고정한다.
+        DECLINE은 연결 후보를 제거한다. 결정자·증빙을 기록하지만 실제 임원 인증·전자결재가 아니다. 성공마다 요청 revision+1, 감사 이력 한 건을 추가한다.
+      responses:
+        '200':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItem'
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionRequest'
+  /decision-agent/work-items/{id}/progress:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: progressDecisionWorkItem
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 조직 실행 경과와 후속 전망 비교
+      description: 해당 ORG_MANAGER. APPROVED/IN_PROGRESS→IN_PROGRESS/COMPLETED. 완료에는 후속 확정본 필수. 조직 연간 전망 변화만 비교하며
+        과제 실현 성과를 확정하지 않는다. 성공마다 요청 revision+1, 감사 이력 한 건을 추가한다.
+      responses:
+        '200':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItem'
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProgressRequest'
+  /decision-agent/work-items/{id}/cancel:
+    parameters:
+    - $ref: '#/components/parameters/Id'
+    post:
+      operationId: cancelDecisionWorkItem
+      tags:
+      - 경영 의사결정 에이전트
+      summary: 요청 또는 미완료 과제 취소
+      description: 소유 PLANNER. DRAFT/REQUESTED/CHANGES_REQUESTED/REPLIED/ACCEPTED/APPROVED/IN_PROGRESS→CANCELLED.
+        연결 후보가 요청/수락 사본과 같으면 제거하고 분석 revision 증가·결과 무효화. 이미 없는 후보는 요청만 취소한다. 수정된 후보는 409. 성공마다 요청 revision+1, 감사
+        이력 한 건을 추가한다.
+      responses:
+        '200':
+          description: 저장된 상태
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkItem'
+        default:
+          $ref: '#/components/responses/Problem'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelRequest'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    internalToken:
+      type: apiKey
+      in: header
+      name: X-Internal-Token
+    decisionToolToken:
+      type: apiKey
+      in: header
+      name: X-Decision-Tool-Token
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        $ref: ./decision-agent.yaml#/components/schemas/Id
+    AnalysisId:
+      name: analysisId
+      in: path
+      required: true
+      schema:
+        $ref: ./decision-agent.yaml#/components/schemas/Id
+    IdempotencyKey:
+      $ref: ./decision-agent.yaml#/components/parameters/IdempotencyKey
+  responses:
+    Problem:
+      $ref: ./decision-agent.yaml#/components/responses/Problem
+  schemas:
+    GoalRequest:
+      type: object
+      required:
+      - prompt
+      - year
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        year:
+          type: integer
+          minimum: 2000
+          maximum: 9999
+    GoalProposal:
+      type: object
+      required:
+      - targetProfitWon
+      - targetYear
+      - protectedCategories
+      - needsConfirmation
+      - uncertainties
+      properties:
+        targetProfitWon:
+          anyOf:
+          - $ref: ./decision-agent.yaml#/components/schemas/InputMoney
+          - type: 'null'
+        targetYear:
+          type:
+          - integer
+          - 'null'
+          minimum: 2000
+          maximum: 9999
+        protectedCategories:
+          $ref: ./decision-agent.yaml#/components/schemas/ProtectedCategories
+        needsConfirmation:
+          type: boolean
+          const: true
+        uncertainties:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2000
+          maxItems: 20
+    GoalResponse:
+      type: object
+      required:
+      - mode
+      - goalProposal
+      properties:
+        mode:
+          type: string
+          enum:
+          - MODEL
+          - TEMPLATE
+        goalProposal:
+          $ref: '#/components/schemas/GoalProposal'
+    Evidence:
+      type: object
+      required:
+      - refId
+      - kind
+      - organizationId
+      - label
+      - text
+      - facts
+      properties:
+        refId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        kind:
+          type: string
+          enum:
+          - PNL
+          - APPROVED_EXPLANATION
+        organizationId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        label:
+          type: string
+        text:
+          type: string
+        facts:
+          type: object
+          additionalProperties: true
+          description: 금액·ID는 문자열. PNL 비교는 동일 제출본 계획과 연간 전망이며 다른 확정 연간 계획의 비교가 아니다. 계획 12개월이 불완전하면 관련 금액은 null.
+    Hypothesis:
+      type: object
+      required:
+      - id
+      - organizationId
+      - title
+      - rationale
+      - evidenceRefs
+      - amountWon
+      - recognitionMonth
+      - category
+      - questions
+      - needsConfirmation
+      - sourceQuote
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 100
+        organizationId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        rationale:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        evidenceRefs:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+          maxItems: 10
+        amountWon:
+          type: 'null'
+          description: 조직 회신 전 개선 금액을 만들지 않는다.
+        recognitionMonth:
+          type: 'null'
+        category:
+          $ref: ./decision-agent.yaml#/components/schemas/Category
+        questions:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+          maxItems: 10
+        needsConfirmation:
+          type: boolean
+          const: true
+        sourceQuote:
+          type: string
+          minLength: 1
+          maxLength: 4000
+    Step:
+      type: object
+      required:
+      - key
+      - label
+      - status
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        status:
+          type: string
+    Discovery:
+      type: object
+      required:
+      - mode
+      - goalProposal
+      - hypotheses
+      - limitations
+      - steps
+      properties:
+        mode:
+          type: string
+          enum:
+          - MODEL
+          - TEMPLATE
+        goalProposal:
+          $ref: '#/components/schemas/GoalProposal'
+        hypotheses:
+          type: array
+          items:
+            $ref: '#/components/schemas/Hypothesis'
+          maxItems: 20
+        limitations:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2000
+          maxItems: 30
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/Step'
+          maxItems: 20
+    Research:
+      type: object
+      required:
+      - analysisId
+      - revision
+      - capturedAt
+      - evidence
+      - discovery
+      properties:
+        analysisId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        revision:
+          type: integer
+          minimum: 1
+        capturedAt:
+          type: string
+          format: date-time
+        evidence:
+          type: array
+          items:
+            $ref: '#/components/schemas/Evidence'
+          maxItems: 150
+        discovery:
+          anyOf:
+          - $ref: '#/components/schemas/Discovery'
+          - type: 'null'
+      description: revision은 가설 생성 당시 분석 revision이며 discover는 분석 revision을 증가시키지 않는다. evidence와 capturedAt은 최초 조사
+        뒤 고정된다.
+    DiscoverRequest:
+      type: object
+      required:
+      - expectedRevision
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+    ReadEvidenceRequest:
+      type: object
+      required:
+      - analysisId
+      - revision
+      - refIds
+      properties:
+        analysisId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        revision:
+          type: integer
+          minimum: 1
+        refIds:
+          type: array
+          minItems: 1
+          maxItems: 20
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+    ReadEvidenceResponse:
+      type: object
+      required:
+      - analysisId
+      - revision
+      - items
+      properties:
+        analysisId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        revision:
+          type: integer
+          minimum: 1
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Evidence'
+          maxItems: 20
+    WorkItemCreateRequest:
+      type: object
+      required:
+      - expectedAnalysisRevision
+      - message
+      - dueAt
+      properties:
+        expectedAnalysisRevision:
+          type: integer
+          minimum: 1
+        candidateId:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 100
+          - type: 'null'
+        hypothesisId:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 100
+          - type: 'null'
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        dueAt:
+          type: string
+          format: date-time
+      oneOf:
+      - required:
+        - candidateId
+        properties:
+          candidateId:
+            type: string
+            minLength: 1
+            maxLength: 100
+          hypothesisId:
+            type: 'null'
+      - required:
+        - hypothesisId
+        properties:
+          hypothesisId:
+            type: string
+            minLength: 1
+            maxLength: 100
+          candidateId:
+            type: 'null'
+      description: candidateId 또는 hypothesisId 중 하나만 지정한다. dueAt은 현재보다 미래. 가설 요청은 서버가 회신용 candidateId UUID를 발급한다.
+    RevisionRequest:
+      type: object
+      required:
+      - expectedRevision
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+    ReplyRequest:
+      type: object
+      required:
+      - expectedRevision
+      - feasibility
+      - note
+      - evidenceRef
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+        feasibility:
+          type: string
+          enum:
+          - FEASIBLE
+          - NOT_FEASIBLE
+        candidate:
+          anyOf:
+          - $ref: ./decision-agent.yaml#/components/schemas/Candidate
+          - type: 'null'
+        note:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        evidenceRef:
+          type: string
+          minLength: 1
+          maxLength: 2000
+      oneOf:
+      - properties:
+          feasibility:
+            const: FEASIBLE
+          candidate:
+            $ref: ./decision-agent.yaml#/components/schemas/Candidate
+        required:
+        - candidate
+      - properties:
+          feasibility:
+            const: NOT_FEASIBLE
+          candidate:
+            type: 'null'
+      description: FEASIBLE의 후보 id/organizationId는 요청과 같아야 한다. 서버가 evidenceStatus=ASSUMPTION, evidenceNote=note,
+        evidenceRef=회신 evidenceRef로 설정한다.
+    ReviewRequest:
+      type: object
+      required:
+      - expectedRevision
+      - expectedAnalysisRevision
+      - verdict
+      - note
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+        expectedAnalysisRevision:
+          type: integer
+          minimum: 1
+        verdict:
+          type: string
+          enum:
+          - ACCEPT
+          - REQUEST_CHANGES
+          - REJECT
+        note:
+          type: string
+          minLength: 1
+          maxLength: 4000
+    DecisionRequest:
+      type: object
+      required:
+      - expectedRevision
+      - expectedAnalysisRevision
+      - verdict
+      - decisionMaker
+      - decisionEvidenceRef
+      - note
+      - dueAt
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+        expectedAnalysisRevision:
+          type: integer
+          minimum: 1
+        verdict:
+          type: string
+          enum:
+          - APPROVE
+          - DECLINE
+        decisionMaker:
+          type: string
+          minLength: 1
+          maxLength: 200
+        decisionEvidenceRef:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        note:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        dueAt:
+          type: string
+          format: date-time
+      description: 외부 경영 결정의 기록이다. dueAt은 두 판정 모두 필수·미래 시각. 실제 임원 역할 인증이나 전자 결재를 수행하지 않는다.
+    ProgressRequest:
+      type: object
+      required:
+      - expectedRevision
+      - status
+      - note
+      - evidenceRef
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - IN_PROGRESS
+          - COMPLETED
+        note:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        evidenceRef:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        followupMasterId:
+          anyOf:
+          - $ref: ./decision-agent.yaml#/components/schemas/Id
+          - type: 'null'
+      if:
+        properties:
+          status:
+            const: COMPLETED
+      then:
+        required:
+        - followupMasterId
+        properties:
+          followupMasterId:
+            $ref: ./decision-agent.yaml#/components/schemas/Id
+      description: COMPLETED에는 같은 연도·기준월 이후·담당 조직 포함 확정 master가 필수다. 실행 완료 기록이며 과제의 금액 실현 확정은 아니다.
+    CancelRequest:
+      type: object
+      required:
+      - expectedRevision
+      - expectedAnalysisRevision
+      - note
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+        expectedAnalysisRevision:
+          type: integer
+          minimum: 1
+        note:
+          type: string
+          minLength: 1
+          maxLength: 4000
+    Reply:
+      type: object
+      required:
+      - feasibility
+      - candidate
+      - note
+      - evidenceRef
+      - actorId
+      - at
+      properties:
+        feasibility:
+          type: string
+          enum:
+          - FEASIBLE
+          - NOT_FEASIBLE
+        candidate:
+          anyOf:
+          - $ref: ./decision-agent.yaml#/components/schemas/Candidate
+          - type: 'null'
+        note:
+          type: string
+        evidenceRef:
+          type: string
+        actorId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        at:
+          type: string
+          format: date-time
+    Review:
+      type: object
+      required:
+      - verdict
+      - note
+      - actorId
+      - at
+      properties:
+        verdict:
+          type: string
+          enum:
+          - ACCEPT
+          - REQUEST_CHANGES
+          - REJECT
+        note:
+          type: string
+        actorId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        at:
+          type: string
+          format: date-time
+    Decision:
+      type: object
+      required:
+      - verdict
+      - decisionMaker
+      - decisionEvidenceRef
+      - note
+      - dueAt
+      - analysisRevision
+      - candidateEffectWon
+      - actorId
+      - at
+      properties:
+        verdict:
+          type: string
+          enum:
+          - APPROVE
+          - DECLINE
+        decisionMaker:
+          type: string
+        decisionEvidenceRef:
+          type: string
+        note:
+          type: string
+        dueAt:
+          type: string
+          format: date-time
+        analysisRevision:
+          type: integer
+          minimum: 1
+        candidateEffectWon:
+          anyOf:
+          - $ref: ./decision-agent.yaml#/components/schemas/Money
+          - type: 'null'
+        actorId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        at:
+          type: string
+          format: date-time
+      description: candidateEffectWon은 APPROVE 당시 해당 후보의 검토 순효과를 고정한 값이다. DECLINE은 null이며 미래 실현 금액을 뜻하지 않는다.
+    Progress:
+      type: object
+      required:
+      - status
+      - note
+      - evidenceRef
+      - followupMasterId
+      - followupMasterLabel
+      - baselineProfitWon
+      - followupProfitWon
+      - profitChangeWon
+      - actorId
+      - at
+      properties:
+        status:
+          type: string
+          enum:
+          - IN_PROGRESS
+          - COMPLETED
+        note:
+          type: string
+        evidenceRef:
+          type: string
+        followupMasterId:
+          anyOf:
+          - $ref: ./decision-agent.yaml#/components/schemas/Id
+          - type: 'null'
+        followupMasterLabel:
+          type:
+          - string
+          - 'null'
+        baselineProfitWon:
+          $ref: ./decision-agent.yaml#/components/schemas/Money
+        followupProfitWon:
+          anyOf:
+          - $ref: ./decision-agent.yaml#/components/schemas/Money
+          - type: 'null'
+        profitChangeWon:
+          anyOf:
+          - $ref: ./decision-agent.yaml#/components/schemas/Money
+          - type: 'null'
+        actorId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        at:
+          type: string
+          format: date-time
+      description: 금액은 담당 조직만의 연간 전망이다. profitChangeWon=후속 조직 전망-고정 조직 전망이며 해당 과제의 인과 효과나 실현 성과를 확정하지 않는다.
+    Event:
+      type: object
+      required:
+      - sequence
+      - action
+      - actorId
+      - at
+      - note
+      - details
+      properties:
+        sequence:
+          type: integer
+          minimum: 1
+        action:
+          type: string
+        actorId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        at:
+          type: string
+          format: date-time
+        note:
+          type: string
+        details:
+          type:
+          - object
+          - 'null'
+          additionalProperties: true
+      description: 기존 이력을 수정하지 않고 성공한 상태 전이마다 한 건 추가한다.
+    WorkItem:
+      type: object
+      required:
+      - id
+      - analysisId
+      - candidateId
+      - hypothesisId
+      - organizationId
+      - organizationName
+      - ownerId
+      - title
+      - year
+      - baseMonth
+      - masterLabel
+      - baselineOrganizationProfitWon
+      - sourceAnalysisRevision
+      - revision
+      - state
+      - round
+      - message
+      - dueAt
+      - createdAt
+      - updatedAt
+      - sourceCandidate
+      - sourceHypothesis
+      - reply
+      - review
+      - decision
+      - progress
+      - events
+      properties:
+        id:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        analysisId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        candidateId:
+          type: string
+          minLength: 1
+          maxLength: 100
+        hypothesisId:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 100
+          - type: 'null'
+        organizationId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        organizationName:
+          type: string
+        ownerId:
+          $ref: ./decision-agent.yaml#/components/schemas/Id
+        title:
+          type: string
+        year:
+          type: integer
+        baseMonth:
+          type: integer
+          minimum: 1
+          maximum: 12
+        masterLabel:
+          type: string
+        baselineOrganizationProfitWon:
+          $ref: ./decision-agent.yaml#/components/schemas/Money
+        sourceAnalysisRevision:
+          type: integer
+          minimum: 1
+        revision:
+          type: integer
+          minimum: 1
+        state:
+          type: string
+          enum:
+          - DRAFT
+          - REQUESTED
+          - REPLIED
+          - CHANGES_REQUESTED
+          - ACCEPTED
+          - REJECTED
+          - APPROVED
+          - DECLINED
+          - IN_PROGRESS
+          - COMPLETED
+          - CANCELLED
+        round:
+          type: integer
+          minimum: 1
+        message:
+          type: string
+        dueAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        sourceCandidate:
+          anyOf:
+          - $ref: ./decision-agent.yaml#/components/schemas/Candidate
+          - type: 'null'
+        sourceHypothesis:
+          anyOf:
+          - $ref: '#/components/schemas/Hypothesis'
+          - type: 'null'
+        reply:
+          anyOf:
+          - $ref: '#/components/schemas/Reply'
+          - type: 'null'
+        review:
+          anyOf:
+          - $ref: '#/components/schemas/Review'
+          - type: 'null'
+        decision:
+          anyOf:
+          - $ref: '#/components/schemas/Decision'
+          - type: 'null'
+        progress:
+          anyOf:
+          - $ref: '#/components/schemas/Progress'
+          - type: 'null'
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/Event'
+          maxItems: 500

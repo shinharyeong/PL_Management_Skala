@@ -42,6 +42,10 @@ npm run dev -- --host 127.0.0.1
 저장입니다. 원본 PDF의 임의 레이아웃 재현과 미연결 업무 API는
 [API 연결·남은 범위](../docs/development/api-integration.md)에서 구분합니다.
 
+PDF 파일 한도는 30MiB입니다. 배포 프록시의 `nginx.conf`는 multipart 부가 데이터를 포함한
+요청 한도를 31MiB로 두어 백엔드의 `max-request-size: 31MB`와 맞춥니다. 파일 한도를 바꾸면
+프론트 입력 검증·백엔드 파일/요청 한도·프록시 한도를 함께 확인해야 합니다.
+
 ## 검증
 
 ```bash

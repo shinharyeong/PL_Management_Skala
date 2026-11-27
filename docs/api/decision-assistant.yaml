@@ -1,0 +1,535 @@
+openapi: 3.1.0
+info:
+  title: 읽기 전용 손익 대화 Agent
+  version: 0.5.0
+  description: |
+    기존 Spring 조회 서비스를 native Tool로 선택하고 실제 관찰을 근거로 답한다.
+    공개 요청과 내부 Tool은 분석·멱등 기록·업무 상태를 저장하지 않는다. PLANNER만 사용한다.
+    선택 분석은 소유권·revision·master를 검사한다. 모델에 actor/master/기간 변경 인자나 임의 SQL·URL·후보 효과 금액을 허용하지 않는다.
+    goal_preview만 사용자가 지정한 목표 금액을 받아 고정 연간 전망과 저장 없이 비교한다.
+    모델 미설정·실패는 UNAVAILABLE/FAILED로 구분하고 실제 조회 기록과 검증된 부분 근거를 보존한다.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: 경영 의사결정 에이전트
+paths:
+  /decision-agent/assistant:
+    post:
+      operationId: askDecisionAssistant
+      tags: [경영 의사결정 에이전트]
+      summary: 고정 마스터에 질문하고 실제 도구 조회·근거 인용 받기
+      description: |
+        Idempotency-Key를 사용하지 않는 저장 없는 POST다. analysisId 없이도 선택 master로 질문할 수 있다.
+        analysisId와 expectedRevision은 함께 보내거나 함께 null로 보낸다. 분석 수정·역할 철회는 매 Tool 호출과 최종 응답 전에 재확인한다.
+        AI HTTP 대기 동안 DB 트랜잭션을 보유하지 않는다. 모델 최대 6회, 실제 도구 최대 8회, AI 루프 70초,
+        기존 AI HTTP timeout 기본 90초, capability TTL 180초와 최대 동시 200실행을 적용한다.
+        동일 도구·정규 인자 결과는 실행 안에서 재사용한다. 고유 오류 관찰도 실행 예산과 캐시에 포함한다.
+        모델은 사용자 요청을 요구 항목으로 계획하고 조회 근거에 연결한 설명·해석·검토 가설을 작성한다.
+        수치·인용 경로는 생성하지 않고 실제 근거 ID를 선택한다. 모든 요구 항목에 답한 경우만 COMPLETED이며
+        미해결 항목은 NEEDS_INPUT과 구체적인 확인 질문으로 반환한다. 근거 연결 검증이 해석의 진위를 보장하지는 않는다.
+        모델 한 번의 응답 제한은 최대 20초와 전체 남은 시간 중 작은 값이다.
+        응답은 최대 256KiB다. 관찰 누적 예산은 192KiB이며 오류 여유 공간을 먼저 확보한다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AssistantRequest'}
+      responses:
+        '200':
+          description: 완료·추가 입력 필요·실행 한도·실패를 구분한 대화 결과
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssistantResponse'}
+        default: {$ref: '#/components/responses/Problem'}
+  /internal/decision-agent/tools/call:
+    servers:
+      - url: /
+    post:
+      operationId: callDecisionAssistantTool
+      tags: [경영 의사결정 에이전트]
+      summary: 내부 공유 토큰과 실행 capability로 기존 조회 Tool 호출
+      description: |
+        브라우저·Ingress에 공개하지 않는다. 두 인증 경계를 통과한 실행만 사용한다.
+        capability에 실제 사용자·고정 snapshot·선택 analysis가 연결되어 있으며 모델이 이를 바꿀 수 없다.
+        실행 시 사용자 active/PLANNER와 분석 소유권·revision을 검사하고 고정 원천 수치를 다시 대조한다.
+        도구 금액·비율은 정밀 문자열, 파일·URL·stateToken은 제거한다. 큰 자료는 작은 ERROR 관찰로 대체한다.
+        APPROVED 제출 버전은 기준월과 snapshot.asOf 이전으로 제한하고 앞선 SUCCESS 버전 관찰로 반환한 ID만 비교한다.
+      security:
+        - internalToken: []
+          decisionToolToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolRequest'}
+      responses:
+        '200':
+          description: 실제 조회 SUCCESS 또는 안전한 ERROR 관찰. 오류에 SQL·예외·비밀 값을 포함하지 않는다.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Observation'}
+        default: {$ref: '#/components/responses/Problem'}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer}
+    internalToken: {type: apiKey, in: header, name: X-Internal-Token}
+    decisionToolToken: {type: apiKey, in: header, name: X-Decision-Tool-Token}
+  responses:
+    Problem:
+      description: |
+        400 INVALID_REQUEST, 401 UNAUTHENTICATED, 403 FORBIDDEN(역할·capability·내부 토큰),
+        404 RESOURCE_NOT_FOUND(타인 분석 포함), 409 RESOURCE_CHANGED, 429 ASSISTANT_BUSY/ASSISTANT_TOOL_LIMIT.
+        실행한 Tool 자체의 조회 실패·금지 인자는 ERROR 관찰로 남고, 인증·상한 오류는 HTTP 오류다.
+      content:
+        application/problem+json:
+          schema: {$ref: './openapi.yaml#/components/schemas/Problem'}
+  schemas:
+    Id:
+      type: string
+      pattern: '^[1-9][0-9]{0,18}$'
+      description: Java Long 양수 범위. 모델 후보 ID·가설 ID는 별도 문자열이다.
+    History:
+      type: object
+      additionalProperties: false
+      required: [role, content]
+      properties:
+        role: {type: string, enum: [user, assistant]}
+        content: {type: string, minLength: 1, maxLength: 2000}
+    AssistantRequest:
+      type: object
+      additionalProperties: false
+      required: [masterId, message, history]
+      properties:
+        masterId: {$ref: '#/components/schemas/Id'}
+        analysisId:
+          anyOf: [{$ref: '#/components/schemas/Id'}, {type: 'null'}]
+        expectedRevision: {type: [integer, 'null'], minimum: 1}
+        message: {type: string, minLength: 1, maxLength: 2000}
+        history:
+          type: array
+          maxItems: 8
+          description: 문맥만 제공하며 과거 대화 내용을 현재 사실의 근거로 신뢰하지 않는다.
+          items: {$ref: '#/components/schemas/History'}
+    Context:
+      type: object
+      additionalProperties: false
+      required: [masterId, masterLabel, year, baseMonth, analysisId, revision, asOf]
+      properties:
+        masterId: {$ref: '#/components/schemas/Id'}
+        masterLabel: {type: string}
+        year: {type: integer, minimum: 2000, maximum: 9999}
+        baseMonth: {type: integer, minimum: 1, maximum: 12}
+        analysisId:
+          anyOf: [{$ref: '#/components/schemas/Id'}, {type: 'null'}]
+        revision: {type: [integer, 'null'], minimum: 1}
+        asOf: {type: string, format: date-time, description: 고정 마스터 발행 시각. 시간대 원문을 유지한다.}
+    ComposeAssistantRequest:
+      type: object
+      additionalProperties: false
+      required: [message, history, context, toolAccessToken]
+      description: Spring에서 내부 POST /v1/decision-agent/assistant로 보낸다. 응답은 AssistantResponse다.
+      properties:
+        message: {type: string, minLength: 1, maxLength: 2000}
+        history: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/History'}}
+        context: {$ref: '#/components/schemas/Context'}
+        toolAccessToken: {type: string, writeOnly: true, description: 모델 메시지·그래프 상태·공개 응답에 넣지 않는 단기 capability}
+    ToolRequest:
+      oneOf:
+        - {$ref: '#/components/schemas/NoArgumentToolRequest'}
+        - {$ref: '#/components/schemas/ProfitDriversRequest'}
+        - {$ref: '#/components/schemas/OrganizationPnlRequest'}
+        - {$ref: '#/components/schemas/ExplanationRequest'}
+        - {$ref: '#/components/schemas/VersionsRequest'}
+        - {$ref: '#/components/schemas/ComparisonRequest'}
+        - {$ref: '#/components/schemas/ScenarioRequest'}
+        - {$ref: '#/components/schemas/GoalPreviewRequest'}
+        - {$ref: '#/components/schemas/DraftRequest'}
+        - {$ref: '#/components/schemas/ObservationDetailRequest'}
+      description: 인자 JSON 최대 16KiB. 선택 인자는 생략하고 null을 보내지 않는다. 알 수 없는 필드를 거부한다.
+    NoArgumentToolRequest:
+      type: object
+      additionalProperties: false
+      required: [tool, arguments]
+      properties:
+        tool: {type: string, enum: [analysis_context, company_pnl, pnl_waterfall, work_items]}
+        arguments: {type: object, additionalProperties: false}
+    ProfitDriversRequest:
+      type: object
+      additionalProperties: false
+      required: [tool, arguments]
+      properties:
+        tool: {const: profit_drivers}
+        arguments:
+          type: object
+          additionalProperties: false
+          properties:
+            limit: {type: integer, minimum: 1, maximum: 10, default: 5}
+    OrganizationPnlRequest:
+      type: object
+      additionalProperties: false
+      required: [tool, arguments]
+      properties:
+        tool: {const: organization_pnl}
+        arguments:
+          type: object
+          additionalProperties: false
+          properties:
+            organizationId: {$ref: '#/components/schemas/Id'}
+    ExplanationRequest:
+      type: object
+      additionalProperties: false
+      required: [tool, arguments]
+      properties:
+        tool: {const: approved_explanations}
+        arguments:
+          type: object
+          additionalProperties: false
+          properties:
+            organizationId: {$ref: '#/components/schemas/Id'}
+            limit: {type: integer, minimum: 1, maximum: 20, default: 10}
+    VersionsRequest:
+      type: object
+      additionalProperties: false
+      required: [tool, arguments]
+      properties:
+        tool: {const: submission_versions}
+        arguments:
+          type: object
+          additionalProperties: false
+          required: [organizationId]
+          properties:
+            organizationId: {$ref: '#/components/schemas/Id'}
+    ComparisonRequest:
+      type: object
+      additionalProperties: false
+      required: [tool, arguments]
+      properties:
+        tool: {const: submission_comparison}
+        arguments:
+          type: object
+          additionalProperties: false
+          required: [organizationId, baseSubmissionId]
+          properties:
+            organizationId: {$ref: '#/components/schemas/Id'}
+            baseSubmissionId: {$ref: '#/components/schemas/Id'}
+    ScenarioRequest:
+      type: object
+      additionalProperties: false
+      required: [tool, arguments]
+      properties:
+        tool: {const: scenario_preview}
+        arguments:
+          type: object
+          additionalProperties: false
+          properties:
+            candidateIds:
+              type: array
+              maxItems: 100
+              uniqueItems: true
+              items: {type: string, minLength: 1, maxLength: 100}
+              description: 선택 분석에 저장된 후보만 허용. 생략하면 전체, 빈 배열이면 기준 전망만 계산.
+    GoalPreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [tool, arguments]
+      properties:
+        tool: {const: goal_preview}
+        arguments:
+          type: object
+          additionalProperties: false
+          required: [targetProfitEok, targetYear]
+          properties:
+            targetYear:
+              type: integer
+              minimum: 2000
+              maximum: 9999
+              description: 목표 연도. 고정 마스터의 연도와 다르면 원천 재조회·계산 전에 ERROR 관찰로 거부한다. 누락한 연도를 자동 보충하지 않는다.
+            targetProfitEok:
+              type: string
+              pattern: '^(?:0|[1-9][0-9]{0,15})(?:\.[0-9]{1,8})?$'
+              description: 양수 목표 영업이익, 단위 억 원. 소수 최대 8자리로 최소 1원, 원 환산 최대 24자리. 저장·승인·후보 효과 생성 없이 고정 연간 전망과 비교한다.
+    DraftRequest:
+      type: object
+      additionalProperties: false
+      required: [tool, arguments]
+      properties:
+        tool: {const: review_request_draft}
+        arguments:
+          type: object
+          additionalProperties: false
+          required: [sourceKind, sourceId]
+          properties:
+            sourceKind: {type: string, enum: [candidate, hypothesis]}
+            sourceId: {type: string, minLength: 1, maxLength: 100}
+    ObservationDetailRequest:
+      type: object
+      additionalProperties: false
+      required: [tool, arguments]
+      properties:
+        tool: {const: observation_detail}
+        arguments:
+          type: object
+          additionalProperties: false
+          required: [observationId, path]
+          properties:
+            observationId: {type: string, pattern: '^obs-[1-8]$'}
+            path: {type: string, minLength: 5, maxLength: 1000, pattern: '^/data(?:/.*)?$'}
+            offset: {type: integer, minimum: 0, maximum: 10000, default: 0}
+            limit: {type: integer, minimum: 1, maximum: 10, default: 5}
+      description: 현재 실행 SUCCESS 관찰의 보존된 원문만 상세 조회한다. detail 관찰을 다시 원천으로 쓰지 않으며 임의 DB·파일·URL 접근은 없다.
+    Basis:
+      type: object
+      additionalProperties: false
+      required: [masterId, year, baseMonth, analysisId, revision, capturedAt, comparisonBasis]
+      properties:
+        masterId: {$ref: '#/components/schemas/Id'}
+        year: {type: integer}
+        baseMonth: {type: integer}
+        analysisId:
+          anyOf: [{$ref: '#/components/schemas/Id'}, {type: 'null'}]
+        revision: {type: [integer, 'null']}
+        capturedAt: {type: string, format: date-time}
+        comparisonBasis: {type: string, description: 고정 전망과 조회 시점 비교 기준을 구분하는 설명}
+    Observation:
+      type: object
+      additionalProperties: false
+      required: [id, tool, label, status, basis, data, warnings]
+      properties:
+        id: {type: string, pattern: '^obs-[1-8]$'}
+        tool: {type: string, description: 실제 실행 도구 이름. 금지 도구의 ERROR 관찰도 기록한다.}
+        label: {type: string}
+        status: {type: string, enum: [SUCCESS, ERROR]}
+        basis: {$ref: '#/components/schemas/Basis'}
+        data:
+          description: |
+            ERROR이면 null. SUCCESS의 tool별 구조는 아래 Data schema와 기존 Home 응답을 따른다.
+            company_pnl=HomePnlResponse와 서버 계산의 비교 요약, profit_drivers=HomeOpDriversResponse,
+            organization_pnl=HomeDivisionsResponse와 영업이익 계획 차이 정렬·누락 요약(columns만 조직 필터, total은 전사 합계), pnl_waterfall=HomeWaterfallResponse.
+            analysis_context=ContextData, approved_explanations=ExplanationsData, submission_versions=VersionsData,
+            submission_comparison=ComparisonData, scenario_preview=decision-agent.Result,
+            work_items=WorkItemsData, review_request_draft=RequestDraftData, goal_preview=GoalPreviewData,
+            observation_detail=ObservationDetailData.
+          type: [object, 'null']
+          additionalProperties: true
+        warnings: {type: array, items: {type: string}}
+    ToolCall:
+      type: object
+      additionalProperties: false
+      required: [id, tool, label, status, observationId]
+      properties:
+        id: {type: string, pattern: '^call-[1-8]$'}
+        tool: {type: string}
+        label: {type: string}
+        status: {type: string, enum: [SUCCESS, ERROR]}
+        observationId: {type: string, pattern: '^obs-[1-8]$'}
+    Citation:
+      type: object
+      additionalProperties: false
+      required: [observationId, path, quote]
+      properties:
+        observationId: {type: string}
+        path: {type: string, minLength: 1, maxLength: 1000, description: 실제 SUCCESS 관찰 전체를 루트로 하는 RFC6901 pointer. 잘못된 ~ escape·미존재·컨테이너 거부.}
+        quote: {type: string, minLength: 1, maxLength: 2000, description: 숫자형 문자열·number·boolean·null은 전체 정확 표현. 일반 원문 문자열만 부분 인용 가능.}
+    AssistantResponse:
+      type: object
+      additionalProperties: false
+      required: [mode, status, answer, context, toolCalls, observations, citations, nextActions, limitations]
+      properties:
+        mode: {type: string, enum: [MODEL, UNAVAILABLE]}
+        status: {type: string, enum: [COMPLETED, NEEDS_INPUT, LIMIT_REACHED, FAILED]}
+        answer: {type: string, minLength: 1, maxLength: 2000, description: brief가 있으면 질문별 근거 요약과 같다. 수치 생성·결과 보장·업무 실행 주장을 거부하며 실제 금액은 인용에서 정밀 표시한다. brief가 없으면 기존 안내 또는 부분 실패 문구다.}
+        context: {$ref: '#/components/schemas/Context'}
+        toolCalls: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/ToolCall'}}
+        observations: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/Observation'}}
+        citations: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/Citation'}}
+        brief:
+          anyOf: [{$ref: '#/components/schemas/AnalysisBrief'}, {type: 'null'}]
+          description: 새 실행의 요구 항목·근거 연결 분석. 이전 버전 호환 및 모델 실패에서는 없거나 null일 수 있다.
+        nextActions:
+          type: array
+          maxItems: 3
+          uniqueItems: true
+          items: {type: string, enum: [OPEN_DISCOVERY, OPEN_SCENARIOS, OPEN_WORKFLOW]}
+          description: 화면 이동 제안뿐이다. 요청 초안은 실제 draft 관찰과 별도 사용자 확인이 필요하다.
+        limitations: {type: array, items: {type: string}, description: Spring이 고정한 조회·초안·실행 한계 안내}
+    AnalysisBrief:
+      type: object
+      additionalProperties: false
+      required: [summary, requirements, findings]
+      properties:
+        summary: {type: string, minLength: 1, maxLength: 1000, description: 아래 findings만 종합한 질문별 요약. 새 금액·근거 없는 결과 보장 금지.}
+        requirements:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items: {$ref: '#/components/schemas/AnalysisRequirement'}
+        findings:
+          type: array
+          maxItems: 8
+          items: {$ref: '#/components/schemas/AnalysisFinding'}
+    AnalysisRequirement:
+      type: object
+      additionalProperties: false
+      required: [id, requestQuote, question, status, findingIds, missingInformation, followUpQuestion]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 100}
+        requestQuote: {type: string, minLength: 1, maxLength: 500, description: 현재 사용자 요청의 실제 부분 인용. 과거 이력에서 가져오지 않는다.}
+        question: {type: string, minLength: 1, maxLength: 400, description: 처음 계획한 확인 항목이며 종료 시 변경하지 않는다.}
+        status: {type: string, enum: [ANSWERED, NEEDS_INPUT, UNSUPPORTED]}
+        findingIds: {type: array, maxItems: 8, uniqueItems: true, items: {type: string}}
+        missingInformation: {type: [string, 'null'], minLength: 1, maxLength: 400}
+        followUpQuestion: {type: [string, 'null'], minLength: 1, maxLength: 400}
+      description: ANSWERED는 실제 finding ID가 필요하다. 미해결 항목은 부족 자료와 확인 질문이 필요하며 전체 응답을 NEEDS_INPUT으로 표시한다.
+    AnalysisFinding:
+      type: object
+      additionalProperties: false
+      required: [id, kind, text, citations, uncertainty]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 100}
+        kind: {type: string, enum: [FACT, INTERPRETATION, HYPOTHESIS]}
+        text: {type: string, minLength: 1, maxLength: 700}
+        citations: {type: array, minItems: 1, maxItems: 4, items: {$ref: '#/components/schemas/Citation'}}
+        uncertainty: {type: [string, 'null'], minLength: 1, maxLength: 400}
+      description: 현재 실행의 성공 근거만 참조한다. 해석·가설은 uncertainty가 필요하며 개선 효과·인과 관계의 검증 완료를 뜻하지 않는다.
+    ObservationDetailData:
+      type: object
+      additionalProperties: false
+      required: [sourceObservationId, path, offset, nextOffset, total, value]
+      properties:
+        sourceObservationId: {type: string}
+        path: {type: string}
+        offset: {type: integer, minimum: 0}
+        nextOffset: {type: [integer, 'null'], minimum: 0}
+        total: {type: integer, minimum: 0, description: 배열 항목·객체 속성·문자열 문자 수. scalar는 1.}
+        value: {description: 배열·객체는 limit개, 문자열은 limit×400자 이내의 실제 원문. 원본 업무 값은 변경하지 않는다.}
+    GoalPreviewData:
+      type: object
+      additionalProperties: false
+      required: [year, baseMonth, unit, baselineProfitWon, targetProfitEok, targetProfitWon, gapWon, surplusWon, signedGapWon, forecastMeetsTarget, saved, basis]
+      properties:
+        year: {type: integer}
+        baseMonth: {type: integer}
+        unit: {const: KRW}
+        baselineProfitWon: {type: string, description: 고정 마스터의 누적 실적과 잔여 추정을 합산한 연간 전망}
+        targetProfitEok: {type: string, description: 요청한 억 원 단위 목표의 정밀 문자열}
+        targetProfitWon: {type: string}
+        gapWon: {type: string, description: 'max(0, 목표 - 현재 전망)'}
+        surplusWon: {type: string, description: 'max(0, 현재 전망 - 목표)'}
+        signedGapWon: {type: string, description: 목표 - 현재 전망의 부호 있는 차이}
+        forecastMeetsTarget: {type: boolean, description: 현재 전망이 목표 이상인지. 실제 목표 달성을 의미하지 않는다.}
+        saved: {const: false}
+        basis: {const: FIXED_ANNUAL_OUTLOOK}
+    ContextData:
+      type: object
+      required: [snapshot, analysis]
+      properties:
+        snapshot: {$ref: './decision-agent.yaml#/components/schemas/Snapshot'}
+        analysis:
+          type: [object, 'null']
+          properties:
+            id: {$ref: '#/components/schemas/Id'}
+            title: {type: string}
+            revision: {type: integer}
+            targetProfitWon: {type: string}
+            protectedCategories: {$ref: './decision-agent.yaml#/components/schemas/ProtectedCategories'}
+            candidates: {type: array, items: {$ref: './decision-agent.yaml#/components/schemas/Candidate'}}
+            result:
+              anyOf: [{$ref: './decision-agent.yaml#/components/schemas/Result'}, {type: 'null'}]
+    ExplanationsData:
+      type: object
+      required: [capturedAt, total, items]
+      properties:
+        capturedAt: {type: [string, 'null'], format: date-time, description: 저장 Research의 포착 시점. 미저장 읽기이면 null이며 Observation.basis.capturedAt을 사용.}
+        total: {type: integer, description: 기존 추출기의 전체 최대 50개 중 해당 조직과 종류가 일치한 개수. 전체 DB 소명 수가 아님.}
+        items: {type: array, maxItems: 20, items: {$ref: './decision-workflow.yaml#/components/schemas/Evidence'}}
+    VersionsData:
+      type: object
+      required: [organization, history]
+      properties:
+        organization: {$ref: './openapi.yaml#/components/schemas/OrganizationRef'}
+        history:
+          type: array
+          items:
+            type: object
+            required: [submissionId, label, status, lastModifiedAt]
+            properties:
+              submissionId: {$ref: '#/components/schemas/Id'}
+              label: {type: string}
+              status: {const: APPROVED}
+              lastModifiedAt: {type: string, format: date-time}
+    ComparisonData:
+      type: object
+      required: [base, target, rows]
+      properties:
+        base: {$ref: '#/components/schemas/ComparedSubmission'}
+        target: {$ref: '#/components/schemas/ComparedSubmission'}
+        rows:
+          type: array
+          description: 기존 ReviewTreeResponse.Node 구조에서 stateToken 제거. plan은 기준 제출, actual은 고정 대상 제출 값.
+          items: {$ref: '#/components/schemas/ComparisonRow'}
+    ComparedSubmission:
+      type: object
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        status: {type: string}
+        label: {type: [string, 'null']}
+        approvedLabel: {type: [string, 'null']}
+        period: {type: string}
+        organization: {$ref: './openapi.yaml#/components/schemas/OrganizationRef'}
+        reviewedAt: {type: [string, 'null'], format: date-time}
+    ComparisonRow:
+      type: object
+      properties:
+        reportItemId: {type: [string, 'null']}
+        name: {type: string}
+        level: {type: integer}
+        plan: {type: [string, 'null']}
+        actual: {type: [string, 'null']}
+        diff: {type: [string, 'null']}
+        rate: {type: [string, 'null']}
+        stage: {type: [integer, 'null']}
+        tab: {type: [string, 'null']}
+        gapExceeded: {type: boolean}
+        reviewItemId: {type: [string, 'null']}
+        children: {type: [array, 'null'], items: {$ref: '#/components/schemas/ComparisonRow'}}
+    WorkItemsData:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: 소유 분석의 업무 상태. 원천 사본·전체 events·ownerId·파일 URL은 포함하지 않는다.
+          items:
+            type: object
+            properties:
+              id: {$ref: '#/components/schemas/Id'}
+              analysisId: {$ref: '#/components/schemas/Id'}
+              candidateId: {type: string}
+              hypothesisId: {type: [string, 'null']}
+              organizationId: {$ref: '#/components/schemas/Id'}
+              organizationName: {type: string}
+              title: {type: string}
+              revision: {type: integer}
+              state: {$ref: './decision-workflow.yaml#/components/schemas/WorkItem/properties/state'}
+              round: {type: integer}
+              dueAt: {type: string, format: date-time}
+              updatedAt: {type: string, format: date-time}
+              reply: {anyOf: [{$ref: './decision-workflow.yaml#/components/schemas/Reply'}, {type: 'null'}]}
+              review: {anyOf: [{$ref: './decision-workflow.yaml#/components/schemas/Review'}, {type: 'null'}]}
+              decision: {anyOf: [{$ref: './decision-workflow.yaml#/components/schemas/Decision'}, {type: 'null'}]}
+              progress: {anyOf: [{$ref: './decision-workflow.yaml#/components/schemas/Progress'}, {type: 'null'}]}
+    RequestDraftData:
+      type: object
+      additionalProperties: false
+      required: [analysisId, expectedAnalysisRevision, sourceKind, sourceId, organizationId, title, message, needsConfirmation]
+      properties:
+        analysisId: {$ref: '#/components/schemas/Id'}
+        expectedAnalysisRevision: {type: integer, minimum: 1}
+        sourceKind: {type: string, enum: [candidate, hypothesis]}
+        sourceId: {type: string}
+        organizationId: {$ref: '#/components/schemas/Id'}
+        title: {type: string}
+        message: {type: string}
+        needsConfirmation: {const: true}

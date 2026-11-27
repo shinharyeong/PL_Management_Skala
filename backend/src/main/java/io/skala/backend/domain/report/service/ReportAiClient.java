@@ -1,6 +1,7 @@
 package io.skala.backend.domain.report.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.skala.backend.domain.report.exception.ReportErrorCode;
 import java.time.Duration;
 import java.util.UUID;
@@ -9,6 +10,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -29,14 +31,27 @@ public class ReportAiClient {
     private final String token;
     private final boolean requireToken;
 
+    /**
+     * 목적: 애플리케이션의 JSON 계약과 동일한 내부 AI HTTP 클라이언트를 구성한다.
+     * Args: baseUrl 내부 주소, token 공유 토큰, timeoutSeconds 읽기 제한, requireToken 토큰 필수 여부,
+     * objectMapper Spring Boot의 날짜·모듈 설정이 적용된 공용 mapper.
+     * Returns: 구성된 클라이언트 인스턴스.
+     * Raises: 잘못된 URL 또는 timeout 설정의 IllegalArgumentException.
+     * Side Effects: 토큰 필수 설정이 비어 있으면 경고 로그. 네트워크 호출·공용 mapper 변경 없음.
+     */
     public ReportAiClient(@Value("${app.report-ai.base-url}") String baseUrl,
                           @Value("${app.report-ai.token:}") String token,
                           @Value("${app.report-ai.timeout-seconds:90}") int timeoutSeconds,
-                          @Value("${app.report-ai.require-token:false}") boolean requireToken) {
+                          @Value("${app.report-ai.require-token:false}") boolean requireToken,
+                          ObjectMapper objectMapper) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(5));
         factory.setReadTimeout(Duration.ofSeconds(timeoutSeconds));
-        this.client = RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
+        this.client = RestClient.builder().baseUrl(baseUrl).requestFactory(factory)
+                .messageConverters(converters -> {
+                    converters.removeIf(MappingJackson2HttpMessageConverter.class::isInstance);
+                    converters.add(new MappingJackson2HttpMessageConverter(objectMapper));
+                }).build();
         this.token = token;
         this.requireToken = requireToken;
         if (requireToken && !hasToken()) {

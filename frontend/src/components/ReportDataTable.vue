@@ -22,7 +22,7 @@ function columnPassThrough(column) {
 
 <template>
   <PDataTable v-if="model.width" :value="model.rows" data-key="id" show-gridlines size="small" class="report-data-table" :pt="{table: {'aria-label':'보고서 데이터'}}">
-    <PColumnGroup v-if="model.headers.length" type="header">
+    <PColumnGroup v-if="model.headers.length" key="report-header-group" type="header">
       <PRow v-for="(row,index) in model.headers" :key="index"><PColumn v-for="cell in row" :key="cell.key" :header="cell.text" :colspan="cell.colspan" :rowspan="cell.rowspan" /></PRow>
     </PColumnGroup>
     <PColumn v-for="(_,index) in model.width" :key="index" :field="`cells.${index}`" :pt="columnPassThrough(index)">

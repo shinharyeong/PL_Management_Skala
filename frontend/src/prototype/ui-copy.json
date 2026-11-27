@@ -2,6 +2,7 @@
   "pages": {
     "login": "로그인",
     "home": "전사 손익 현황",
+    "decision-agent": "목표 의사결정 Agent",
     "notifications": "알림 모아보기",
     "monthly": "월간 시트 관리",
     "monthly-request": "월간 시트 요청 작성",
@@ -13,6 +14,7 @@
     "organizations": "조직별 현황",
     "reports": "보고서 생성",
     "org-requests": "요청함",
+    "org-improvements": "개선 검토·실행 과제",
     "org-upload": "엑셀 제출",
     "org-explanation": "소명 작성",
     "org-history": "제출 이력 관리"

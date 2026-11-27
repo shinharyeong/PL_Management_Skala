@@ -16,7 +16,7 @@ info:
 
     - 금액은 원 단위 십진수 문자열, 값이 없으면 `null`(0으로 바꾸지 않음). 기준값이 0이면 비율은 `null`.
 
-    - 상태 변경 명령(POST·PUT·PATCH·DELETE)은 `Idempotency-Key` 헤더가 필수이고, 기존 리소스를 바꾸는 명령은 본문에 `expectedStateToken`을 넣습니다.
+    - 상태 변경 명령(POST·PUT·PATCH·DELETE)은 `Idempotency-Key` 헤더가 필수이고, 기존 리소스를 바꾸는 명령은 본문에 `expectedStateToken`을 넣습니다. 의사결정 에이전트는 분석/요청의 `expectedRevision`과 분석 변경을 동반할 때 `expectedAnalysisRevision`을 사용합니다.
 
     - 오류는 RFC 9457 Problem Details(`application/problem+json`)에 `code`·`requestId`·`errors`를 더해 내려줍니다. 화면 분기는 `code`로 합니다.
 
@@ -53,10 +53,22 @@ tags:
   description: FR-HIST, FR-RESUB-001 (조직 담당자)
 - name: AI 보고서
   description: FR-RPT (경영기획팀)
+- name: 경영 의사결정 에이전트
+  description: 확정 기준·목표·근거 조회·개선 가설·조직 검토·의사결정서·후속 전망 비교
 - name: 파일
   description: 서버 경유 업로드·다운로드(현재 로컬/PVC 저장)
 components:
   securitySchemes:
+    internalToken:
+      type: apiKey
+      in: header
+      name: X-Internal-Token
+      description: 클러스터 내부 API 전용. 브라우저에 제공하지 않는다.
+    decisionToolToken:
+      type: apiKey
+      in: header
+      name: X-Decision-Tool-Token
+      description: 분석 ID·revision·허용 참조에 한정된 3분 내부 읽기 권한
     bearerAuth:
       type: http
       scheme: bearer
@@ -1287,6 +1299,48 @@ components:
             type: object
             additionalProperties: true
 paths:
+  /decision-agent/assistant:
+    $ref: './decision-assistant.yaml#/paths/~1decision-agent~1assistant'
+  /internal/decision-agent/tools/call:
+    $ref: './decision-assistant.yaml#/paths/~1internal~1decision-agent~1tools~1call'
+  /decision-agent/goal-proposals:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1goal-proposals'
+  /decision-agent/analyses/{id}/research:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1analyses~1{id}~1research'
+  /decision-agent/analyses/{id}/discover:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1analyses~1{id}~1discover'
+  /internal/decision-agent/evidence/read:
+    $ref: './decision-workflow.yaml#/paths/~1internal~1decision-agent~1evidence~1read'
+  /decision-agent/work-items:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items'
+  /decision-agent/analyses/{analysisId}/work-items:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1analyses~1{analysisId}~1work-items'
+  /decision-agent/work-items/{id}:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}'
+  /decision-agent/work-items/{id}/followup-baselines:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1followup-baselines'
+  /decision-agent/work-items/{id}/issue:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1issue'
+  /decision-agent/work-items/{id}/replies:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1replies'
+  /decision-agent/work-items/{id}/reviews:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1reviews'
+  /decision-agent/work-items/{id}/decisions:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1decisions'
+  /decision-agent/work-items/{id}/progress:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1progress'
+  /decision-agent/work-items/{id}/cancel:
+    $ref: './decision-workflow.yaml#/paths/~1decision-agent~1work-items~1{id}~1cancel'
+  /decision-agent/baselines:
+    $ref: './decision-agent.yaml#/paths/~1decision-agent~1baselines'
+  /decision-agent/analyses:
+    $ref: './decision-agent.yaml#/paths/~1decision-agent~1analyses'
+  /decision-agent/analyses/{id}:
+    $ref: './decision-agent.yaml#/paths/~1decision-agent~1analyses~1{id}'
+  /decision-agent/analyses/{id}/candidates:
+    $ref: './decision-agent.yaml#/paths/~1decision-agent~1analyses~1{id}~1candidates'
+  /decision-agent/analyses/{id}/runs:
+    $ref: './decision-agent.yaml#/paths/~1decision-agent~1analyses~1{id}~1runs'
   /annual-masters:
     get:
       operationId: listAnnualMasters
@@ -4392,7 +4446,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '503':
-          description: '`REPORT_AI_UNAVAILABLE` 보고서 AI에 연결할 수 없음 / `PROCESSING_UNAVAILABLE` 분석 큐를 받을 수 없음'
+          description: '`REPORT_AI_UNAVAILABLE` 또는 `PROCESSING_UNAVAILABLE`: 분석 서비스에 요청할 수 없음'
           content:
             application/problem+json:
               schema:
@@ -4961,7 +5015,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '503':
-          description: '`REPORT_AI_UNAVAILABLE` 보고서 AI에 연결할 수 없음 / `PROCESSING_UNAVAILABLE` AI 서비스 일시 불가'
+          description: '`REPORT_AI_UNAVAILABLE` 또는 `PROCESSING_UNAVAILABLE`: AI 서비스 일시 불가'
           content:
             application/problem+json:
               schema:
@@ -5290,7 +5344,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '503':
-          description: '`REPORT_AI_UNAVAILABLE` 보고서 AI에 연결할 수 없음 / `PROCESSING_UNAVAILABLE`'
+          description: '`REPORT_AI_UNAVAILABLE` 또는 `PROCESSING_UNAVAILABLE`: AI 서비스 일시 불가'
           content:
             application/problem+json:
               schema:

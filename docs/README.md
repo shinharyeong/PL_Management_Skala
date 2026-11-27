@@ -11,5 +11,7 @@
 - [공개 API와 화면 연결](development/api-integration.md) — 현재 미연결 경로·보고서 연결·추가 구현 범위
 - [함수 명세](development/function-reference.md) — 이슈 수정·보고서 화면의 입출력·호출 관계
 - [프론트 이슈 계약](development/frontend-issue-contract.md) — 활성 진입점·검토·제출·XLSB 입력 계약
+- [경영 의사결정 에이전트](development/pnl-decision-agent.md) — 고정 근거 조사·조직 검토·시나리오·결정 기록·후속 전망·A4 요약의 범위와 검증 기록
+- [대화형 Agent 도구 계약](development/agent-tool-contract.md) — 기존 업무 서비스 재사용, native 도구 호출 루프, 조회 권한·출처·예산 경계
 
 입력 Excel, 원본 셀 값, 실행 결과·로그·캐시·비밀 설정은 문서 PR에 포함하지 않습니다.
