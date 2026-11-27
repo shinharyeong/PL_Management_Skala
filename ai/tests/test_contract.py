@@ -26,6 +26,20 @@ def test_data_fills_blocks_with_view_values_and_status():
     assert client.post("/v1/data", json={"base": {"year": 2034, "month": 7}, "blocks": [{"kind": "title"}]}).status_code == 422
 
 
+def test_data_fills_a_table_block_that_keeps_its_rows_inside_table():
+    """PDF 분석 정의의 표(table 안에 rows)와 펼친 표(rows 가 블록 바로 아래)는 같은 결과를 채운다."""
+    _seed_report_db()
+    rows = [[{"type": "text", "text": "(단위: 억원)"}, {"type": "text", "text": "'34.7월"}, {"type": "text", "text": "계획"}],
+            [{"type": "text", "text": "매출"}, {"type": "number"}, {"type": "number"}],
+            [{"type": "text", "text": "영업이익"}, {"type": "number"}, {"type": "number"}]]
+    nested = {"id": "t1", "kind": "table", "table": {"columns": 3, "header_rows": 1, "rows": rows}}
+    flat = {"id": "t1", "kind": "table", "rows": rows, "header_rows": 1}
+    base = {"year": 2034, "month": 7}
+    a = client.post("/v1/data", json={"base": base, "blocks": [nested]}).json()["blocks"][0]
+    b = client.post("/v1/data", json={"base": base, "blocks": [flat]}).json()["blocks"][0]
+    assert len(a["rows"]) == 3 and a["rows"] == b["rows"] and a["header_rows"] == 1
+
+
 def test_edit_returns_proposals_and_refuses_number_changes_and_queries(monkeypatch):
     _seed_report_db()
     c = _AiClient({"intent": "edit", "edits": [{"op": "remove_block", "target": {"id": "b3"}}]})

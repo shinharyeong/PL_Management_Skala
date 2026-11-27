@@ -24,9 +24,17 @@ _EDIT_STATUS = {"edit": "EDIT", "clarify": "CLARIFY", "unknown": "CLARIFY", "ref
 NOT_AN_EDIT = "자료 편집 요청만 처리합니다. 데이터 조회는 자연어 질의를 이용해 주세요."
 
 
+def _flat_table(block: dict) -> dict:
+    """PDF 분석이 준 표는 table{rows, header_rows, header_spans} 안에 있다. 채우기는 블록 바로 아래의 rows·header_rows·header_spans 를 읽으므로 펼쳐 준다(이미 펼친 블록은 그대로)."""
+    table = block.get("table")
+    if block.get("kind") != "table" or not isinstance(table, dict) or "rows" in block:
+        return block
+    return {**block, "rows": table.get("rows") or [], "header_rows": table.get("header_rows"), "header_spans": table.get("header_spans")}
+
+
 def data(base: dict, blocks: list[dict]) -> dict:
     from .pdf_structure import data_select
-    r = data_select.fill_report(base, blocks)
+    r = data_select.fill_report(base, [_flat_table(b) for b in blocks])
     status = _STATE.get(r.get("state") or "", "NONE") if r.get("version") else "NONE"
     return {"dataStatus": status, "blocks": r.get("blocks", [])}
 
