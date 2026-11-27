@@ -163,7 +163,7 @@ AUTH-03은 인증 확인 후 현재 토큰만 메모리에서 폐기한다. 멱�
 | HOME-01 | GET | `/home/status` | 데이터 상태와 마감 진행 막대 | `year`, `month` | `dataStatus`=CONFIRMED·PROVISIONAL·NONE, `master{id,label}`, `masters[]`(이전 master 선택용), `dueAt`, `dDay`, `steps[{key: REQUESTED·SUBMITTED·GAP_REVIEW·EXPLAINED·MASTER, done, total, date}]` | P | HOME-001, 002 | master_version, submission_request, request_target, submission, review_item |
 | HOME-02 | GET | `/home/todos` | 오늘 할 일(연간/월간 탭) | `tab`=ANNUAL·MONTHLY, `year`, `month` | `items[{key, label, count, link}]` (요청 필요·미제출·검토 필요 조직·소명 검토 필요 조직) | P | HOME-003 | submission_request, request_target, submission, review_item |
 | HOME-03 | GET | `/home/pnl` | 핵심 KPI 3개 + 전사 손익 요약표(답안지 행 순서) | 공통 쿼리 | `dataStatus`, `kpis[{key: REVENUE·COST·OP, actual, vsPlanRate, vsPlanAmount}]`, `rows[{reportItemId, kind: ITEM·OP, name, level, actual, vsPlanRate, vsPlanAmount, vsPrevEstimateRate, vsPrevEstimateAmount, gapExceeded, explanation?}]`, `opMargin{actualRate, planRate, vsPlanPoint, prevEstimateRate, vsPrevEstimatePoint}` | P | HOME-001, 004, 005, 006 | master_source → financial_line/value, report_item, gap_comparison, review_explanation |
-| HOME-04 | GET | `/home/op-drivers` | 조직별 영업이익 변동 원인 Top 5 (계획 대비) | 공통 쿼리, `limit`=5 | `dataStatus`, `items[{organization, opDiff, opDiffRate}]`(차이 절댓값 큰 순), `total` | P | HOME-007 | master_source, financial_value, annual_master_source |
+| HOME-04 | GET | `/home/op-drivers` | 항목·조직별 영업이익 변동 원인 Top 5 (계획 대비, 비용 증가는 음수) | 공통 쿼리, `limit`=5 | `dataStatus`, `items[{organization, reportItemId, reportItemName, opDiff, opDiffRate}]`(차이 절댓값 큰 순), `decreases`, `increases`(각각 limit개, 감소·증가 별도 선정), `total` | P | HOME-007 | master_source, financial_value, annual_master_source |
 | HOME-05 | GET | `/home/divisions` | 사업부별 손익 표(사업부 = 제출 조직 17개) | 공통 쿼리 | `dataStatus`, `columns[{organization, revenue, op, opContributionRate, opMarginRate, vsPlanAmount}]`(조직 코드 순), `total{revenue, op, opMarginRate, vsPlanAmount}` | P | HOME-008 | master_source, financial_value |
 | HOME-06 | GET | `/home/waterfall` | 손익 흐름(워터폴) 단계 금액 | 공통 쿼리 | `dataStatus`, `steps[{key: REVENUE·COST·OP, reportItemId, name, amount, kind: TOTAL·DEDUCTION, breakdown[{reportItemId, name, amount}]}]` | P | HOME-009 | report_item, financial_value |
 
@@ -173,7 +173,8 @@ HOME-03~06 계산 기준:
 
 - 실적: 그 달 master(`masterId`가 없으면 최신 master)의 조직별 승인본. master가 없으면 조직별 최신 승인본(잠정)
 - 계획: 월간 요청을 보낼 때 고정한 확정 연간 계획(`request_target.confirmed_plan_submission_id`)의 계획 값. 월간 시트 안의 계획 열은 쓰지 않는다
-- 전월 추정: 전월 요청의 최신 master(없으면 최신 승인본)에 적힌 이번 달 추정 값. 1월은 없음(null)
+- 월간 전월 추정: 전월 요청의 최신 master(없으면 최신 승인본)에 적힌 이번 달 추정 값. 1월은 없음(null)
+- 연간 전년 실적 대비: 전년 12월 요청의 최신 master(없으면 최신 승인본)의 1~12월 ACTUAL 합계와 비교한다. 전년 추정은 포함하지 않으며 자료가 없으면 null이다. 호환성을 위해 응답 필드명 vsPrevEstimateAmount/Rate·prevEstimateRate는 유지한다.
 - `period=YEAR`: 연간 전체. 실적 = 고른 달 시트의 1월~그 달 실적 + 다음 달~12월 추정, 계획 = 1~12월 계획, 전월 대비 = 전월 시트의 같은 연간 전망. `month`가 없으면 승인본이 있는 가장 최근 달. `period=MONTH`에서 `month`가 없으면 이번 달(KST)
 - 매출 = REVENUE 항목 합, 영업비용 = COST 항목 합, 영업이익 = 매출 − 영업비용. 영업이익률 = 영업이익 / 매출 × 100은 금액이 아니라서 `opMargin`으로 따로 내려준다
 - `gapExceeded`·`explanation`: 승인본 항목 중 Gap 기준을 넘은 실적 항목, 그 항목의 마지막 수락 소명("조직명: 소명", 여러 조직이면 줄바꿈)
@@ -546,3 +547,7 @@ Flyway `V20261125_1800__shared_ui_copy.sql`: `ui_copy_override` 테이블. 기�
 
 계산기 탭은 전체 / 검토 필요(NEEDS_REVIEW·SELECTED·RE_REVIEW) / 회신 대기(IN_PROGRESS) / 승인됨(ACCEPTED)이다. 검토 필요의 상세 행은 검토 전·회신 도착으로 구분한다.
 `POST /review-items/actions`의 `APPROVE`는 소명 요청 전 항목을 직접 승인한다. workflow_state=APPROVED로 저장하고 APPROVE 이력을 남긴다. 소명 수락과 직접 승인 모두 API tab=ACCEPTED로 집계한다. 기존 EXCLUDE 명령은 직접 승인의 호환 별칭이며 EXCLUDED 상태 항목도 승인으로 이관한다. 제출본 승인·master 생성은 별도 절차다. 기존 EXCLUDE 이벤트 기록은 보존한다.
+
+### 알림 읽음/안 읽음 분리 조회
+
+`GET /notifications?unreadOnly=true`는 본문의 안 읽은 알림, `readOnly=true`는 하단 읽은 알림 영역에 사용한다. 둘 다 true이면 400이다. 각 목록은 occurredAt DESC, id DESC로 정렬하며 페이지 커서는 읽음 필터별로 분리한다. typeCounts는 선택한 읽음 상태의 유형별 전체 건수, summary.unreadCount는 기존처럼 사용자 전체 안 읽음 배지 건수다. 하단 읽은 알림은 기본 접힘이며 화면 하단에 고정하고 펼친 목록은 내부 스크롤과 독립적인 더 보기를 제공한다. 알림 제목은 생성 시 저장한 값을 유지한다.

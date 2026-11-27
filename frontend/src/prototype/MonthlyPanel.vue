@@ -92,7 +92,7 @@ const groups = computed(() => [...new Set(rows.value.map(i => i.group))].map(nam
 }))
 const majorRowCount = computed(() => groups.value.reduce((count, group) => count + group.childRowCount + 1, 1))
 const cart = computed(() => store.carts[store.activeOrg] || [])
-const detailItems = computed(() => cart.value)
+const detailItems = computed(() => detailSource.value === 'recent' && store.recentCellTarget?.organizationId === store.activeOrg ? [store.recentCellTarget.item, ...cart.value.filter(item => String(item.id) !== String(store.recentCellTarget.id))] : cart.value)
 const detail = computed(() => detailItems.value.find(i => (i.key || i.id) === activeCell.value) || detailItems.value[0])
 const sameCartContext = computed(() => new Set(cart.value.map(i => JSON.stringify(i.conditions))).size <= 1)
 const detailConditions = computed(() => detail.value?.conditions || applied.value || draft.value)

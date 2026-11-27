@@ -2,49 +2,57 @@
 import {ref,watch,onBeforeUnmount,onMounted} from 'vue'
 import {usePrototypeStore} from './live-store.js'
 import copy from './copy-text.js'
-import {submissionReviewStatus,notificationWorkflowStatus} from './review-status.js'
+import NotificationCard from './NotificationCard.vue'
 import {notificationDate,notificationTime,mergeNotificationGroups} from './presentation.js'
-import PButton from 'primevue/button'
-import PCard from 'primevue/card'
-import PCheckbox from 'primevue/checkbox'
-import PTag from 'primevue/tag'
 const emit=defineEmits(['navigate']),store=usePrototypeStore()
-const type=ref('ALL'),unreadOnly=ref(false),page=ref(null),loading=ref(false),error=ref(''),submissions=ref({})
+const type=ref('ALL'),page=ref(null),loading=ref(false),error=ref('')
+const readPage=ref(null),readLoading=ref(false),readError=ref(''),readOpen=ref(false),content=ref(null),dock=ref(null),dockStyle=ref({})
 const types={ALL:'전체',SUBMISSION:'조직 제출',REPLY:'소명 회신',OVERDUE:'기한 경과'}
 const tones={ALL:'gray',SUBMISSION:'blue',REPLY:'purple',OVERDUE:'red'}
-let generation=0
-let refreshTimer
-onMounted(()=>{refreshTimer=setInterval(()=>{if(!document.hidden&&!loading.value&&!store.busy)load(false,true)},30000)})
-onBeforeUnmount(()=>{generation++;clearInterval(refreshTimer)})
+let generation=0,readGeneration=0,refreshTimer,observer
+function alignDock(){
+ if(!content.value)return
+ const rect=content.value.getBoundingClientRect()
+ if(dock.value)content.value.style.setProperty('--read-dock-space',(dock.value.getBoundingClientRect().height+24)+'px')
+ dockStyle.value={left:Math.max(8,rect.left)+'px',width:Math.max(0,Math.min(rect.width,window.innerWidth-Math.max(8,rect.left)-8))+'px'}
+}
+onMounted(()=>{
+ observer=new ResizeObserver(alignDock);observer.observe(content.value);observer.observe(dock.value);alignDock()
+ window.addEventListener('resize',alignDock)
+ refreshTimer=setInterval(()=>{if(!document.hidden&&!loading.value&&!readLoading.value&&!store.busy){load(false,true);loadRead(false,true)}},30000)
+})
+onBeforeUnmount(()=>{generation++;readGeneration++;clearInterval(refreshTimer);observer?.disconnect();window.removeEventListener('resize',alignDock)})
+function query(read,cursor){
+ const params=new URLSearchParams({limit:'100',sort:'LATEST',[read?'readOnly':'unreadOnly']:'true'})
+ if(type.value!=='ALL')params.set('type',type.value)
+ if(cursor)params.set('cursor',cursor)
+ return '/api/v1/notifications?'+params
+}
 async function load(more=false,quiet=false){
- const g=++generation, cursor=more?page.value?.nextCursor:null
+ const g=++generation,cursor=more?page.value?.nextCursor:null
  loading.value=true;error.value=''
- if(!more)page.value=null
+ if(!more&&!quiet)page.value=null
  try{
-  const params=new URLSearchParams({limit:'100',sort:'LATEST',unreadOnly:String(unreadOnly.value)})
-  if(type.value!=='ALL')params.set('type',type.value)
-  if(cursor)params.set('cursor',cursor)
-  let result=await store.api('/api/v1/notifications?'+params)
-  if(g!==generation)return
-  const submitted=[]
-  const ids=[...new Set([...(more?page.value?.groups||[]:[]),...result.groups].flatMap(group=>group.items).filter(item=>item.type==='SUBMISSION').map(item=>item.link?.query?.submissionId).filter(Boolean))]
-  for(let offset=0;offset<ids.length;offset+=4){
-    submitted.push(...await Promise.all(ids.slice(offset,offset+4).map(id=>store.api('/api/v1/submissions/'+id))))
-    if(g!==generation)return
-  }
-  submissions.value=Object.fromEntries(submitted.map(s=>[s.id,s]))
-  const reviewed=result.groups.flatMap(group=>group.items).filter(item=>item.type==='SUBMISSION'&&!item.read&&submissionReviewStatus(submissions.value[item.link?.query?.submissionId]).done).map(item=>item.id)
-  if(reviewed.length){await store.api('/api/v1/notifications/read',{method:'POST',body:{ids:reviewed}});result=await store.api('/api/v1/notifications?'+params)}
+  const result=await store.api(query(false,cursor))
   if(g!==generation)return
   page.value={...result,groups:more?mergeNotificationGroups(page.value?.groups||[],result.groups):result.groups}
   store.unreadCount=result.summary.unreadCount
- }catch(e){if(g===generation){if(!quiet){error.value=e.message;store.notify(e.message,'error')}}}finally{if(g===generation)loading.value=false}
+ }catch(e){if(g===generation&&!quiet){error.value=e.message;store.notify(e.message,'error')}}finally{if(g===generation)loading.value=false}
 }
-watch([type,unreadOnly],()=>load(),{immediate:true})
+async function loadRead(more=false,quiet=false){
+ const g=++readGeneration,cursor=more?readPage.value?.nextCursor:null
+ readLoading.value=true;readError.value=''
+ try{
+  const result=await store.api(query(true,cursor))
+  if(g!==readGeneration)return
+  readPage.value={...result,groups:more?mergeNotificationGroups(readPage.value?.groups||[],result.groups):result.groups}
+ }catch(e){if(g===readGeneration&&!quiet)readError.value=e.message}finally{if(g===readGeneration)readLoading.value=false}
+}
+watch(type,()=>{readPage.value=null;readOpen.value=false;load();loadRead()},{immediate:true})
 async function openNotification(item){
  await store.run(async()=>{
   await store.api('/api/v1/notifications/read',{method:'POST',body:{ids:[item.id]}})
-  await store.refreshBadge()
+  await Promise.all([store.refreshBadge(),load(false,true),loadRead(false,true)])
   const query=item.link?.query||{}
   store.activeOrg=query.organizationId||item.organization?.id||''
   const request=query.requestId?await store.api('/api/v1/submission-requests/'+query.requestId):null
@@ -55,24 +63,31 @@ async function openNotification(item){
 }
 </script>
 <template>
+ <div ref="content" class="notification-inbox">
  <header class="mg-heading"><div><p class="mg-breadcrumb"><span data-copy-key="notificationText.text001">{{ copy.notificationText.text001 }}</span> <span data-copy-key="pages.notifications">{{copy.pages.notifications}}</span></p><h1><span data-copy-key="pages.notifications">{{copy.pages.notifications}}</span></h1></div></header>
  <div class="mg-filter-row">
   <div class="mg-tabs" role="group" aria-label="알림 유형"><button v-for="(label,key) in types" :key="key" class="btn" :class="[type===key?'primary':'','mg-type-'+tones[key]]" :aria-pressed="type===key" @click="type=key">{{label}} {{page?.typeCounts[key]??'—'}}</button></div>
-  <label class="mg-checkbox"><input v-model="unreadOnly" type="checkbox"><span data-copy-key="notificationText.text003">{{ copy.notificationText.text003 }}</span></label>
+
  </div>
  <p v-if="error" class="notice error" role="alert">{{error}}</p><p v-if="loading" class="muted" role="status"><span data-copy-key="notificationText.text004">{{ copy.notificationText.text004 }}</span></p>
  <section v-for="group in page?.groups" :key="group.date" class="mg-notification-group">
   <div class="notification-date-heading"><h2>{{notificationDate(group.date)}}</h2><span>{{group.items.length}}건</span><span v-if="group.unreadCount" class="notification-date-unread">안 읽음 {{group.unreadCount}}</span><span class="notification-date-line" aria-hidden="true"></span></div>
-  <article v-for="item in group.items" :key="item.id" class="card mg-notification" :class="[{'mg-read':item.read,'mg-unread':!item.read},'notification-kind-'+item.type.toLowerCase()]">
-   <div class="notification-type-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><template v-if="item.type==='SUBMISSION'"><path d="M12 16V4m-4 4 4-4 4 4M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"/></template><template v-else-if="item.type==='REPLY'"><path d="M20 11a8 8 0 0 1-8 8H5l-3 3v-7a8 8 0 1 1 18-4Z"/><path d="M7 9h10M7 13h6"/></template><template v-else><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></template></svg></div>
-   <div class="mg-notification-body">
-    <div class="mg-notification-meta"><span class="notification-type-label">{{types[item.type]||item.type}}</span><span class="notification-read-label" :class="item.read?'is-read':'is-unread'"><span v-if="!item.read" class="notification-unread-indicator" aria-hidden="true"></span>{{item.read?'읽음':'안 읽음'}}</span></div>
-    <h3>{{item.title}}</h3>
-    <div class="notification-source"><strong>{{item.organization?.name}}</strong><span class="notification-org-code">{{item.organization?.code}}</span><span v-if="item.actor?.name" class="notification-actor">{{item.actor.name}} 회신</span></div>
-   </div>
-   <div class="mg-notification-action"><small :class="item.type==='OVERDUE'?'mg-red':'muted'">{{notificationTime(item)}}</small><div class="notification-action-line"><span class="badge" :class="'mg-status-'+notificationWorkflowStatus(item).tone">{{notificationWorkflowStatus(item).label}}</span><button class="btn" :disabled="store.busy" @click="openNotification(item)">{{notificationWorkflowStatus(item).label==='검토 필요'?'검토하기':'현황 보기'}} <span aria-hidden="true">→</span></button></div></div>
-  </article>
+  <NotificationCard v-for="item in group.items" :key="item.id" :item="item" :busy="store.busy" @open="openNotification" />
  </section>
- <p v-if="page&&!page.groups.length&&!loading" class="card mg-empty"><span data-copy-key="notificationText.text006">{{ copy.notificationText.text006 }}</span></p>
+ <p v-if="page&&!page.groups.length&&!loading" class="card mg-empty">안 읽은 알림이 없습니다.</p>
  <button v-if="page?.nextCursor" class="btn" :disabled="loading" @click="load(true)"><span data-copy-key="notificationText.text007">{{ copy.notificationText.text007 }}</span></button>
+ <section ref="dock" class="notification-read-dock" :style="dockStyle" aria-label="읽은 알림">
+  <button class="notification-read-toggle" type="button" :aria-expanded="readOpen" aria-controls="read-notification-list" @click="readOpen=!readOpen"><span>읽은 알림 <b>{{readPage?.typeCounts[type]??'—'}}</b></span><span class="notification-read-toggle-hint">{{readOpen?'접기':'펼치기'}} <span aria-hidden="true">{{readOpen?'⌄':'⌃'}}</span></span></button>
+  <div v-if="readOpen" id="read-notification-list" class="notification-read-list" tabindex="0" aria-label="읽은 알림 목록 · 최신순">
+   <p v-if="readError" class="notice error" role="alert">{{readError}} <button class="btn" @click="loadRead()">다시 불러오기</button></p>
+   <p v-if="readLoading" class="muted" role="status">불러오는 중입니다.</p>
+   <section v-for="group in readPage?.groups" :key="group.date" class="mg-notification-group">
+    <div class="notification-date-heading"><h2>{{notificationDate(group.date)}}</h2><span>{{group.items.length}}건</span><span class="notification-date-line" aria-hidden="true"></span></div>
+    <NotificationCard v-for="item in group.items" :key="item.id" :item="item" :busy="store.busy" @open="openNotification" />
+   </section>
+   <p v-if="readPage&&!readPage.groups.length&&!readLoading" class="mg-empty">읽은 알림이 없습니다.</p>
+   <button v-if="readPage?.nextCursor" class="btn" :disabled="readLoading" @click="loadRead(true)">더 보기</button>
+  </div>
+ </section>
+ </div>
 </template>

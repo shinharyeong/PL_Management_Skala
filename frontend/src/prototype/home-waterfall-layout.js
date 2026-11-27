@@ -1,4 +1,4 @@
-import {formatMoney} from '../lib/decimal-display.js'
+import {homeMoney} from './home-money.js'
 
 // Approximate numbers are used only for chart coordinates. Financial display strings stay intact.
 export function layoutHomeWaterfall(steps) {
@@ -18,6 +18,6 @@ export function layoutHomeWaterfall(steps) {
 
 // API names and child amounts are preserved for pointer and keyboard readers.
 export function waterfallStepDescription(step) {
-  return [step.name,step.kind==='DEDUCTION'?'차감':'합계',formatMoney(step.amount,'HUNDRED_MILLION')+'억원',
-    ...(step.breakdown||[]).map(part=>part.name+' '+formatMoney(part.amount,'HUNDRED_MILLION')+'억원')].join(' · ')
+  return [step.name,step.kind==='DEDUCTION'?'차감':'합계',homeMoney(step.amount)+'억원',
+    ...(step.breakdown||[]).map(part=>part.name+' '+homeMoney(part.amount)+'억원')].join(' · ')
 }

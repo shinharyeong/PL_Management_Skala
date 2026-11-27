@@ -158,22 +158,50 @@ class HomePnlIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.opMargin.planRate").value("64.3"))
                 .andExpect(jsonPath("$.opMargin.vsPlanPoint").value("-4.3"));
 
-        // 연간 탭: 연간 전체(1~10월 실적 + 11·12월 추정) vs 1~12월 계획, 전월 대비는 9월 시트의 연간 전망(10월 추정 950)
+        // 전년 12월 승인 제출본의 실적만 사용한다. 추정은 비교에 포함하지 않는다.
+        long currentPlanId = planId;
+        year--;
+        planId = jdbc.queryForObject("INSERT INTO annual_plan(year, status) VALUES (?, 'CONFIRMED') RETURNING id", Long.class, year);
+        long previousDecember = request("MONTHLY_ACTUAL", 12);
+        long previousA = submission(previousDecember, orgA, "APPROVED", 1);
+        values(previousA, "ACTUAL", 12, product, 1200);
+        values(previousA, "ACTUAL", 11, product, 100);
+        jdbc.update("INSERT INTO financial_value(line_id, year, month, scenario, amount, source_record_id, source_cell) SELECT id, ?, 12, 'ESTIMATE', 9999, ?, 'N2' FROM financial_line WHERE submission_id = ? AND source_row = 1200", year, "prior-estimate-" + UUID.randomUUID(), previousA);
+        year++;
+        planId = currentPlanId;
+        // 연간 전망 2500 − 전년 연간 실적 1300 = 1200.
         mvc.perform(auth(get("/api/v1/home/pnl").param("period", "YEAR").param("year", y()).param("month", "10"), planner))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.kpis[0].actual").value("2500"))
                 .andExpect(jsonPath("$.kpis[0].vsPlanAmount").value("150"))
-                .andExpect(jsonPath("$.rows[1].vsPrevEstimateAmount").value("1550"));
+                .andExpect(jsonPath("$.rows[1].vsPrevEstimateAmount").value("1200"));
 
         mvc.perform(auth(get("/api/v1/home/op-drivers").param("year", y()).param("month", "10"), planner))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value("0"))
-                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.items.length()").value(3))
                 .andExpect(jsonPath("$.items[0].organization.name").value("손익A"))
-                .andExpect(jsonPath("$.items[0].opDiff").value("100"))
+                .andExpect(jsonPath("$.items[0].reportItemName").value("제품매출"))
+                .andExpect(jsonPath("$.items[0].opDiff").value("200"))
                 .andExpect(jsonPath("$.items[0].opDiffRate").value("25.0"))
                 .andExpect(jsonPath("$.items[1].opDiff").value("-100"))
-                .andExpect(jsonPath("$.items[1].opDiffRate").value("-20.0"));
+                .andExpect(jsonPath("$.items[1].reportItemName").value("판촉비"))
+                .andExpect(jsonPath("$.items[1].opDiffRate").value("-100.0"))
+                .andExpect(jsonPath("$.items[2].organization.name").value("손익B"))
+                .andExpect(jsonPath("$.items[2].opDiff").value("-100"))
+                .andExpect(jsonPath("$.items[2].opDiffRate").value("-16.7"))
+                .andExpect(jsonPath("$.decreases.length()").value(2))
+                .andExpect(jsonPath("$.increases.length()").value(1))
+                .andExpect(jsonPath("$.increases[0].opDiff").value("200"));
+
+        // Each direction is selected before limiting; the largest overall item is positive.
+        mvc.perform(auth(get("/api/v1/home/op-drivers").param("year", y()).param("month", "10").param("limit", "1"), planner))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.decreases.length()").value(1))
+                .andExpect(jsonPath("$.decreases[0].opDiff").value("-100"))
+                .andExpect(jsonPath("$.increases.length()").value(1))
+                .andExpect(jsonPath("$.increases[0].opDiff").value("200"));
 
         mvc.perform(auth(get("/api/v1/home/divisions").param("year", y()).param("month", "10").param("unit", "THOUSAND"), planner))
                 .andExpect(status().isOk())

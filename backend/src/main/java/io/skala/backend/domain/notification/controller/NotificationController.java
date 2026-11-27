@@ -30,10 +30,11 @@ public class NotificationController {
     @GetMapping
     public NotificationListResponse list(@RequestParam(required = false) String type,
                                          @RequestParam(required = false) Boolean unreadOnly,
+                                         @RequestParam(required = false) Boolean readOnly,
                                          @RequestParam(required = false) String sort,
                                          @RequestParam(required = false) String cursor,
                                          @RequestParam(required = false) Integer limit) {
-        return notificationService.list(currentUser.get(), type, unreadOnly, sort, cursor, limit);
+        return notificationService.list(currentUser.get(), type, unreadOnly, readOnly, sort, cursor, limit);
     }
 
     @PostMapping("/read")

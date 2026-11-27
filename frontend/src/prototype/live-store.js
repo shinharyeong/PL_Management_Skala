@@ -1,3 +1,4 @@
+import {confirmBusinessAction,settleBusinessConfirmation} from './business-confirm.js'
 import { defineStore } from 'pinia'
 import { createMonthlySession, seoulPeriod } from './domain.js'
 import { createApiClient, comparisons, flattenGapTree, status, saveFile } from './live-api.js'
@@ -30,7 +31,7 @@ function organizationRows(store, rows) {
 export const usePrototypeStore = defineStore('connected-frontend', {
   state: () => ({ live:true, actor:null, token:'', error:'', busy:false, loading:false, unreadCount:0, toast:null, toastSequence:0,
     organizations:[], notifications:[], orgRequests:[], orgHistory:[], items:{}, itemsByComparison:{}, carts:{}, monthlySessions:{},
-    monthlyLoaded:false, activeOrg:'', activeRequest:'', monthlyRequest:null, annualRequest:null, requestOptions:[], orgReasons:{},
+    recentCells:[], recentCellTarget:null, monthlyLoaded:false, activeOrg:'', activeRequest:'', monthlyRequest:null, annualRequest:null, requestOptions:[], orgReasons:{},
     notificationPage:null, notificationTarget:null, annualRows:[], activeReviewId:null, reviewDetail:null, evidence:null, versions:null, currentSubmission:null }),
   getters:{ unread:s=>s.unreadCount, currentOrg:s=>s.organizations.find(o=>o.id===s.activeOrg)||{ name:'조직을 선택해 주세요',code:'—' },
     workspaces:s=>Object.entries(s.carts).map(([org,rows])=>({org,name:s.organizations.find(o=>o.id===org)?.name||org,count:rows.filter(needsProcessing).length})).filter(work=>work.count>0).sort((a,b)=>s.organizations.findIndex(org=>org.id===a.org)-s.organizations.findIndex(org=>org.id===b.org)),
@@ -40,7 +41,7 @@ export const usePrototypeStore = defineStore('connected-frontend', {
     notify(message,tone='info'){if(message)this.toast={id:++this.toastSequence,message:String(message),tone}},
     dismissToast(id){if(this.toast?.id===id)this.toast=null},
     api(path,options) { const context=runtime(this); context.client ||= createApiClient({token:()=>this.token,clear:()=>this.clear()}); return context.client(path,options) },
-    clear(){ runtimes.delete(this); useSession().clear(); this.$reset() },
+    clear(){ settleBusinessConfirmation(false); runtimes.delete(this); useSession().clear(); this.$reset() },
     async run(fn){
       if(this.busy)return false
       const context=runtime(this),isCurrent=()=>runtimes.get(this)===context
@@ -127,16 +128,32 @@ export const usePrototypeStore = defineStore('connected-frontend', {
       if(viewCurrent()&&this.activeOrg===org)this.currentSubmission=submission
       return {rows,submission:p.submission}
     },
-    async reviewAction(org,rows,action,extra={}){await this.api('/api/v1/review-items/actions',{method:'POST',body:reviewActionBody(action,rows,extra)});await this.loadGap(org,this.monthlySession(org).applied?.type)},
+    async reviewAction(org,rows,action,extra={}){
+      if(['APPROVE','EXCLUDE','REQUEST_EXPLANATION'].includes(action)) {
+        const request=action==='REQUEST_EXPLANATION'
+        await confirmBusinessAction({title:request?'소명 요청을 보낼까요?':'선택 항목을 승인할까요?', confirmLabel:request?'소명 요청 보내기':'항목 승인',
+          message:request?'선택한 항목의 소명을 조직 담당자에게 요청합니다.':'선택한 항목을 소명 요청 없이 승인합니다. 제출본 승인은 별도로 처리됩니다.',
+          details:[{label:'조직',value:this.organizations.find(o=>o.id===org)?.name||org},{label:'대상',value:rows.length+'개 항목'},...(request?[{label:'회신 기한',value:extra.dueAt?new Date(extra.dueAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}):'—'},{label:'요청 메시지',value:extra.message}]:[])]})
+      }
+      await this.api('/api/v1/review-items/actions',{method:'POST',body:reviewActionBody(action,rows,extra)});await this.loadGap(org,this.monthlySession(org).applied?.type)},
     async addToCart(org,rows,conditions){const unselected=rows.filter(r=>r.status==='검토 필요');if(unselected.length)await this.reviewAction(org,unselected,'SELECT');const latest=this.items[org]||[];this.carts[org]=[...(this.carts[org]||[]).filter(r=>!rows.some(n=>n.id===r.id)),...latest.filter(r=>rows.some(n=>n.id===r.id)).map(r=>({...r,conditions:{...conditions,type:r.conditions?.type||conditions.type}}))]},
-    async excludeItems(org,ids,note){await this.reviewAction(org,(this.items[org]||[]).filter(r=>ids.includes(r.id)),'APPROVE',{note});this.carts[org]=(this.carts[org]||[]).filter(r=>!ids.includes(r.id))},
+    async excludeItems(org,ids,note){await this.reviewAction(org,(this.items[org]||[]).filter(r=>ids.includes(r.id)),'APPROVE',{note});this.carts[org]=(this.carts[org]||[]).filter(r=>!ids.includes(r.id));this.notify(ids.length+'개 항목을 승인했습니다.')},
     removeCartItem(org,id,note){return this.excludeItems(org,[id],note)},
     async sendExplanation(org,message,due){const rows=(this.carts[org]||[]).filter(canSelectForReview);if(!rows.length)throw new Error('새로 소명을 요청할 항목이 없습니다.');await this.reviewAction(org,rows,'REQUEST_EXPLANATION',{message,dueAt:new Date(due+':00+09:00').toISOString()});await this.loadMonthly();await this.refreshBadge();return true},
-    async createRequest(type,organizationIds,due,message,year){const p=seoulPeriod();const dueAt=new Date(due+':00+09:00').toISOString();if(type==='MONTHLY_ACTUAL'&&this.monthlyRequest){await this.api('/api/v1/submission-requests/'+this.monthlyRequest.request.id+'/targets',{method:'POST',body:{organizationIds,dueAt,message}})}else{await this.api('/api/v1/submission-requests',{method:'POST',body:{type,year:year||p.year,month:type==='MONTHLY_ACTUAL'?p.month:null,organizationIds,dueAt,message}})};if(type==='MONTHLY_ACTUAL')await this.loadMonthly();else await this.loadAnnual(year)},
-    async openDetail(id){const current=latestRequest(this,'detail');this.activeReviewId=id;const r=await Promise.all([this.api('/api/v1/review-items/'+id),this.api('/api/v1/review-items/'+id+'/evidence'),this.api('/api/v1/review-items/'+id+'/versions')]);if(current()&&this.activeReviewId===id)[this.reviewDetail,this.evidence,this.versions]=r},
+    async createRequest(type,organizationIds,due,message,year){
+      const annual=type==='ANNUAL_PLAN'
+      await confirmBusinessAction({title:annual?'연간 계획 요청을 보낼까요?':'월간 시트 요청을 보낼까요?',confirmLabel:'요청 발송',message:organizationIds.length+'개 조직의 담당자에게 제출 요청을 보냅니다.',details:[{label:'대상 기간',value:annual?(year||seoulPeriod().year)+'년':seoulPeriod().year+'년 '+seoulPeriod().month+'월'},{label:'대상 조직',value:organizationIds.map(id=>this.organizations.find(o=>o.id===id)?.name||id).join(', ')},{label:'회신 기한',value:due.replace('T',' ')},{label:'요청 메시지',value:message}]})
+      const p=seoulPeriod();const dueAt=new Date(due+':00+09:00').toISOString();if(type==='MONTHLY_ACTUAL'&&this.monthlyRequest){await this.api('/api/v1/submission-requests/'+this.monthlyRequest.request.id+'/targets',{method:'POST',body:{organizationIds,dueAt,message}})}else{await this.api('/api/v1/submission-requests',{method:'POST',body:{type,year:year||p.year,month:type==='MONTHLY_ACTUAL'?p.month:null,organizationIds,dueAt,message}})};if(type==='MONTHLY_ACTUAL')await this.loadMonthly();else await this.loadAnnual(year)},
+    async openDetail(id){const current=latestRequest(this,'detail');this.activeReviewId=id;const r=await Promise.all([this.api('/api/v1/review-items/'+id),this.api('/api/v1/review-items/'+id+'/evidence'),this.api('/api/v1/review-items/'+id+'/versions')]);if(current()&&this.activeReviewId===id){
+      [this.reviewDetail,this.evidence,this.versions]=r
+      const org=this.activeOrg, source=(this.carts[org]||[]).find(row=>String(row.id)===String(id)) || (this.items[org]||[]).find(row=>String(row.id)===String(id)) || (this.recentCellTarget?.id===id?this.recentCellTarget.item:null)
+      const entry={id,organizationId:org,organizationName:this.organizations.find(row=>row.id===org)?.name||'—',name:source?.name||r[0].path,sourceCell:r[0].rows?.[0]?.sourceCell||'',submissionId:this.currentSubmission?.id,item:source?{...source}:{id,name:r[0].path},viewedAt:Date.now()}
+      this.recentCells=[entry,...this.recentCells.filter(row=>String(row.id)!==String(id))].slice(0,20)
+    }},
     async decideExplanation(id,verdict,note){
       const org=this.activeOrg,type=this.monthlySession(org).applied?.type
       if(this.activeReviewId!==id||!this.reviewDetail?.stateToken)throw new Error('검토 항목을 다시 선택해 주세요.')
+      await confirmBusinessAction({title:verdict==='ACCEPT'?'소명을 수락할까요?':'소명 보완을 요청할까요?',confirmLabel:verdict==='ACCEPT'?'소명 수락':'보완 요청',message:verdict==='ACCEPT'?'해당 항목의 소명을 수락합니다. 제출본 승인은 별도로 처리됩니다.':'조직 담당자에게 소명 보완을 요청합니다.',details:note?[{label:'검토 메모',value:note}]:[]})
       await this.api(`/api/v1/review-items/${id}/decisions`,{method:'POST',body:{verdict,note,expectedStateToken:this.reviewDetail.stateToken}})
       if(this.activeReviewId===id)await this.openDetail(id)
       await this.loadGap(org,type,{background:this.activeOrg!==org})
@@ -162,7 +179,9 @@ export const usePrototypeStore = defineStore('connected-frontend', {
       if(ids.length)await this.api('/api/v1/notifications/read',{method:'POST',body:{ids}})
       await this.refreshBadge()
     },
-    async decideSubmission(s,decision,comment,rejectedReviewItemIds=[]){const result=await this.api(`/api/v1/submissions/${s.id}/decisions`,{method:'POST',body:{decision,comment:comment||null,rejectedReviewItemIds,expectedStateToken:s.stateToken}});try{await this.markSubmissionNotificationsRead(s.id)}catch{this.notify('제출본 처리는 완료됐지만 알림 읽음 갱신에 실패했습니다. 알림 화면에서 다시 확인해 주세요.','error')};return result},
+    async decideSubmission(s,decision,comment,rejectedReviewItemIds=[],options={}){
+      if(!options.confirmed)await confirmBusinessAction({title:decision==='APPROVE'?'제출본을 승인할까요?':'재제출을 요청할까요?',confirmLabel:decision==='APPROVE'?'제출본 승인':'재제출 요청',message:decision==='APPROVE'?'이 제출본을 승인합니다. 모든 대상 조직의 승인이 완료되면 서버 기준에 따라 master가 생성됩니다.':'조직 담당자에게 파일 재제출을 요청합니다.',details:[{label:'조직',value:s.organization?.name||this.organizations.find(o=>o.latestSubmission?.id===s.id)?.name||'—'},{label:'버전',value:s.label||'—'},...(comment?[{label:'코멘트',value:comment}]:[])]})
+      const result=await this.api(`/api/v1/submissions/${s.id}/decisions`,{method:'POST',body:{decision,comment:comment||null,rejectedReviewItemIds,expectedStateToken:s.stateToken}});try{await this.markSubmissionNotificationsRead(s.id)}catch{this.notify('제출본 처리는 완료됐지만 알림 읽음 갱신에 실패했습니다. 알림 화면에서 다시 확인해 주세요.','error')};return result},
     async loadInbox(){
       const current=latestRequest(this,'inbox'),[inbox,history]=await Promise.all([this.api('/api/v1/inbox'),this.pages('/api/v1/submissions')])
       if(!current())return
