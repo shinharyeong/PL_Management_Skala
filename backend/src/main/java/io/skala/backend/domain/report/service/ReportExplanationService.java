@@ -196,8 +196,12 @@ public class ReportExplanationService {
         return result;
     }
 
-    /** 블록이 보는 검토 항목의 연·월. 실적은 기준 월, 추정은 기준 월+1(12월 기준 추정은 없음) */
-    static int[] itemMonthOf(int year, int month, GapComparisonType comparison) {
+    /** 목적: 보고서와 Agent가 같은 소명 대상 기간을 사용하도록 기존 규칙을 제공한다.
+     * Args: year 기준 연도, month 기준 월, comparison 비교 종류.
+     * Returns: 실적은 기준 월, 추정은 다음 월의 연·월. 12월 기준 추정은 null.
+     * Raises: NullPointerException 비교 종류가 없는 경우.
+     * Side Effects: 없음. */
+    public static int[] itemMonthOf(int year, int month, GapComparisonType comparison) {
         if (GapRules.itemScenarioOf(comparison) == Scenario.ACTUAL) {
             return new int[] {year, month};
         }

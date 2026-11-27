@@ -7,7 +7,7 @@ LangGraph는 모델 → 도구 → 관찰 → 모델 루프이며 고정 순서 
 
 ## 공개 요청
 
-`POST /api/v1/decision-agent/assistant`, PLANNER 인증, 저장 없는 조회·초안 작성.
+`POST /api/v1/decision-agent/assistant`, PLANNER 인증, 업무 데이터 저장 없는 조회·초안·임시 보고서 준비.
 
 ```json
 {"masterId":"3","analysisId":null,"expectedRevision":null,"message":"어느 조직을 우선 확인할까?","history":[{"role":"user","content":"이전 질문"},{"role":"assistant","content":"이전 답변"}]}
@@ -38,7 +38,8 @@ Spring capability에 호출 사용자·고정 snapshot·선택 analysis와 실�
 관찰 원장은 누적 192KiB 예산에서 오류 응답 여유를 확보하며 초과 자료는 작은 ERROR 관찰로 바꾼다.
 같은 호출의 오류도 캐시·실제 호출 예산에 포함한다. 선택 인자는 생략하고 null을 보내지 않는다.
 기본 limit은 profit_drivers=5, approved_explanations=10, report_item_breakdown=20이며 candidateIds는 정렬·중복 거부한다.
-금액·비율은 소수 JSON number 대신 정밀 문자열로 내보내고 파일·URL·stateToken을 제거한다.
+금액·비율은 소수 JSON number 대신 정밀 문자열로 내보내고 원천 파일·URL·stateToken을 제거한다.
+`report_export`만 서버가 발급한 임시 XLSX 영수증을 반환하며 임의 URL·파일 경로를 받지 않는다.
 
 매 콜백과 최종 반환 전에 실제 사용자의 active·PLANNER 및 분석 소유권·revision을 재확인한다.
 Tool 실행만 read-only 트랜잭션이며 AI HTTP 대기 동안 DB 연결·트랜잭션을 보유하지 않는다.
@@ -68,6 +69,10 @@ Tool 실행만 read-only 트랜잭션이며 AI HTTP 대기 동안 DB 연결·트
 | observation_detail | {observationId:string,path:string,offset?:0..10000,limit?:1..10} | 이번 실행의 성공 관찰에서 보존한 원문을 상세 조회. 배열·객체 항목 또는 긴 문자열의 다음 부분을 읽고 nextOffset을 반환. 새 DB·URL·파일 접근 없음 |
 | work_items | {} | 선택 analysis 소유 요청·회신·결정·후속 상태, DecisionWorkflowService.list |
 | review_request_draft | {sourceKind:candidate 또는 hypothesis,sourceId:string} | 저장된 후보/가설만 확인하고 요청 작성 화면에 넘길 초안, 저장·발송 없음 |
+| report_templates | {limit?:1..20,cursor?:string} | 기존 ReportTemplateService.list/get의 저장 틀 metadata. 기본 10개, cursor 최대 500자·같은 실행의 실제 nextCursor만 허용. 블록 metadata는 틀당 최대 20개 |
+| report_preview | {templateId:string,version:integer,blockId?:string} | 앞서 조회한 틀·버전만 기존 ReportAiRelayService.data → /v1/data로 채움. 고정 기준·원천 변경·조직·블록 범위 검사. version 1..2147483647, blockId 최대 64자 |
+| report_export | {previewObservationId:string} | 같은 실행의 성공 report_preview 값을 기존 XLSX 렌더러로 내보냄. 다시 수치를 채우지 않음. 원천·틀 변경 재확인 후 소유자 한정 임시 메모리 영수증 반환 |
+| explanation_overview | {comparison?:enum,organizationId?:string,offset?:0..10000,limit?:1..20} | ReportExplanationService.explanations/categories. 기본 ACTUAL_VS_PLAN, offset 0, limit 10. 전사 집계와 조직 선택·페이지 상세를 분리 |
 
 analysis가 필요한 도구에 analysis가 없으면 ERROR 및 분석 생성/선택 필요 안내.
 
@@ -82,19 +87,62 @@ analysis가 필요한 도구에 analysis가 없으면 ERROR 및 분석 생성/�
 
 ### 경영기획 업무에서 아직 연결하지 않은 범위
 
-현재 도구는 업무 도구 14개와 현재 관찰을 더 읽는 `observation_detail` 1개다. 조회 결과가 있다는 이유로
+현재 도구는 업무 도구 18개와 현재 관찰을 더 읽는 `observation_detail` 1개다. 조회 결과가 있다는 이유로
 소명 회수·승인·보고서 발행까지 완료했다고 표현하지 않는다.
 
 | 업무 | 현재 지원과 남은 연결 |
 | --- | --- |
 | 기준월 실적과 연간 전망 검토 | `monthly_pnl`과 기존 YEAR 도구로 구분한다. 여러 월의 추세·서로 다른 마스터 간 시계열 조회는 별도 기준 선택 계약이 필요하다. |
 | 조직별 손익 항목 조사 | `report_item_breakdown`으로 보고 항목 집계를 읽는다. 원천 계정·전표 행이나 Excel 셀 상세는 연결하지 않았다. 기존 `ReviewEvidenceService.evidence/versions`를 연결하려면 고정 제출본 소속·조회한 reviewItemId 범위와 파일·상태 토큰 제거가 필요하다. |
-| 소명 사유와 처리 이력 확인 | 승인 소명과 현재 관찰 상세만 제공한다. 기존 `ReviewItemQueryService.detail`의 모든 회차·미회신·첨부·재요청 상태는 전용 도구로 연결하지 않았다. 전역 소명 상한 때문에 전체 회수 현황을 추정하지 않는다. |
+| 소명 사유와 처리 이력 확인 | 승인 소명에 더해 `explanation_overview`로 전사 분류 집계·수락 전 항목·페이지 상세를 제공한다. 기존 `ReviewItemQueryService.detail`의 모든 회차·미회신·첨부·재요청 상태는 전용 도구로 연결하지 않았다. 수락 전과 미회신은 다르다. |
 | 월마감 현황·조직별 할 일 | 기존 `HomeQueryService.status/todos` API는 있으나 Agent 도구에 연결하지 않았다. 확정 마스터 분석과 현재 진행 요청의 기준을 구분해야 한다. |
-| 보고서 파일 생성 | 화면의 근거 보고서를 표시한다. 기존 보고서 틀·지표 데이터·Excel 내보내기 API는 Agent 도구에 연결하지 않았다. 해당 API의 기간·지표 기준을 고정 마스터와 대조하는 계약이 먼저 필요하다. |
+| 보고서 파일 생성 | 기존 저장 틀·값 채우기·XLSX 내보내기를 연결했다. Agent 경로는 해당 월 최신 마스터와 일치하는 기본 구조화 블록만 지원한다. 틀 작성·AI 편집·SQL 지표·다기간·구마스터 보고서 및 외부 발송은 미연결이다. |
 | 소명 요청·과제 배정·승인·실행 추적 갱신 | 기존 업무 API는 있으나 Agent는 조회와 요청 초안만 만든다. 상태 변경은 사람 확인·권한·revision·감사 이력과 연결해야 하며 현재 운영 DB 읽기 전용 범위에서 실행하지 않는다. |
 조회 전 fixed master 원천과 snapshot 수치 일치 확인. 현재 전망과 조회시점 비교값을 구분한다.
 승인·변경·임의 SQL·URL 접근·임의 후보 금액 입력 도구는 없다.
+
+### 보고서 근거와 임시 다운로드
+
+`report_preview`는 기존 `/v1/data`의 `dataStatus`, `blocks`, `source`를 유지한다.
+`source={version,year,month}`는 실제 조회 결과이며 원천이 확인되지 않으면 null이다.
+Agent는 CONFIRMED와 선택 마스터의 해당 월 최신 원천 일치를 요구하고, 조회 전후에 원천 매핑·
+재무값·검토/소명/분류의 fingerprint를 확인한다. AI의 `AI_DATABASE_URL`과 Spring DB는 같은 원천을
+가리켜야 한다. 응답의 버전 이름만으로 다른 DB에 같은 이름의 버전이 없는지 증명하지는 않는다.
+계획·전월·전년 비교와 소명은 조회 시점 자료이며 마스터 발행 당시 동결본이라고 주장하지 않는다.
+
+미리보기는 templateId/templateVersion/templateName/blockId, masterId/year/month,
+sourceVersion/sourceFingerprint/templateFingerprint/capturedAt/saved:false를 함께 가진다.
+fingerprint는 서버 대조용이며 모델 문맥·인용에서 제외한다. 저장 틀의 문장은 독립적으로 검증된
+재무 사실이 아니며 누락된 칸은 누락으로 남긴다. SQL/metricId/query, 다른 월·다기간 및 월별 추이
+블록은 Agent 경로에서 거부한다. 기존 보고서 화면의 지원 범위를 변경하지 않는다.
+
+`report_export`는 성공한 미리보기 관찰 ID를 요구한다. 원천·틀이 바뀌면 다시 조회하도록 안내하고,
+성공하면 artifactId/filename/contentType/byteSize/expiresAt/ready/format/masterId/templateId/
+templateVersion/previewObservationId/saved:false를 반환한다.
+XLSX의 소수·15자리 초과 정수는 원문 텍스트 셀로 보존하고 15자리 이하 정수만 숫자 셀로 기록한다.
+금액을 정수로 반올림하거나 Excel의 숫자 정밀도에 맞춰 줄이지 않는다. 텍스트 셀은 수식용 숫자와 구분한다.
+`GET /api/v1/decision-agent/report-artifacts/{artifactId}`는 현재 활성 PLANNER이면서 생성 소유자인
+경우에만 XLSX를 내려준다. 무인증·권한 철회·다른 소유자·만료를 거부하며 응답은 no-store다.
+TTL은 600초, 파일당 5MiB, 사용자당 5개, 전체 20MiB/100개다. DB·디스크 저장이 없으므로 재시작 시
+사라지며 다중 인스턴스 운영에는 같은 인스턴스로의 라우팅 또는 별도 공유 저장 계약이 필요하다.
+프론트는 동일 기준의 성공 미리보기와 영수증을 대조한 후 사용자가 누를 때 인증 GET을 실행한다.
+최종 설명이 실패해도 실제 성공한 미리보기·파일은 부분 결과로 유지한다.
+
+### 전사 소명 현황
+
+`comparison`은 ACTUAL_VS_PLAN/ACTUAL_VS_PREVIOUS/ESTIMATE_VS_PLAN/
+ESTIMATE_VS_PREVIOUS다.
+전사 값은 summary/categoryTotals/gapTotalWon/classifiedTotalWon이고, 최상위 acceptedCount/
+reviewingCount와 items/reviewing만 선택 조직을 따른다. 두 상세 배열에 offset/limit을 각각 적용하며
+hasMore/nextOffset으로 추가 페이지를 알린다. summary는 acceptedCount/reviewingCount/
+unclassifiedAcceptedCount/fullyClassified를 가진다.
+
+실적 비교는 기준월, 추정 비교는 다음 월이며 itemYear/itemMonth/itemScenario로 실제 대상 기간을
+명시한다. 12월 추정은 hasApplicablePeriod=false로 대상 기간이 없음을 표시한다. categoryTotals의
+subtotal=true는 하위 분류의 소계여서 다시 더하지 않는다. Gap은 항목의 부호 있는 비교 차액이며
+영업이익 효과·절감액이 아니다. 미분류의 양수·음수 상쇄로 matchesGapTotal=true가 될 수 있어
+완료 판정은 fullyClassified와 미분류·수락 전 건수를 함께 확인한다. reviewing은 수락된 소명이
+없는 항목이지 미회신을 뜻하지 않는다. 현재 월 조회만으로 반복 원인이나 미래 위험을 확정하지 않는다.
 
 ## 모델 종료 및 공개 응답
 

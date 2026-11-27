@@ -4,10 +4,11 @@ import PButton from 'primevue/button'
 import PTag from 'primevue/tag'
 import PDataTable from 'primevue/datatable'
 import PColumn from 'primevue/column'
+import DecisionReportToolResults from './DecisionReportToolResults.vue'
 import { formatMoney } from '../lib/decimal-display.js'
 import { workDateText } from './decision-workflow-api.js'
 
-const props = defineProps({ result: { type: Object, required: true }, baselineLabel: { type: String, default: '' }, year: Number })
+const props = defineProps({ result: { type: Object, required: true }, baselineLabel: { type: String, default: '' }, year: Number, api: Function })
 const emit = defineEmits(['source'])
 
 /** 보고서에 사용할 확인된 목표 비교를 반환한다.
@@ -30,6 +31,11 @@ const sources = computed(sourceRows)
  */
 function currentBrief() { return ['READY', 'PARTIAL'].includes(props.result.state) ? props.result.brief || null : null }
 const brief = computed(currentBrief)
+/** 완료한 같은 실행의 보고서·소명 결과만 상단 안내에 사용한다.
+ * Args: 없음. Returns: 검증된 도구 결과 또는 null. Raises: 없음. Side Effects: 없음.
+ */
+function currentReportTools() { return ['READY', 'PARTIAL'].includes(props.result.state) ? props.result.toolResults || null : null }
+const reportTools = computed(currentReportTools)
 /** 숫자를 반올림하거나 계산하지 않고 억원으로 표시한다.
  * Args: value 원 단위 십진 문자열. Returns: 정밀 숫자 또는 대시. Raises: 없음. Side Effects: 없음.
  */
@@ -42,7 +48,7 @@ function longMoney(value) { return money(value).length > 14 }
  * Args: value 원 단위 차이 문자열. Returns: 부호 있는 억원 숫자. Raises: 없음. Side Effects: 없음.
  */
 function signedMoney(value) { const text = money(value); return text !== '—' && text !== '0' && !text.startsWith('-') ? `+${text}` : text }
-/** 서버 목표 비교만으로 핵심 판단 문구를 정한다.
+/** 서버 목표 비교·분석 또는 성공한 보고서 도구에 맞는 핵심 안내를 정한다.
  * Args: 없음. Returns: 숫자 창작이 없는 판단 문구. Raises: 없음. Side Effects: 없음.
  */
 function judgment() {
@@ -52,6 +58,10 @@ function judgment() {
   if (goal.value?.forecastMeetsTarget === false) return '목표까지 추가 이익 확보가 필요합니다.'
   if (brief.value) return brief.value.unresolved.length ? '확인된 내용과 남은 질문을 정리했습니다.' : '요청한 내용을 근거와 함께 정리했습니다.'
   if (rows.value.length) return '조직별 계획 차이를 확인했습니다.'
+  if (reportTools.value?.artifacts.length) return '보고서 파일을 준비했습니다.'
+  if (reportTools.value?.previews.length) return '보고서 미리보기를 확인했습니다.'
+  if (reportTools.value?.explanations.length) return '전사 소명 현황을 확인했습니다.'
+  if (reportTools.value?.templates.length) return reportTools.value.templates.some(item => item.items.length) ? '보고서 자료 틀을 확인했습니다.' : '사용 가능한 보고서 자료 틀이 없습니다.'
   if (sources.value.length) return '목표 비교 자료를 추가로 확인해야 합니다.'
   if (props.result.state === 'ERROR') return '목표 비교를 완료하지 못했습니다.'
   return '검토할 목표를 기다리고 있습니다.'
@@ -66,11 +76,27 @@ function judgmentDetail() {
   if (brief.value) return brief.value.summary
   if (goal.value) return '선택한 확정 기준의 연간 전망과 입력 목표를 비교한 결과입니다.'
   if (rows.value.length) return '목표 대비 판단은 목표 금액을 입력한 비교 조회에서 확인할 수 있습니다.'
+  if (reportTools.value?.artifacts.length) return '이번 실행에서 확인한 미리보기와 연결된 파일입니다. 아래에서 유효 기한을 확인하고 다운로드할 수 있습니다.'
+  if (reportTools.value?.previews.length) return '선택한 자료 틀에 현재 기준의 조회 결과를 채웠습니다. 파일 준비 여부는 별도 다운로드 카드에서 확인할 수 있습니다.'
+  if (reportTools.value?.explanations.length) return '전사 합계와 조회한 조직·페이지의 수락 원문을 구분해 표시했습니다. 비교 기준과 소명 대상 기간을 함께 확인하세요.'
+  if (reportTools.value?.templates.length) return reportTools.value.templates.some(item => item.items.length) ? '조회한 자료 틀과 버전으로 보고서 미리보기를 요청할 수 있습니다.' : '보고서 화면에서 자료 틀을 등록한 뒤 현재 기준의 미리보기를 요청할 수 있습니다. 이번 실행에서 파일을 만들지 않았습니다.'
   if (sources.value.length) return '현재 확인된 근거는 아래 출처에서 볼 수 있습니다. 목표와의 차이는 비교 조회 후 표시합니다.'
   if (props.result.state === 'ERROR') return props.result.incompleteReason || props.result.message || '기준과 목표를 확인하고 다시 비교해 주세요.'
   return '왼쪽에서 기준과 목표를 정하면, 확인한 숫자와 근거가 이 보고서에 모입니다.'
 }
 const detail = computed(judgmentDetail)
+/** 실제 읽은 소명 원문의 고유 건수를 전사 집계와 구분해 안내한다.
+ * Args: 없음. Returns: 승인 소명 조회 또는 보고서 소명 원문 범위 설명.
+ * Raises: 없음. Side Effects: 없음; 전사 수락 건수를 더하거나 다른 비교 결과를 합산하지 않는다.
+ */
+function explanationEvidenceCaption() {
+  if (!['READY', 'PARTIAL'].includes(props.result.state)) return '승인 소명은 추가 확인이 필요합니다.'
+  const overviews = reportTools.value?.explanations || []
+  if (!overviews.length) return props.result.explanationCount == null ? '승인 소명은 추가 확인이 필요합니다.' : `승인 소명 ${props.result.explanationCount}건 조회 · 개선 효과의 검증이나 추진 승인을 뜻하지 않습니다.`
+  const ids = new Set(overviews.flatMap(overview => overview.items.map(item => item.explanationId)))
+  const separate = props.result.explanationCount == null ? '' : ` 별도 승인 소명 조회 ${props.result.explanationCount}건과 중복될 수 있습니다.`
+  return `보고서 소명 현황 조회 · 조회한 페이지의 수락 원문 ${ids.size}건 확인. 비교 기준·조직별 범위는 아래 현황에서 확인하세요.${separate} 원문은 개선 효과의 검증이나 추진 승인을 뜻하지 않습니다.`
+}
 /** 목표 이상 여부에 맞는 차이 금액을 서버 결과에서 선택한다.
  * Args: 없음. Returns: 원 단위 차이 또는 null. Raises: 없음. Side Effects: 계산 없음.
  */
@@ -174,10 +200,12 @@ function findingSeverity(kind) { return kind === 'FACT' ? 'secondary' : kind ===
 
     <section class="preview-report__section preview-report__evidence">
       <div class="preview-report__section-heading"><h3><span>{{ brief ? '03' : '02' }}</span> 판단을 뒷받침하는 자료</h3><span class="preview-report__source-count">{{ sources.length ? `${sources.length}개 조회 출처` : '조회 전' }}</span></div>
-      <p class="preview-report__caption">{{ result.explanationCount == null ? '승인 소명은 추가 확인이 필요합니다.' : `승인 소명 ${result.explanationCount}건 조회 · 개선 효과의 검증이나 추진 승인을 뜻하지 않습니다.` }}</p>
+      <p class="preview-report__caption">{{ explanationEvidenceCaption() }}</p>
       <div v-if="sources.length" class="preview-report__sources"><PButton v-for="source in sources" :key="source.id" :label="source.label" icon="pi pi-external-link" text size="small" @click="openSource(source.id)" /></div>
       <p v-else class="preview-report__source-placeholder">확인한 출처와 원문으로 연결됩니다.</p><details v-if="result.warnings?.length" class="preview-report__conditions"><summary>검토 조건 {{ result.warnings.length }}건</summary><ul><li v-for="warning in result.warnings" :key="warning">{{ warning }}</li></ul></details>
     </section>
+
+    <DecisionReportToolResults v-if="['READY', 'PARTIAL'].includes(result.state)" :result="result.toolResults" :api="api" :scope-key="(result.context?.masterId || '') + ':' + (result.executionId || '')" @source="openSource" />
 
     <section class="preview-report__next">
       <div class="preview-report__section-heading"><h3><span>{{ brief ? '04' : '03' }}</span> 요청 항목과 다음 확인</h3><span v-if="brief" class="preview-report__source-count">{{ brief.answeredCount }} / {{ brief.requirements.length }}개 답변</span></div>

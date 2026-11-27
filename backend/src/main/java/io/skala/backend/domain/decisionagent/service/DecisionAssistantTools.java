@@ -20,7 +20,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** 허용된 읽기 도구를 기존 업무 서비스에 연결한다. 새로운 집계 SQL이나 상태 변경 경로는 없다. */
+/** 허용 도구를 기존 업무 서비스와 메모리 보고서 생성에 연결한다. 업무 상태는 변경하지 않는다. */
 @Service
 @RequiredArgsConstructor
 public class DecisionAssistantTools {
@@ -32,7 +32,9 @@ public class DecisionAssistantTools {
             Map.entry("submission_versions", "승인 제출 버전 조회"), Map.entry("submission_comparison", "제출 버전 비교"),
             Map.entry("scenario_preview", "시나리오 미리보기"), Map.entry("goal_preview", "저장하지 않는 목표 검토"), Map.entry("work_items", "검토·실행 상태 조회"),
             Map.entry("review_request_draft", "조직 확인 요청 초안"), Map.entry("observation_detail", "조회 근거 상세 확인"),
-            Map.entry("monthly_pnl", "기준월 손익 조회"), Map.entry("report_item_breakdown", "조직별 손익 항목 상세"));
+            Map.entry("monthly_pnl", "기준월 손익 조회"), Map.entry("report_item_breakdown", "조직별 손익 항목 상세"),
+            Map.entry("report_templates", "보고서 자료 틀 조회"), Map.entry("report_preview", "보고서 미리보기"),
+            Map.entry("report_export", "XLSX 보고서 준비"), Map.entry("explanation_overview", "전사 소명 분류·검토 현황"));
     private final HomePnlQueryService home;
     private final ArchiveQueryService archive;
     private final VersionComparisonService comparison;
@@ -45,6 +47,8 @@ public class DecisionAssistantTools {
     private final SubmissionRepository submissions;
     private final AppUserRepository users;
     private final DecisionAssistantJson json;
+    private final DecisionReportTools reports;
+    private final DecisionExplanationTools explanationOverview;
 
     /** 목적: 공개 호출 이름을 고정 표시명으로 매핑한다. Args: tool 도구 이름. Returns: 표시명. Raises: 없음. Side Effects: 없음. */
     public String label(String tool) { return LABELS.getOrDefault(tool, "허용되지 않은 조회"); }
@@ -76,10 +80,36 @@ public class DecisionAssistantTools {
             case "goal_preview" -> Set.of("targetProfitEok", "targetYear");
             case "review_request_draft" -> Set.of("sourceKind", "sourceId");
             case "observation_detail" -> Set.of("observationId", "path", "offset", "limit");
+            case "report_templates" -> Set.of("limit", "cursor");
+            case "report_preview" -> Set.of("templateId", "version", "blockId");
+            case "report_export" -> Set.of("previewObservationId");
+            case "explanation_overview" -> Set.of("comparison", "organizationId", "offset", "limit");
             default -> Set.of();
         };
         input.fieldNames().forEachRemaining(field -> { if (!allowed.contains(field) || input.get(field).isNull()) throw new IllegalArgumentException("허용하지 않은 인자입니다."); });
         ObjectNode args = (ObjectNode) input.deepCopy();
+        if (tool.equals("report_templates")) {
+            boundedInteger(args, "limit", 10, 1, 20);
+            if (args.has("cursor")) limitedText(args.get("cursor"), 500);
+        }
+        if (tool.equals("report_preview")) {
+            identifier(args.get("templateId"), true);
+            if (!args.has("version")) throw new IllegalArgumentException("조회한 자료 틀 버전이 필요합니다.");
+            boundedInteger(args, "version", 1, 1, Integer.MAX_VALUE);
+            if (args.has("blockId")) limitedText(args.get("blockId"), 64);
+        }
+        if (tool.equals("report_export")) {
+            limitedText(args.get("previewObservationId"), 100);
+            if (!args.get("previewObservationId").textValue().matches("obs-[1-9][0-9]*"))
+                throw new IllegalArgumentException("현재 실행의 보고서 미리보기 관찰이 필요합니다.");
+        }
+        if (tool.equals("explanation_overview")) {
+            if (!args.has("comparison")) args.put("comparison", "ACTUAL_VS_PLAN");
+            if (!args.get("comparison").isTextual() || !Set.of("ACTUAL_VS_PLAN", "ACTUAL_VS_PREVIOUS", "ESTIMATE_VS_PREVIOUS", "ESTIMATE_VS_PLAN").contains(args.get("comparison").textValue()))
+                throw new IllegalArgumentException("지원하는 소명 비교 기준을 선택해 주세요.");
+            boundedInteger(args, "offset", 0, 0, 10000);
+            boundedInteger(args, "limit", 10, 1, 20);
+        }
         if (tool.equals("observation_detail")) {
             identifier(args.get("observationId"), false);
             JsonNode path = args.get("path");
@@ -128,7 +158,7 @@ public class DecisionAssistantTools {
         return json.canonical(args);
     }
 
-    /** 목적: 권한·목표 연도 일치 확인 후 기존 업무 조회 또는 현재 원장 상세 읽기를 실행한다. Args: run 사용자·기준, tool 허용 이름, args 정규 인자. Returns: 조회 자료와 비교 한계. Raises: ToolFailure 목표·기준 연도 불일치 또는 업무/조회 오류. Side Effects: DB 읽기만; 목표 연도가 다르면 원천 재조회·계산을 하지 않으며 상세 읽기도 업무 자료 재조회·저장·발송 없음. */
+    /** 목적: 권한·목표 연도 일치 확인 후 기존 업무 조회·보고서 준비·현재 원장 상세 읽기를 실행한다. Args: run 사용자·기준, tool 허용 이름, args 정규 인자. Returns: 조회 자료와 비교 한계. Raises: ToolFailure 목표·기준 불일치 또는 업무/조회 오류. Side Effects: DB 읽기와 report_export의 한시적 메모리 XLSX 생성. 업무 저장·발송·승인 없음. */
     @Transactional(readOnly = true)
     public ToolValue execute(DecisionAssistantGateway.Run run, String tool, JsonNode args) {
         assertCurrent(run);
@@ -157,8 +187,18 @@ public class DecisionAssistantTools {
             case "goal_preview" -> goalPreview(run, args.get("targetProfitEok").textValue());
             case "work_items" -> workItems(run);
             case "review_request_draft" -> draft(run, args);
+            case "report_templates" -> reports.templates(run, args);
+            case "report_preview" -> reports.preview(run, args);
+            case "report_export" -> reports.export(run, args);
+            case "explanation_overview" -> explanationOverview.overview(run, args);
             default -> throw new ToolFailure("허용되지 않은 도구입니다.");
         };
+    }
+
+    /** 목적: 새 Tool의 제한된 텍스트 인자를 검증한다. Args: value JSON 값, maximum 최대 길이. Returns: 없음. Raises: IllegalArgumentException 누락·공백·유형·길이 오류. Side Effects: 없음. */
+    private void limitedText(JsonNode value, int maximum) {
+        if (value == null || !value.isTextual() || value.textValue().isBlank() || value.textValue().length() > maximum)
+            throw new IllegalArgumentException("도구의 문자열 인자가 올바르지 않습니다.");
     }
 
     /** 목적: 현재 실행 원장의 성공 관찰을 페이지 단위로 읽는다. Args: run 실행 원장, args 검증한 관찰·경로·범위. Returns: 원문 부분과 다음 위치. Raises: ToolFailure 원천·경로·범위 오류. Side Effects: 없음; 업무 DB 재조회·수정과 원장 변형을 하지 않는다. */

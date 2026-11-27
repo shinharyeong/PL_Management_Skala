@@ -8,20 +8,30 @@ import PrimeVue from 'primevue/config'
 import { buildPreviewResult } from './decision-preview-result.js'
 
 let component
-/** 보고서 SFC를 파일을 만들지 않고 메모리에서 컴파일한다.
+const compiledModules = new Map()
+/** SFC와 하위 SFC를 파일 생성 없이 메모리 모듈로 컴파일한다.
+ * Args: filename SFC 파일 URL. Returns: data URL Promise. Raises: 읽기·컴파일·해석 오류.
+ * Side Effects: 소스 읽기와 메모리 캐시만 사용한다.
+ */
+async function sfcModule(filename) {
+  if (compiledModules.has(filename.href)) return compiledModules.get(filename.href)
+  const { descriptor } = parse(await readFile(filename, 'utf8'), { filename: filename.pathname })
+  let code = compileScript(descriptor, { id: 'preview-report-test', inlineTemplate: true }).content
+  const imports = [...code.matchAll(/from (['"])([^'"]+)\1/g)]
+  for (const [match, quote, specifier] of imports) {
+    const resolved = specifier.endsWith('.vue') ? await sfcModule(new URL(specifier, filename))
+      : specifier.startsWith('.') ? new URL(specifier, filename).href : import.meta.resolve(specifier)
+    code = code.replace(match, `from ${quote}${resolved}${quote}`)
+  }
+  const result = `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
+  compiledModules.set(filename.href, result)
+  return result
+}
+/** 실제 보고서와 하위 결과 컴포넌트를 메모리에서 불러온다.
  * Args: 없음. Returns: 컴포넌트 Promise. Raises: 소스·컴파일 오류. Side Effects: 소스 읽기만 수행.
  */
 async function reportComponent() {
-  if (component) return component
-  const filename = new URL('./DecisionPreviewReport.vue', import.meta.url)
-  const { descriptor } = parse(await readFile(filename, 'utf8'), { filename: filename.pathname })
-  let code = compileScript(descriptor, { id: 'preview-report-test', inlineTemplate: true }).content
-  /** 메모리 모듈에서 실제 의존성의 절대 주소를 사용한다.
-   * Args: match 전체 표현, quote 따옴표, specifier 모듈명. Returns: import 표현. Raises: 모듈 해석 오류. Side Effects: 없음.
-   */
-  function resolveImport(match, quote, specifier) { return `from ${quote}${specifier.startsWith('.') ? new URL(specifier, filename).href : import.meta.resolve(specifier)}${quote}` }
-  code = code.replace(/from (['"])([^'"]+)\1/g, resolveImport)
-  component = (await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)).default
+  if (!component) component = (await import(await sfcModule(new URL('./DecisionPreviewReport.vue', import.meta.url)))).default
   return component
 }
 /** 검증 DTO를 실제 PrimeVue 컴포넌트의 HTML로 렌더링한다.
@@ -141,4 +151,70 @@ test('partial narrative is shown with incomplete status and the server reason ra
   const stale = await renderReport(reportData({ state: 'STALE', brief, executionSummary: '조회 성공 2건 · 답변 미완료', incompleteReason: reason }))
   assert.ok(!stale.includes(reason))
   assert.ok(!stale.includes(brief.findings[0].text))
+})
+
+/** 실제 도구 응답을 한 장 보고서에 연결하고 파일·소명 범위와 원문 이스케이프를 확인한다.
+ * Args: 없음. Returns: Promise<void>. Raises: AssertionError. Side Effects: 메모리 응답 투영·SSR만 사용한다.
+ */
+test('report tool results render preview, linked download and explanation coverage even after incomplete narrative', async function reportTools() {
+  const context = { masterId: '101', year: 2026, baseMonth: 10, analysisId: null, revision: null }
+  /** 같은 기준의 성공 관찰을 만든다. Args: tool 이름, id 식별자, data 자료. Returns: 관찰. Raises: 없음. Side Effects: 없음. */
+  function observation(tool, id, data) { return { tool, id, data, label: tool, basis: context, status: 'SUCCESS', warnings: [] } }
+  const basis = { masterId: '101', year: 2026, month: 10, sourceVersion: 'master-2026-10' }
+  const observations = [
+    observation('report_preview', 'obs-1', { ...basis, templateId: '7', templateVersion: 3, templateName: '경영회의 자료', blockId: null, dataStatus: 'CONFIRMED', saved: false,
+      blocks: [{ id: 't', kind: 'title', text: '실제 조회한 보고서' }, { id: 'p', kind: 'paragraph', text: '<script>수락 소명 원문</script>' }, { id: 'c', kind: 'numbercard', cards: [{ label: '조회 금액', won: '-123456789.123456' }] }] }),
+    observation('report_export', 'obs-2', { artifactId: '12345678-1234-4321-8432-123456789012', previewObservationId: 'obs-1', filename: '경영회의_2026-10.xlsx',
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', byteSize: 4000, expiresAt: '2099-01-01T00:00:00Z',
+      ready: true, masterId: '101', templateId: '7', templateVersion: 3, format: 'XLSX', saved: false }),
+    observation('explanation_overview', 'obs-3', { ...basis, comparison: 'ESTIMATE_VS_PREVIOUS', itemYear: 2026, itemMonth: 11, itemScenario: 'ESTIMATE', hasApplicablePeriod: true,
+      selectedOrganizationId: '8', summary: { acceptedCount: 12, reviewingCount: 4, unclassifiedAcceptedCount: 2, fullyClassified: false },
+      gapTotalWon: '-123456789.123456', classifiedTotalWon: '-100000000', matchesGapTotal: false,
+      categoryTotals: [{ categoryId: '1', name: '집행 시점', gapAmountWon: '-100000000', subtotal: true }], categories: { items: [{ id: '1', name: '집행 시점' }] },
+      items: [{ explanationId: '20', organization: { id: '8', name: '조회한 조직' }, item: '광고비', gapAmount: '-123456789.123456', answer: '<img src=x onerror=bad()>일정 변경', categoryId: '1' }],
+      reviewing: [{ organization: { name: '확인 조직' }, item: '임차료', gapAmount: '150000000' }], offset: 0, limit: 10, nextOffset: 10, hasMore: true }),
+  ]
+  const result = buildPreviewResult({ executionId: 'current-report', phase: 'RESULT', source: 'CHAT', payload: { masterId: '101', analysisId: null, expectedRevision: null },
+    response: { mode: 'MODEL', status: 'LIMIT_REACHED', context, observations, limitations: [] } }, context)
+  const html = await renderReport(result)
+  assert.match(html, /실제 조회한 보고서/); assert.match(html, /XLSX 다운로드/); assert.match(html, /경영회의_2026-10.xlsx/)
+  assert.match(html, /보고서 파일을 준비했습니다/); assert.ok(!html.includes('목표 비교 자료를 추가로 확인해야 합니다'))
+  assert.match(html, /조회한 페이지의 수락 원문 1건 확인/); assert.ok(!html.includes('승인 소명은 추가 확인이 필요합니다'))
+  assert.match(html, /-1\.23456789123456억 원/); assert.match(html, /서버 메모리에만 보관/)
+  assert.match(html, /소명 대상: 2026년 11월 · 추정/); assert.match(html, /전사 수락 소명/); assert.match(html, /12건/)
+  assert.match(html, /위 분류 합계·건수는 전사 기준/); assert.match(html, /상위 합계/); assert.match(html, /영업이익 영향이나 개선 가능액이 아닙니다/)
+  assert.match(html, /상세 자료가 더 있습니다/); assert.match(html, /수락 소명이 없는 항목을 모두 미회신으로 판단하지 않습니다/)
+  assert.ok(!html.includes('<script>수락') && !html.includes('<img src=x'))
+  assert.equal((html.match(/class="preview-report"/g) || []).length, 1)
+  for (const state of ['LOADING', 'STALE', 'EMPTY']) {
+    const hidden = await renderReport({ ...result, state })
+    assert.ok(!hidden.includes('경영회의_2026-10.xlsx') && !hidden.includes('실제 조회한 보고서') && !hidden.includes('조회한 조직'))
+    assert.ok(!hidden.includes('보고서 파일을 준비했습니다') && !hidden.includes('수락 원문 1건'))
+  }
+  const repeated = { ...result, explanationCount: 3, toolResults: { ...result.toolResults,
+    explanations: [...result.toolResults.explanations, { ...result.toolResults.explanations[0], observationId: 'obs-4', comparison: 'ACTUAL_VS_PLAN' }] } }
+  const repeatedHtml = await renderReport(repeated)
+  assert.match(repeatedHtml, /조회한 페이지의 수락 원문 1건 확인/)
+  assert.match(repeatedHtml, /별도 승인 소명 조회 3건과 중복될 수 있습니다/)
+  assert.ok(!repeatedHtml.includes('수락 원문 12건') && !repeatedHtml.includes('수락 원문 2건'))
+  for (const [excluded, expected] of [[['artifacts'], '보고서 미리보기를 확인했습니다'], [['artifacts', 'previews'], '전사 소명 현황을 확인했습니다']]) {
+    const toolResults = { ...result.toolResults }
+    for (const key of excluded) toolResults[key] = []
+    const partialHtml = await renderReport({ ...result, toolResults })
+    assert.ok(partialHtml.includes(expected)); assert.ok(!partialHtml.includes('보고서 파일을 준비했습니다'))
+  }
+})
+
+/** 빈 자료 틀 목록을 목표 비교 실패와 구분하고 아직 없는 파일을 약속하지 않는다.
+ * Args: 없음. Returns: Promise<void>. Raises: AssertionError. Side Effects: 합성 결과의 메모리 SSR만 사용한다.
+ */
+test('empty report template catalog has an explicit report preparation state', async function emptyTemplates() {
+  const toolResults = { templates: [{ observationId: 'obs-1', items: [], nextCursor: null }], previews: [], artifacts: [], explanations: [], invalidCount: 0 }
+  const result = reportData({ state: 'PARTIAL', sources: [{ id: 'obs-1', label: '보고서 자료 틀 조회' }], toolResults })
+  const html = await renderReport(result)
+  assert.match(html, /사용 가능한 보고서 자료 틀이 없습니다/)
+  assert.match(html, /이번 실행에서 파일을 만들지 않았습니다/)
+  assert.ok(!html.includes('XLSX 다운로드') && !html.includes('목표 비교 자료를 추가로 확인해야 합니다'))
+  const stale = await renderReport({ ...result, state: 'STALE', explanationCount: 19 })
+  assert.ok(!stale.includes('자료 틀을 등록한 뒤') && !stale.includes('승인 소명 19건'))
 })

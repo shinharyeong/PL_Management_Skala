@@ -29,7 +29,8 @@ import org.springframework.stereotype.Service;
 /**
  * RPT-16 XLSX 내보내기(FR-RPT-009). 결과는 저장하지 않는다.
  * 화면에서 받은 숫자를 쓰지 않고, 저장된 틀과 기준 월로 report-ai에 다시 채워(RPT-10과 같은 경로) 원 단위 값 그대로 넣는다.
- * 셀의 won(원 단위)이 있으면 숫자로, 없으면 화면 글자로. PNG·PDF는 화면(브라우저)에서 만든다.
+ * 원 금액은 15자리 이하 정수만 숫자로 기록하고 소수·큰 정수는 정밀 원문 문자열을 보존한다.
+ * won이 없으면 기존 화면 글자를 사용하며 PNG·PDF는 화면(브라우저)에서 만든다.
  */
 @Service
 @RequiredArgsConstructor
@@ -46,8 +47,41 @@ public class ReportExportService {
     public record Export(String filename, byte[] content) {
     }
 
+    /** 목적: 기존 보고서 조회를 채워 XLSX를 반환한다. Args: user 기획자, request 저장 틀·기간.
+     * Returns: 메모리 XLSX. Raises: 권한/자료/외부 조회 오류.
+     * Side Effects: DB 읽기·기존 AI 데이터 API 호출만, 파일·업무 저장 없음. */
     public Export export(AuthenticatedUser user, ExportRequest request) {
         TemplateResponse template = templates.get(user, parseId(request.templateId()), request.version());
+        List<JsonNode> blocks = selectedBlocks(template,request);
+        int year = request.period().year();
+        int month = request.period().month();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("base", Map.of("year", year, "month", month));
+        body.put("blocks", metrics.resolveMetrics(blocks));
+        JsonNode filled = reportAi.post("/v1/data", body, user.id());
+        return render(template,request,blocks,filled);
+    }
+
+    /** 목적: 서버가 검증한 성공 관찰을 다시 조회하지 않고 같은 XLSX 렌더러에 전달한다.
+     * Args: user 기획자, request 실제 조회된 저장 틀 버전·블록·기간, filled 서버의 성공 데이터 관찰.
+     * Returns: 미리보기와 같은 채운 값의 메모리 XLSX.
+     * Raises: 권한/틀/입력 불일치 또는 렌더링 오류.
+     * Side Effects: 저장 틀 DB 읽기와 메모리 렌더링만. 공개 HTTP 입력으로 filled를 받지 않는다. */
+    public Export exportFilled(AuthenticatedUser user, ExportRequest request, JsonNode filled) {
+        TemplateResponse template = templates.get(user,parseId(request.templateId()),request.version());
+        List<JsonNode> blocks = selectedBlocks(template,request);
+        if (filled == null || !filled.path("blocks").isArray() || filled.path("blocks").size()!=blocks.size())
+            throw new BusinessException(ErrorCode.INVALID_REQUEST,"채운 보고서 블록이 자료 틀과 다릅니다.");
+        for (int i=0;i<blocks.size();i++) {
+            if (!blocks.get(i).path("id").equals(filled.path("blocks").get(i).path("id")))
+                throw new BusinessException(ErrorCode.INVALID_REQUEST,"채운 보고서의 블록 순서가 다릅니다.");
+        }
+        return render(template,request,blocks,filled);
+    }
+
+    /** 목적: 기존 자료 틀에서 요청한 블록만 순서대로 선택한다. Args: template 저장 틀, request 블록 선택.
+     * Returns: 실제 블록 목록. Raises: 미존재 404. Side Effects: 없음. */
+    private List<JsonNode> selectedBlocks(TemplateResponse template, ExportRequest request) {
         List<JsonNode> blocks = new ArrayList<>();
         for (JsonNode block : template.definition().path("blocks")) {
             if (request.blockId() == null || request.blockId().equals(block.path("id").asText())) {
@@ -57,13 +91,16 @@ public class ReportExportService {
         if (blocks.isEmpty()) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "내보낼 블록이 없습니다.");
         }
+        return blocks;
+    }
+
+    /** 목적: 기존 보고서 값·서식 규칙으로 workbook을 메모리에 만든다.
+     * Args: template 저장 틀, request 기간, blocks 선택 블록, filled 검증된 채운 값.
+     * Returns: 파일명·XLSX 바이트. Raises: UncheckedIOException 생성 오류.
+     * Side Effects: 메모리만 사용하고 파일 저장·업무 변경 없음. */
+    private Export render(TemplateResponse template, ExportRequest request, List<JsonNode> blocks, JsonNode filled) {
         int year = request.period().year();
         int month = request.period().month();
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("base", Map.of("year", year, "month", month));
-        body.put("blocks", metrics.resolveMetrics(blocks));
-        JsonNode filled = reportAi.post("/v1/data", body, user.id());
-
         Map<String, JsonNode> byId = new LinkedHashMap<>();
         filled.path("blocks").forEach(b -> byId.put(b.path("id").asText(), b));
         String status = filled.path("dataStatus").asText("NONE");
@@ -88,6 +125,14 @@ public class ReportExportService {
                 Row row = info.createRow(i++);
                 row.createCell(0).setCellValue(kv[0]);
                 row.createCell(1).setCellValue(kv[1]);
+            }
+            if (filled.hasNonNull("masterId")) {
+                for (String[] kv : new String[][] {{"기준 마스터",filled.path("masterId").asText()},
+                        {"보고서 조회 버전",filled.path("sourceVersion").asText()},
+                        {"데이터 조회 시각",filled.path("capturedAt").asText()},
+                        {"비교 기준", "계획·전월 비교값과 소명은 조회 시점 기준"}}) {
+                    Row row=info.createRow(i++); row.createCell(0).setCellValue(kv[0]); row.createCell(1).setCellValue(kv[1]);
+                }
             }
             info.setColumnWidth(0, 18 * 256);
             info.setColumnWidth(1, 40 * 256);
@@ -152,12 +197,14 @@ public class ReportExportService {
         return text(sheet, r, "데이터 없음", st.missing);
     }
 
-    /** 셀: won이 있으면 원 단위 숫자, 머리 칸은 굵게, 계산할 수 없으면 '데이터 없음' */
+    /** 목적: 원 금액의 정밀도를 보존하고 결측·머리 칸의 기존 표시를 유지한다.
+     * Args: target Excel 셀, cell 채운 보고서 셀, st 서식.
+     * Returns: 없음. Raises: POI 셀 기록 오류.
+     * Side Effects: 메모리 workbook만 변경하며 소수·큰 정수는 원문 문자열로 기록한다. */
     private void cell(Cell target, JsonNode cell, Styles st) {
         if (cell.hasNonNull("won")) {
             try {
-                target.setCellValue(new BigDecimal(cell.get("won").asText()).doubleValue());
-                target.setCellStyle(st.won);
+                writeNumber(target,cell.get("won").asText(),st);
                 return;
             } catch (NumberFormatException ignored) {
                 // 글자로 넣는다
@@ -170,12 +217,30 @@ public class ReportExportService {
         styled(target, text, cell.path("hdr").asBoolean(false) ? st.bold : null);
     }
 
+    /** 목적: SQL 표의 실제 숫자는 정밀하게 기록하고 기존 문자열은 그대로 유지한다.
+     * Args: target Excel 셀, v 원문 JSON 값, st 서식.
+     * Returns: 없음. Raises: 숫자 변환 또는 POI 기록 오류.
+     * Side Effects: 메모리 셀만 변경하며 숫자처럼 보이는 SQL 문자열을 숫자로 바꾸지 않는다. */
     private void value(Cell target, JsonNode v, Styles st) {
         if (v.isNumber()) {
-            target.setCellValue(v.decimalValue().doubleValue());
-            target.setCellStyle(st.won);
+            writeNumber(target,v.asText(),st);
         } else if (!v.isNull()) {
             target.setCellValue(trim(v.asText()));
+        }
+    }
+
+    /** 목적: Excel 숫자 정밀도·정수 서식 때문에 원문 수치가 변하지 않게 기록한다.
+     * Args: target Excel 셀, source 원문 숫자 문자열, st 정수 원 단위 서식.
+     * Returns: 없음. Raises: NumberFormatException 숫자 형식 오류 또는 POI 기록 오류.
+     * Side Effects: 15자리 이하 정수만 숫자 셀로, 소수·큰 정수는 원문 문자열 셀로 메모리에 기록한다. */
+    private void writeNumber(Cell target, String source, Styles st) {
+        BigDecimal number=new BigDecimal(source);
+        long integerDigits=(long) number.precision()-number.scale();
+        if (number.scale()<=0 && integerDigits<=15) {
+            target.setCellValue(number.doubleValue());
+            target.setCellStyle(st.won);
+        } else {
+            target.setCellValue(trim(source));
         }
     }
 

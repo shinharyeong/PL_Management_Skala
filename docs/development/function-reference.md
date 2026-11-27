@@ -456,7 +456,10 @@ OrgImprovementPanel 회신 → planner 근거 검토 → 분석 재조회 → �
 | `services/llm.ask_tools` | settings·대화·허용 schema → native AIMessage. json_mode 없이 일반 조회는 tool_choice=auto, plan/finish/repair 단일 제어 함수는 required·parallel_tool_calls=false를 전송하며 도구 자체는 실행하지 않음 |
 | `api/contract.read_assistant_request` | 내부 인증된 Request → 기존 256KiB 제한 reader·AssistantRequest. history는 user/assistant 텍스트만, 오류 413/422 |
 | `decision_agent_assistant` | 검증 DTO → threadpool run_assistant → 공개 대화 응답. 고정 context 오류 422 |
-| `decision_agent/assistant_models.py` | 고정 context·최대 여덟 history·열세 읽기 도구 인자·관찰·AnalysisPlan·GroundedFinding·RequirementResolution·GroundedFinish DTO. 요구 항목 최대 6개·설명 최대 8개·설명별 인용 ID 1~4개. FinishAnswer·FinishSelection은 기존 검증·호환 경로에 유지. 모델 인자에서 master·사용자·SQL·URL·새 후보 금액을 받지 않음 |
+| `decision_agent/assistant_models.py` | 고정 context·최대 여덟 history·19개 업무 도구 인자·관찰·AnalysisPlan·GroundedFinding·RequirementResolution·GroundedFinish DTO. 요구 항목 최대 6개·설명 최대 8개·설명별 인용 ID 1~4개. FinishAnswer·FinishSelection은 기존 검증·호환 경로에 유지. 모델 인자에서 master·사용자·SQL·URL·새 후보 금액을 받지 않음 |
+| `ReportTemplatesArguments/ReportPreviewArguments/ReportExportArguments` | 목록 limit 1~20(기본 10)·이전 nextCursor / 실제 조회한 templateId·정수 version·선택 blockId / 같은 실행의 previewObservationId만 허용하는 DTO. 잘못된 타입·추가 필드·범위는 ValidationError. 선행 관찰과의 일치 여부는 Spring에서 검증하며 정의·SQL·기간·URL·파일 바이트 입력 및 부작용 없음 |
+| `ExplanationOverviewArguments` | 비교 enum(기본 ACTUAL_VS_PLAN)·선택 조직 ID·offset 0~10000·limit 1~20(기본 10) → 전사 소명 현황 인자. 잘못된 타입·범위는 ValidationError. 조직 필터는 상세에만 적용하고 합계 범위·대상 기간은 실제 응답에서 확인. 계산·쓰기 없음 |
+| `contract.data` | 기준 base·저장 블록 → 기존 `fill_report`의 dataStatus·blocks와 실제 반환 version/base에서 확인한 `source={version,year,month}`. 출처 누락·잘못된 형식은 source=null이며 요청 연월로 보충하지 않음. 기존 블록 처리·조회 오류 전파; 보고서 읽기 경로만 호출하고 파일·DB 저장 없음 |
 | `GoalPreviewArguments.positive_target` | 억 원 문자열 → 양수 여부 검증. 목표 연도 targetYear는 별도 필수 정수이며 명시 목표 연도를 기준 연도로 덮어쓰지 않도록 모델에 안내. 원 환산·목표 차이 계산과 기준 연도 일치 검증은 Spring에 위임. 자연어 기간의 의미 해석까지 보증하지 않으며 파일·DB 부작용 없음 |
 | `assistant_core.tool_schemas` | DTO·현재 근거 ID·수락한 계획·수정 허용 문장 경로·간결 복구 여부 → 계획 전에는 로컬 plan_analysis만, 이후 읽기 도구와 finish_answer. 숫자 오류 문장 수정 중에는 repair_answer만 제공하며 path enum으로 오류 경로를 제한하고 updates의 최소·최대 개수를 허용 경로 수와 일치시킴. 출력 잘림 뒤에는 finish_answer만 제공하고 요약160자·설명140자·확인/불확실성100자와 설명 최대 max(4, 계획 수)≤6으로 축소하되 모든 계획 ID와 실제 인용 ID 유지. 계획·종료·수정은 strict_schema와 strict:true 사용. 설명·불확실성·미해결 질문은 모델이 작성하고 인용 원문 path·quote를 생성하지 않음 |
 | `normalize_arguments/call_key` | 모델 이름·인자 → allowlist·엄격한 타입·상한·후보 중복 검사 / 정렬 JSON 캐시 키. 기본 limit은 drivers 5·소명 10 |
@@ -481,7 +484,7 @@ OrgImprovementPanel 회신 → planner 근거 검토 → 분석 재조회 → �
 | `assistant_graph.period_mismatch` | 구조화된 목표 연도와 고정 기준의 불일치를 확인한 상태 → 숫자 없는 기간 확인 안내와 모든 계획 항목을 보존한 MODEL·NEEDS_INPUT. findings·citations 없이 요청 항목의 미완료·확인 질문을 resolve_brief로 재검증. 이전 실제 관찰은 유지하고 새 모델·업무 조회·계산은 수행하지 않음. 자연어 연도 추측 규칙이 아님 |
 | `agent_node` | 현재 대화·관찰·계획·예산 → llm.ask_tools 한 번 → pending 호출 또는 실패 종료. 모델 최대 여섯 번·호출별 최대40초와 남은 시간 중 작은 값·전체70초·일일 한도 확인. 남은 시간이5초 미만이면 새 모델 호출을 시작하지 않으며 length 메타데이터는 JSON 검증 전에 truncated_response로 처리. 문장 수정도 같은 예산을 쓰며 출력 상한은 min(3000, 256+512×오류 필드 수), 일반 생성은3000토큰. 마지막 두 호출은 해당 단계의 종료 도구를 안내. 모델 오류는 원문 없는 종류 코드만 기록 |
 | `tools_node` | pending → plan_analysis 검증·계획 고정 → 도구 인자 검증·cache·callback·모델 입력 또는 resolve_brief. goal_preview의 검증된 targetYear가 context.year와 다르면 callback 전 period_mismatch로 즉시 종료. BRIEF_NUMERIC의 안전한 문장 경로만 메모리에 고정해 repair_answer→apply_prose_repair→전체 resolve_brief 검증. 수정 중 새 조회·계획·인용 변경 금지. 간결 종료 모드도 새 조회·계획 변경을 막고 resolve_brief 전체 검증을 유지하며 다른 종류 오류는 기존 종료 재시도로 복귀. 실제 조회 최대 여덟 회·관찰 누적200KiB 제한. 계획/종료/수정은 실제 조회 횟수에서 제외하지만 모델 호출 예산은 유지. Tool 전송·관찰 오류는 MODEL·FAILED로 분류하고 기존 관찰 보존. 거절 로그는 고정 코드·안전한 필드 위치만 기록 |
-| `assistant_presentation.projected_data/walk_scalars` | 원본 성공 관찰 → 전사 상세 행·중복 조직 열을 제외한 모델용 참조 / 원본 경로·업무 표시 맥락을 보존한 핵심 scalar 순회. 수치 계산·원문 변경 없음 |
+| `assistant_presentation.projected_data/walk_scalars` | 원본 성공 관찰 → 전사 상세 행·중복 조직 열을 제외한 모델용 참조 / 원본 경로·업무 표시 맥락을 보존한 핵심 scalar 순회. 보고서 목록·채운 블록·파일 준비 메타데이터·소명 전사 summary와 선택 상세/페이지를 구분해 투영하며 내부 fingerprint는 모델용 목록에서 제외. Gap 단순 합계·상위 소계·미분류·대상 기간을 별도 표시하고 수치 계산·원문 변경 없음 |
 | `citation_catalog/model_observation` | 실제 성공 관찰 → 안정된 cite-obs-N-M ID·원문 path/quote 목록 / 구조를 보존한 제한 문맥·contextTruncated·availableDetails·인용 목록을 담은 ToolMessage. 공개 원문 보존, 실패 관찰·과거 이력으로 근거를 만들지 않음 |
 | `assistant_presentation.context_preview` | 원문·남은 예산·깊이 → 행·필드 관계를 유지하는 제한 문맥. 생략 시 예산의 truncated 표시만 갱신하고 원본 불변. 새 숫자·요약 생성 없음 |
 | `available_details/visit` | 성공 관찰·실제 표시 context → 원문에서 상세 읽기가 가능한 경로 목록. 문자열·배열·객체 위치와 읽기 인자를 제한해서 안내하고 상세 결과는 detail_continuations에 위임. detail 자체를 재귀 원천으로 삼지 않음. DB·파일 접근 없음 |
@@ -536,9 +539,11 @@ OrgImprovementPanel 회신 → planner 근거 검토 → 분석 재조회 → �
 ## 대화형 Agent — Spring 조회 도구와 관찰 검증
 
 정의 경로는 `backend/src/main/java/io/skala/backend/domain/decisionagent/` 기준이다.
-공개·내부 DTO와 15 Tool의 인자·결과는 [decision-assistant.yaml](../api/decision-assistant.yaml),
-실행 경계는 [대화형 도구 계약](agent-tool-contract.md)을 따른다. 신규 집계 SQL을 만들지 않고
-Home·Archive·버전 비교·정밀 계산·기존 Research 읽기·Workflow 조회 서비스를 재사용한다.
+공개·내부 DTO와 19 Tool의 인자·결과는 [decision-assistant.yaml](../api/decision-assistant.yaml),
+실행 경계는 [대화형 도구 계약](agent-tool-contract.md)을 따른다.
+Home·Archive·버전 비교·정밀 계산·기존 Research 읽기·Workflow·보고서·전사 소명 업무 서비스를 재사용한다.
+보고서·전사 소명 경로에는 고정 마스터와 기존 보고서 뷰의 원천을 대조하는 읽기 전용 SELECT를 추가한다.
+이 검증은 조직·제출본·비교 계획과 원천 변경 여부를 확인하며 손익 계산을 새로 구현하지 않는다.
 
 | 정의 | 입력·출력·호출 관계·예외와 부작용 |
 | --- | --- |
@@ -550,7 +555,7 @@ Home·Archive·버전 비교·정밀 계산·기존 Research 읽기·Workflow �
 | `DecisionAssistantGateway.Run/Run.calls` | 고정 사용자·기준·선택 분석·만료 → 메모리 실행 상태 / 실제 관찰 순서의 call-N 목록. 토큰·SQL·모델 추론은 공개하지 않음 |
 | `DecisionAssistantTools.label/normalize/identifier` | allowlist 이름·인자 → 고정 표시명·정규 JSON·검증된 ID. 미허용 필드/null/SQL/URL/scope, 중복 후보, 잘못된 숫자 범위 거부. 기본 limit 5/10, 후보 ID 정렬. goal_preview는 양수 억 원 문자열(정수16자리·소수8자리)과 2000~9999 정수 targetYear를 모두 요구하고 연도를 자동 보충하지 않음 |
 | `DecisionAssistantTools.assertCurrent` | Run → 현재 AppUser 활성·PLANNER, 선택 분석 소유권·revision·master 재확인. readOnly DB 조회, 403/404/409 |
-| `DecisionAssistantTools.execute` | 고정 Run·도구·정규 인자 → 기존 서비스 결과. readOnly 트랜잭션 안에서 원천 금액·고정 조직을 검증하며 새 SQL·쓰기 API 없음. 비교 방향·순위는 기존 차이 원값으로 계산하고 목표 비교는 기존 계산기를 재사용 |
+| `DecisionAssistantTools.execute` | 고정 Run·도구·정규 인자 → 기존 업무 서비스 또는 `DecisionReportTools/DecisionExplanationTools`의 결과. readOnly 트랜잭션에서 원천 금액·고정 조직을 검증하고 보고서 원천 대조는 전후 별도 읽기 트랜잭션을 사용. 비교 방향·순위는 기존 차이 원값으로 계산하고 목표 비교는 기존 계산기를 재사용. 보고서 XLSX는 메모리에만 준비하며 업무 쓰기 API·파일 저장·발송 없음 |
 | `DecisionAssistantTools.observationDetail/boundedInteger` | 이번 실행의 SUCCESS 관찰 ID·/data 아래 pointer·offset/limit → sourceObservationId/path/offset/nextOffset/total/value. offset 0~10000·limit 1~10 검사; 배열 행·객체 속성·문자열 일부만 반환하고 scalar는 offset 0만 허용. 다른 실행·ERROR·detail 재귀·금지 경로 거부. 새 DB·URL·파일 조회 없음 |
 | `contextData` | Run → snapshot, 선택 분석의 id/title/revision/목표/보호 조건/후보/result만 공개. 분석 미선택이면 analysis=null |
 | `company/comparisonMetric` | 고정 Run·서버 선택 YEAR/MONTH 및 기존 전사 손익 원문·KPI → 원문 보존과 summary.metrics/detailRowCount. 원값 부호로 증가/감소/동일, COST의 증가=불리·감소=유리를 판정하며 결측은 영으로 대체하지 않음 |
@@ -605,6 +610,64 @@ ERROR 관찰을 남기되 원천 조회·계산기를 호출하지 않는지 확
 서버를 사용해 실제 전송 JSON의 날짜·내부 헤더·응답 역직렬화를 검증한다.
 서버는 finally에서 종료하며 DB·외부 모델·파일을 사용하지 않는다.
 
+## 보고서·전사 소명 API의 Agent 도구 연결
+
+정의 경로는 `backend/src/main/java/io/skala/backend/domain/` 기준이다.
+`report_templates → report_preview → report_export`는 기존 자료 틀·값 채우기·XLSX 렌더러를 순서대로 재사용한다.
+`explanation_overview`는 기존 전사 소명·분류 API와 같은 업무 서비스를 읽는다.
+보고서 뷰가 해당 월 최신 마스터를 사용하므로 구마스터를 최신 데이터로 대체하지 않고 거부한다.
+확정 마스터에 저장되지 않은 비교 계획·전월 자료는 조회 시점 기준임을 경고하며,
+저장 틀의 문장은 모델이 새로 작성하거나 수치를 검증한 경영 보고서 서술로 취급하지 않는다.
+
+| 정의 | 목적·입력·출력·호출 관계·예외와 부작용 |
+| --- | --- |
+| `decisionagent/service/DecisionReportBasisGuard.check` | Snapshot → 새 `REQUIRES_NEW`·readOnly·REPEATABLE_READ 트랜잭션에서 최신 마스터 ID, `report.report_source`의 요청·조직·제출본·확정 계획 연결을 대조 → `SourceBasis(version,fingerprint)`. 재무 행·값·검토 항목·Gap·소명·분류·분류표의 변경 감지 값도 포함. 구마스터·범위 불일치는 ToolFailure, SQL 오류 전파. SELECT만 수행하며 잠금·수치 계산·DB 변경 없음 |
+| `DecisionReportBasisGuard.requireSame/digest` | 조회 전후 SourceBasis → 같으면 통과, 다르면 ToolFailure / 식별·변경 감지 문자열 → SHA-256 hex. digest의 실행 환경 오류는 IllegalStateException. 원문을 로그·파일로 남기지 않으며 부작용 없음 |
+| `DecisionReportTools.templates` | Run·limit·선택 cursor → 기존 `ReportTemplateService.list/get` → 자료 틀 ID·이름·버전·블록 ID/kind/title·전체 blockCount·잘림 여부·nextCursor. cursor는 같은 실행의 성공 목록에서 반환된 값만 허용. 틀당 블록 메타데이터 최대 20개, 정의·SQL 비공개. 잘못된 cursor는 ToolFailure, 업무 서비스 오류 전파; DB 읽기만 수행 |
+| `DecisionReportTools.requireKnown/title` | Run·templateId/version → 성공한 목록 관찰에 실제 존재하는지 검사 / 저장 블록 → title·label 또는 kind의 최대 120자 이름. 미조회 버전은 ToolFailure. 제목을 재무 근거로 생성하지 않으며 원본 변경·외부 호출 없음 |
+| `DecisionReportTools.blocks/containsMonthLabels` | 저장 틀·선택 blockId·Run → 고정 범위에서 지원하는 블록 목록 / 차트 categories의 월 표시 여부. SQL·metricId·query·미지원 종류·다른 연월·복수 월/추이 차트·범위 밖 scope/scope_org/scope_orgs 및 조직 행은 ToolFailure. 미지원 부분을 몰래 생략하지 않으며 입력·DB 변경 없음 |
+| `DecisionReportTools.preview/checkFilled` | 앞서 확인한 자료 틀 버전·선택 블록 → guard.check → 기존 `ReportAiRelayService.data` → 새 guard.check/requireSame → 채운 블록·source·틀/마스터 식별자·조회 시각·fingerprint·saved=false. checkFilled는 CONFIRMED와 실제 source version/year/month 및 블록 ID·개수·순서 검증. 출처 누락·상태·범위 불일치는 ToolFailure. 결측 블록은 원문대로 남기며 DB 읽기·기존 데이터 API 호출만 수행 |
+| `DecisionReportTools.export` | 같은 실행의 성공 previewObservationId → 고정 마스터·원천 fingerprint·틀 버전/정의 fingerprint 재검증 → `ReportExportService.exportFilled` → 원천 재검증 → artifactStore.put. 파일 ID·이름·종류·크기·만료·ready·masterId·templateId/templateVersion·previewObservationId·saved=false만 반환. 미조회/변경된 근거는 ToolFailure. 채운 값 재조회·모델 재생성·업무 저장·발송 없이 실제 XLSX 바이트를 메모리에 준비 |
+| `DecisionReportTools.value/failure` | 자료·비교 기준·경고 → 기존 ToolValue / 안전한 안내 → ToolFailure 객체. 추가 예외·부작용 없음 |
+| `report/service/ReportExportService.export/exportFilled` | 인증 사용자·저장 틀/버전/선택 블록/기간 → 기존 export는 metric 해석·데이터 API 조회 후 render, exportFilled는 서버 성공 관찰의 블록 순서·개수만 대조하고 같은 render 호출. 두 경로 모두 틀 조회에서 권한 확인. 권한·미존재·잘못된 입력·렌더링 오류 전파. exportFilled는 공개 HTTP에서 임의 filled를 받지 않으며 새 AI·데이터 조회·파일 저장 없음 |
+| `ReportExportService.selectedBlocks/render` | 틀·선택 요청 → 순서 보존 블록(없으면 404) / 블록·검증된 채운 값 → 기존 POI 서식의 파일명·XLSX 바이트. Agent 관찰이 있으면 정보 시트에 masterId·sourceVersion·capturedAt·비교 시점 한계 추가. 렌더링 실패는 UncheckedIOException. 메모리 workbook/stream만 사용 |
+| `ReportExportService.cell/value/writeNumber` | 원 금액 셀·표의 JSON 값 → 메모리 Excel 셀. won·일반 JSON 숫자는 15자리 이하 정수만 숫자 셀/정수 서식으로 기록하고 소수·큰 정수는 전달된 숫자 문자열 그대로 기록하여 double 변환·정수 표시 손실 방지. SQL 문자열은 숫자/수식으로 해석하지 않고 기존 문자열 정책 유지. NumberFormatException·POI 오류 전파하되 잘못된 won은 기존 표시 텍스트로 대체. 서버 파일·DB 변경 없음 |
+| `DecisionReportArtifactStore.assertCurrent` | 인증 사용자 → AppUser의 현재 active·PLANNER 재확인. 역할 철회·비활성·미존재는 403. DB 읽기만 수행 |
+| `DecisionReportArtifactStore.put` | 사용자·파일명·XLSX 바이트 → 권한 재확인·만료 회수 후 Receipt. 파일명 경로/제어문자 정제, UUID와 600초 TTL, 입력 바이트 복사. 빈 파일·5MiB 초과는 ToolFailure, 사용자 5개·전체 100개/20MiB 초과는 429. 별도 readOnly 트랜잭션의 권한 읽기와 메모리 보관만 수행 |
+| `DecisionReportArtifactStore.get/expire` | 사용자·artifactId → 현재 역할·소유자·TTL 검사 후 Download 바이트 사본 / 현재 시각 → 만료 항목 제거. 미존재·다른 소유자·만료는 404, 권한 철회는 403. DB 권한 읽기·메모리 정리 외 부작용 없으며 서버 재시작 시 산출물 소실 |
+| `DecisionReportArtifactStore.Entry/Receipt/Download` | 소유자·파일명·바이트·만료 → 내부 메모리 보관값 / 원문 없는 공개 영수증 / 권한 확인 뒤 다운로드 값. 생성 자체의 외부 부작용 없음. put/get에서 바이트 복사·권한·용량·TTL을 검사 |
+| `decisionagent/controller/DecisionReportArtifactController.download` | 인증 GET `/api/v1/decision-agent/report-artifacts/{artifactId}` → currentUser·store.get → XLSX 응답. no-store·nosniff·UTF-8 attachment 파일명 적용. 인증/권한/소유자/TTL 오류 전파. 파일을 서버 디스크에 쓰거나 외부에 발송하지 않음 |
+| `DecisionExplanationTools.overview` | Run·comparison·선택 조직·offset/limit → guard 전후 대조·기존 `ReportExplanationService.explanations/categories` → 전사 summary/Gap/분류 합계와 선택 범위의 수락·수락 전 상세 페이지. 범위 밖 조직·원천 변경은 ToolFailure. ACTUAL은 기준월, ESTIMATE는 다음 월이며 12월 추정 대상 없음. 미분류 수량은 int로 만들어 HTTP JSON 왕복 뒤 원장 동등성 유지. DB 읽기만 수행 |
+| `DecisionExplanationTools.totals` | 기존 소명 결과·분류표 → 원문 Gap 금액에 분류명·상위 소계 여부를 붙인 목록. 새 합계·부호 변환·이익 효과 계산·쓰기 없음. 예외는 입력 계약 오류만 전파. 상위·하위 금액 중복 합산 금지, 합계 일치만으로 분류 완료·미회신·실현 가능 개선액을 판정하지 않음 |
+| `ReportExplanationService.itemMonthOf` | 연도·기준월·비교 enum → 기존 업무 규칙의 대상 연월 또는 null. ACTUAL은 기준월, ESTIMATE는 다음 월이며 12월이면 null. Agent와 기존 서비스가 같은 기간 규칙을 사용. 새 조회·저장·부작용 없음 |
+
+내보내기 파일은 해당 성공 미리보기의 채운 값을 재사용한다. 따라서 export 시점의 재조회 값으로
+미리보기 숫자를 바꾸지 않는다. 근거가 달라졌으면 파일을 준비하지 않고 재조회를 요구한다.
+`saved=false`는 업무 데이터·영구 보고서가 저장되지 않았다는 뜻이며 `ready=true`이면 실제 메모리
+파일이 준비된 상태다. 사용자 클릭 후 인증 다운로드만 실행한다.
+
+| 검증 정의 | 입력·검증 목적·출력·예외와 부작용 |
+| --- | --- |
+| `DecisionReportToolsTest.prepare/observeTemplates/observe/tree` | 합성 틀·원장·mock 서비스 → 테스트 Run·JSON 및 성공 관찰 구성. 테스트 메모리만 변경하며 DB·AI·파일 호출 없음 |
+| `exposesOnlyBoundedTemplateMetadata/requiresObservedTemplateVersionBeforeFill/fillsSelectedTemplateAndChecksFreshSourceBeforeAndAfter` | 자료 틀 메타데이터 상한·선행 목록 버전·기존 값 채우기와 전후 guard 호출 검증. 반환 없음, 실패는 assertion; mock 호출만 기록 |
+| `rejectsWrongSourceAndMissingData/rejectsSqlOtherPeriodsAndQueryBlocksBeforeApiCall` | 잘못된 source·상태·블록 및 SQL/metricId·기간·범위 밖 조직 거부 검증. 미지원 입력이 데이터 API까지 도달하지 않는지 확인. 실패는 assertion, 외부 부작용 없음 |
+| `exportsOnlyObservedPreviewWithoutRefillingOrSaving/refusesChangedSourceAndUnknownObservationBeforeExport` | 실제 성공 미리보기 재사용·파일 메타데이터 연결·근거 변경/미조회 내보내기 거부 검증. 채우기 재호출·업무 저장 없이 mock 메모리 artifact만 사용 |
+| `DecisionReportBasisGuardTest.jdbc/snapshot` | 합성 마스터·조직·제출본·계획·변경 감지 값 → JdbcTemplate/ResultSet mock과 Snapshot. SQL을 실행하지 않으며 설정 오류만 전파 |
+| `rejectsOldMasterEvenWithSameMonthLabel/rejectsDifferentSourceOrganizationAndSubmission/detectsPlanAndContentsChangeWhilePreservingVersionLabel` | 같은 연월 라벨의 다른 master·범위 불일치·계획/소명 원천 변경 차단 검증. 반환 없음, 실패는 assertion; DB·파일 없음 |
+| `DecisionReportArtifactTest.prepare/preservesPrivateBytesAndRejectsAnotherOwner/expiresAtTheDeclaredDeadline` | 합성 사용자·시계·바이트 → 소유자 검사·입출력 배열 복사·정확한 TTL 경계 검증. 반환 없음, 실패는 assertion; 메모리만 사용 |
+| `checksRevokedRoleAndInactiveUserAgain/boundsMemoryAndPerUserArtifacts/sendsNoStoreDownloadWithoutFilenamePathOrHeaderInjection` | 역할 철회·비활성·용량 상한·파일명 정제·다운로드 헤더 검증. 새 역할 DB는 mock이며 실제 인증 요청·디스크 파일 없음 |
+| `ReportFilledExportTest.rendersObservedWonAndSourceWithoutCallingAiAgain` | 서버 관찰의 정밀 원 금액·출처 → 메모리 POI XLSX 재열기 → 숫자·정보 시트·미리보기 블록 대조 검증. 기존 AI/metric 서비스 미호출 확인. assertion/IO 오류 전파, workbook/stream 종료, 디스크 저장 없음 |
+| `ReportFilledExportTest.preservesDecimalAndLargeValuesAcrossAllCellPaths/assertRenderedValue` | 소수·음수·15자리/초과 정수·원문 SQL 문자열을 담은 표/차트/카드 → 기존 export와 exportFilled의 메모리 XLSX 재열기 → 실제 CellType·DataFormatter 표시·문자열 원문 대조. 정수 숫자 셀 유지와 소수/큰 정수 텍스트 보존·수식처럼 보이는 문자열 미실행 검증. 실패는 assertion/IO 오류, 외부 API는 mock이며 파일·DB 없음 |
+| `DecisionExplanationToolsTest.setup/data/empty/org/card` | 합성 월·소명·조직 → mock 업무 서비스·Run·응답 JSON. 테스트 메모리만 사용하고 원천 DB 접근 없음 |
+| `distinguishesUnclassifiedAndReviewingEvenWhenSignedTotalsMatch/preservesGlobalTotalsAndPagesOnlySelectedOrganizationDetails/rejectsChangedSourceAndOrganizationsOutsideMaster/exposesEstimateTargetMonthAndDecemberAbsence` | 미분류·수락 전 항목·전사 합계와 조직 상세·페이지·변경 원천/범위·추정 대상월 계약 검증. 실패는 assertion, 실제 DB/모델/파일 없음 |
+| `preservesExactLedgerJsonAfterHttpSerialization` | 빈 결과와 미분류 수락 결과 → ObjectMapper 직렬화/재파싱 → JsonNode 전체 동등성과 int 수량 검증. LongNode→IntNode 차이로 실제 원장이 거부되던 회귀 방지. 검증 완화·원문 수정 없이 메모리 바이트만 사용 |
+| `ai/tests/test_assistant_report_tools.report_observation/overview_observation` | 도구명·인덱스 → 같은 고정 기준의 합성 보고서/소명 관찰. 파일·DB·실제 모델 호출 없음 |
+| `AssistantReportToolTests.test_arguments_preserve_defaults_and_reject_scope_or_payload_injection/test_catalog_exposes_new_tools_after_plan_without_changing_control_contract` | 새 인자 기본값·범위·추가 필드 거부와 plan 이후 19개 업무 도구 노출 검증. 반환 없음, 실패는 assertion; 제어 도구 계약 변경·외부 부작용 없음 |
+| `test_report_paths_and_decimal_values_are_original_and_not_generated/test_overview_keeps_full_scope_unclassified_and_page_limits` | 보고서 원문 경로·십진 값·소명 전사/상세 범위·미분류·페이지 표시 검증. 인용 금액 생성·합계 재계산 없음 |
+| `test_native_report_sequence_finishes_with_actual_export_readiness/test_export_failure_has_no_download_citation_or_completed_claim` | 가짜 모델·callback으로 실제 LangGraph의 목록→미리보기→파일 준비 및 실패 흐름 실행. 성공한 export만 다운로드 근거로 사용하는지 검증. assertion 실패 외 예외 전파, 실제 API/파일 없음 |
+| `ai/tests/test_report_data_source.ReportDataSourceTests.test_returns_actual_fill_source_without_changing_existing_blocks/test_reports_returned_period_instead_of_copying_requested_period/test_missing_source_is_null_without_guessing_from_request/test_invalid_returned_source_shape_is_not_accepted` | mock fill_report의 실제/누락/잘못된 version·base → source·기존 블록 계약 검증. 요청 기간을 출처로 추정하지 않음. 반환 없음, 실패는 assertion; DB·파일 없음 |
+| `test_http_contract_preserves_request_and_returns_nullable_source` | TestClient·mock data → 기존 `/v1/data` 요청 및 nullable source HTTP 응답 검증. 프로세스 내 테스트 요청만 수행하고 외부 서버·DB·파일 없음 |
+
 ## 대화형 Agent — 프론트 질문·출처·업무 연결
 
 정의 경로는 `frontend/src/prototype/` 기준이다. 질문 화면은 확정 마스터만으로도 조회할 수 있고,
@@ -635,10 +698,11 @@ ERROR 관찰을 남기되 원천 조회·계산기를 호출하지 않는지 확
 | `rowsTable/byDifference` | 행·필드·정렬 기준 → 정확한 십진 문자열의 부호/절댓값 내림차순과 누락 후순위 표. 원본 수치 재계산 없음 |
 | `monthlyPnlTables/reportItemTables` | 월간 회사·조직 요약 / 보고 항목의 중첩 facts → 정밀 금액 표. 월 실적은 연간 전망과 분리하고, 상세 항목은 동일 제출본 계획 비교·원천 상한·개선 가능액 아님을 명시. 원문·금액 변경 없음 |
 | `goalPreviewTables` | 저장 없는 목표 관찰 → 목표·현재 전망·부족액·초과액 표. saved=false와 전망 비교의 의미 표시, 목표 저장·계산 없음 |
-| `askAssistant` | 인증 api·payload·AbortSignal → 공개 POST assistant·응답 기준 검증. HTTP/계약 오류 전달, 읽기·초안 Tool만 실행 |
+| `askAssistant` | 인증 api·payload·AbortSignal → 공개 POST assistant·응답 기준 검증. HTTP/계약 오류 전달, 조회·보고서 준비·초안 Tool 실행. 업무 저장·발송·승인은 수행하지 않음 |
 | `DecisionConversationPanel.currentMaster/scopeKey/basisLabel` | 부모 분석·기준 → 고정 master·분리 키·기준 이름. 계산·저장 없음 |
 | `DecisionConversationPanel.hasOrganizationResults` | 같은 실행의 성공한 조직 관찰 여부 → 부호 차이/절댓값 정렬 선택기 표시 |
 | `DecisionConversationPanel.briefByTurn/findingSeverity` | 현재 기준의 문답·질문 → 검증된 brief Map / 설명 종류별 PrimeVue 표시. 요약·설명·불확실성·미해결 질문을 연결하고 원문은 접힌 조회 자료로 유지. 출처는 해당 turn ID·observation ID 쌍 사용 |
+| `DecisionConversationPanel.reportResults` | 현재 문답 → successfulObservations·reportToolResults의 검증된 보고서·파일·소명 결과. 다른 실행의 preview와 파일을 합치지 않으며 API 호출·금액 계산 없음. 잘못된 형식은 결과의 invalidCount로 표시 |
 | `decision-agent-api.isReadOnlyPreviewError/startAnalysisAction` | 정확한 `READ_ONLY_PREVIEW` 오류만 조회 전용으로 인식하고 목표 비교 또는 기존 저장 동작 하나만 호출. 일반 403·503이나 문구만으로 권한·환경을 추정하지 않음 |
 | `goalPreviewQuestion/canStartGoalPreview` | 폼의 마스터·연도·정밀 억원 목표 → 목표 대비 부족·초과액과 조직별 계획 차이의 두 조회 요청 및 실행 가능 여부. 목표 형식·상한·현재 기준을 검증하고 기존 질문 초안·실행 중 요청을 보존. 고정 마스터·저장 없음·보호 제약 및 개선 효과 미적용은 API와 조회 전용 폼 안내에서 유지하며 모델 질문에 정책 설명을 중복하지 않음 |
 | `LiveDecisionAgentPanel.previewCurrentGoal/requestSavedAnalysis/requestCreate` | 조회 전용이면 대화 공개 메서드로 비교하고 정상 환경이면 기존 생성 흐름 실행. 조회 전용 경로에서 분석 생성 API를 호출하지 않음 |
@@ -650,18 +714,19 @@ ERROR 관찰을 남기되 원천 조회·계산기를 호출하지 않는지 확
 | `draftRequests/prepareDraft` | 현재 분석과 일치하는 초안 관찰 → 요청 원천 목록·부모 prepareWorkRequest. 사용자 확인·기한 입력·저장·전달은 기존 업무 화면에서 각각 수행 |
 | `statusLabel/statusSeverity/toolStatus` | 실제 서버 mode/status → assistantStatusLabel 기반 한국어 상태·색상. 한도와 답변 중단을 구분하고 고정 모델 불가 배너로 서버 원인 안내를 덮지 않음. UNAVAILABLE를 완료로 표시하지 않으며 수행하지 않은 진행 단계 생성 없음 |
 | `rawDetails` | 관찰 → 접힌 JSON 원문 최대 24000자. 표시 한도 초과는 명시하며 원본은 메모리에 보존 |
-| `LiveDecisionAgentPanel.api` | 인증 요청에 화면 수명과 자식 요청 AbortSignal을 결합. 화면 해제·기준 변경 중 취소 지원 |
+| `LiveDecisionAgentPanel.api` | 경로·옵션 → 기존 인증 store.api에 화면 수명과 자식 요청 AbortSignal을 결합해 전달. JSON 요청과 blob 다운로드 옵션을 보존하고 HTTP/AbortError 전파. 명시한 요청만 전송하며 화면 해제·기준 변경 중 취소 지원 |
 | `selectConversationMaster/openConversationTab` | 분석 전 master 공유 / 허용 탭 이동. 계산 없는 시나리오는 후보 탭과 실행 안내로 연결하며 자동 계산 없음 |
 | `LiveDecisionAgentPanel.previewScope/previewReport/previewBaselineLabel` | 현재 폼·선택 분석·실제 대화 실행 → 보고서 범위와 투영 결과·기준명. 업무 계산·저장 없음 |
 | `LiveDecisionAgentPanel.acceptPreviewExecution/openPreviewSource` | 실행 이벤트 → 보고서 메모리 교체·폼 실행 시 보고서 위치 이동. 원문은 실행 ID·관찰 ID 쌍으로 대화의 기존 출처 창에서만 표시 |
 | `DecisionPreviewReport.currentGoal/organizationRows/sourceRows` | 검증한 투영 결과 → 목표·최대 5개 조직·출처. 결측을 임의 수치로 대체하지 않음 |
 | `DecisionPreviewReport.currentBrief/findingSeverity` | 현재 READY/PARTIAL 투영 → 분석 요약·설명·불확실성·요구 항목 / 종류별 PrimeVue 표시. EMPTY·LOADING·STALE에서는 이전 brief 숨김. baseline 목표 판단과 모델 요약을 구분하며 각 설명의 실제 출처 연결 |
+| `DecisionPreviewReport.currentReportTools/explanationEvidenceCaption` | READY/PARTIAL의 검증 toolResults → 보고서 도구 표시 / 실제 overview.items의 explanationId 합집합 → 조회한 소명 원문 건수 문구. 전사 summary를 원문 개수로 사용하거나 별도 approved_explanations 건수와 더하지 않음. 다른 상태에서는 이전 자료 숨김, 예외·API 호출·원문 변경 없음 |
 | `DecisionPreviewReport.money/longMoney/signedMoney` | 원 단위 문자열 → 정밀 억원·긴 금액 서식·부호 표시. 반올림·금융 계산 없음 |
-| `DecisionPreviewReport.judgment/judgmentDetail/differenceAmount/differenceLabel` | 실제 상태·백엔드 목표 판단 → 핵심 문구·기존 차이 값·지표명. 오류·기준 변경·미조회 구분 |
+| `DecisionPreviewReport.judgment/judgmentDetail/differenceAmount/differenceLabel` | 실제 상태·백엔드 목표 판단 → 핵심 문구·기존 차이 값·지표명. 목표 미조회 때도 실제 파일 준비·보고서 미리보기·소명 현황·빈 자료 틀 목록에 맞춰 안내하며 오류·기준 변경·미조회와 구분. 숫자·완료 상태를 생성하거나 API를 호출하지 않음 |
 | `DecisionPreviewReport.directionClass/planDirection/openSource` | 서버의 손익 영향·증감 방향 → 색상·한국어 판단 / 출처 클릭 이벤트. 승인·저장·새 조회 없음 |
 | `DecisionPreviewReport.organizationEmptyText` | 실제 조회 조직 수·표시 상태 → 미조회와 조회 결과 0건을 구분한 안내 |
 | `DecisionPreviewReport.organizationCaption` | 조직 조회 출처·현재 표시 행 → 전체 조직 손익과 차이 상위 조회의 범위·정렬 안내. profit_drivers만 있으면 연간 전망 미조회·조회된 조직 안의 차이 순서임을 표시하며 전체 순위나 조직 수를 추정하지 않음 |
-| `decision-preview-result.buildPreviewResult/emptyResult` | 현재 범위·실행 → 같은 기준의 SUCCESS 관찰·검증 brief·실행 status·조회 성과·안전한 중단 원인을 담은 단일 보고서 DTO 또는 금액/brief 없는 상태. EMPTY·LOADING·READY·PARTIAL·STALE·ERROR 구분. 성공 관찰 없이도 유효한 NEEDS_INPUT brief는 질문이 있는 PARTIAL. 월간/보고항목 도구는 출처·brief만 연결하며 연간 목표/조직 표에 합산하지 않음. 기준 변경 시 이전 중단 안내도 숨김. API·DB 호출 없음 |
+| `decision-preview-result.buildPreviewResult/emptyResult` | 현재 범위·실행 → 같은 기준의 SUCCESS 관찰·검증 brief·실행 status·조회 성과·안전한 중단 원인·executionId·검증 toolResults를 담은 단일 보고서 DTO 또는 금액/brief/toolResults 없는 상태. EMPTY·LOADING·READY·PARTIAL·STALE·ERROR 구분. 성공 관찰 없이도 유효한 NEEDS_INPUT brief는 질문이 있는 PARTIAL. 답변이 중단돼도 실제 보고서·파일 준비 관찰은 PARTIAL에 보존. 월간/보고항목/보고서·소명 도구 수치를 연간 목표/조직 표에 합산하지 않으며 기준 변경 시 이전 결과 숨김. API·DB 호출 없음 |
 | `matchesScope/matchesForm/normalizedGoal` | 마스터·분석 revision·연도·정규화한 폼 목표 → 현재 입력과 실행의 일치 여부. 대화에서 실제 조회한 목표를 폼 값으로 덮지 않음 |
 | `observedGoal` | saved=false·KRW·같은 연월·정밀 금액의 성공 관찰 → 원문 목표 비교. 금액 누락은 null, 부족액·초과액 재계산 없음 |
 | `observedOrganizations/byPlanDifference` | 성공한 조직 요약 → 정밀 십진 비교로 정렬한 상위 5개·전체 기준 조직 수. 원본 불변, 누락은 후순위 |
@@ -669,6 +734,18 @@ ERROR 관찰을 남기되 원천 조회·계산기를 호출하지 않는지 확
 | `observedExplanationCount` | 같은 기준의 SUCCESS approved_explanations 관찰 전체 → 실제 items의 refId 합집합 개수. refId는 DecisionResearchStore가 review_explanation 전역 기본키로 만들므로 조직·조회별 복합키를 추가하지 않음. total이나 마지막 조회 건수로 대체하지 않고 미조회·식별 불가=null, 성공 빈 조회=0. 원본 변경 없음 |
 | `moneyText/textOrNull/dateText/countOrNull` | 원문 값 → 형식 검증 값 또는 null. 조회 시각을 현재 시각·마스터 기준일로 대체하지 않음 |
 | `warningTexts/appendWarnings` | 실제 제한·관찰 경고 → 중복 없는 표시 목록. 새 목록만 갱신하며 원본 응답 불변 |
+| `decision-report-tools.reportToolResults/sameBasis` | 관찰 목록·응답 context → 같은 master/연월/analysis/revision의 SUCCESS만 중복 없이 분리한 templates/previews/artifacts/explanations·invalidCount / 기준 일치 여부. export는 같은 실행의 previewObservationId·틀 버전이 맞을 때만 표시. 형식 오류는 숨김 개수로 남기며 예외·새 계산·API 호출 없음 |
+| `validTemplate/validPreview/validBlock/validPeriod` | 자료 틀 메타데이터·채운 블록·현재 기준 → ID/버전·블록 중첩 배열·데이터 상태·고정 연월/master/sourceVersion 유효 여부. 잘못된 형식은 false, 원문 텍스트를 HTML로 해석하거나 결측을 채우지 않음. 원본 변경·부작용 없음 |
+| `validOverview` | 소명 결과·context → 비교 종류·대상 기간·전사 수량·원 금액 문자열·분류 소계·상세 원문·페이지 계약 유효 여부. 오류는 false. 합계·이익 효과·미회신 여부를 재계산하거나 추정하지 않음 |
+| `validArtifact/artifactExpired` | 파일 메타데이터·선택 현재 시각 → UUID·틀/마스터·ready/saved·XLSX 종류·파일명·크기·만료 계약 / 만료 또는 형식 오류 여부. 잘못된 값은 false/만료로 처리하며 URL·파일 접근 없음 |
+| `fetchReportArtifact` | 인증 api·검증 artifact·AbortSignal·현재 시각 → 고정 `/api/v1/decision-agent/report-artifacts/{artifactId}` GET의 XLSX Blob. 만료·MIME/바이트 수 불일치·HTTP·취소 오류 전파. 기존 `live-api.createApiClient`의 인증 blob 경로를 재사용하며 임의 URL·DB 변경·파일 저장 없음 |
+| `saveReportBlob` | 사용자가 다운로드를 누른 검증 Blob·파일명·DOM·URL 구현 → 임시 링크 클릭 후 링크·객체 URL 해제. DOM/다운로드 오류 전파, finally에서 정리. 사용자 브라우저의 다운로드만 시작하며 자동 클릭·외부 발송 없음 |
+| `reportToolMoney/text/count/positive/money` | 원 금액 문자열 → 기존 정밀 억원 서식 또는 대시 / 문자열·비음수/양수 안전 정수·원 금액 형식 → boolean. 예외·금액 합산·이익 영향 변환·부작용 없음 |
+| `DecisionReportToolResults.hasResults/source` | 검증 결과 → 카드 표시 여부 / 실제 관찰 ID → 부모 출처 이벤트. invalidCount도 숨긴 자료 안내로 표시. API 호출·새 근거 생성·예외 없음 |
+| `DecisionReportToolResults.download/resetDownloads` | 사용자 선택 artifact → 중복 실행 방지·인증 fetchReportArtifact·saveReportBlob·완료/오류 상태 / 기준 변경 → 세대 증가·진행 요청 abort·상태 초기화. 늦게 도착한 Blob은 저장하지 않고 만료/HTTP 오류는 화면에 표시. 명시한 다운로드만 수행 |
+| `DecisionReportToolResults.updateNow/mount/dispose` | 현재 시각 → 만료 표시 갱신 / 마운트 → 1초 타이머 / 해제 → 요청 중단·타이머 해제. 메모리/타이머만 변경하고 새 API 호출 없음 |
+| `DecisionReportToolResults.hasBlockContent/missingReasons` | 실제 채운 블록 → 내용 존재 여부·기존 결측 사유 텍스트. 표/차트는 기존 보고서 renderer를 재사용하며 원문 HTML 해석·숫자 보충·예외/부작용 없음 |
+| `DecisionReportToolResults.categoryTable/reviewingTable/categoryName` | 검증 overview·분류 ID → 기존 ReportDataTable용 분류/수락 전 항목 표·실제 분류명 또는 미분류 안내. 상위 소계 표시·원 Gap 부호 보존. 전사/상세 합계 결합·개선 효과 생성·API 호출 없음 |
 
 호출은 `질문 → assistantPayload → askAssistant → 서버 동적 도구 루프 → 기준 검증 →
 실제 호출 내역·analysisBrief/answerCitations → 분석 설명·요구 항목·observationTables/ReportDataTable`이다.
@@ -693,6 +770,22 @@ HTML 이스케이프와 기준 변경·조회 중 이전 숫자/출처/brief 숨
 반복되는 관찰 ID의 실행별 분리도 검사한다. 2026-11-27 develop `cdbf5e7` 통합 후 전체 프론트 검증은 224건과 빌드 통과다.
 이 결과는 실제 모델 응답 품질이나 업무 DB의 최신 데이터 검증을 대신하지 않는다.
 합성 브라우저 확인 및 이전 실제 DB·모델 왕복 기록은 현재 brief 계약의 실제 모델 검증과 구분한다.
+
+보고서·소명 도구 추가분의 검증 함수는 다음과 같다. 아래 테스트는 별도 명시가 없으면
+합성 입력을 메모리에서 처리하고 결과를 반환하지 않으며 불일치 시 assertion으로 실패한다.
+실제 업무 DB·모델·파일 다운로드는 호출하지 않는다.
+
+| 검증 정의 | 입력·검증 목적·예외와 부작용 |
+| --- | --- |
+| `decision-report-tools.test.observation/preview/artifact/overview` | 도구명·관찰 ID·선택 patch → 고정 기준 합성 관찰·자료 틀·파일 영수증·소명 현황. 원천 파일·DB 생성 없이 테스트 메모리만 구성 |
+| `artifactBinding/partialExport` | 같은 실행의 정확한 preview 연결·master/틀 버전·블록 형식 검사, 답변 중단 시 성공 파일 보존과 PENDING/기준 변경 시 숨김 검증. 금액·실행 상태 재계산 없음 |
+| `explanationContract/toolHistory` | 소명 전사/선택 상세·정밀 금액·대상 기간 보존과 후속 대화에 새 도구 이름만 남고 파일 식별자/메타데이터가 유출되지 않는지 검증. 원문을 HTML로 실행하거나 합산하지 않음 |
+| `downloadContract/api/wrongType/cancelDownload/lateApi` | 합성 Blob·API·AbortController → 고정 URL·만료·MIME·크기·늦은 응답 취소 검증. helper는 테스트 호출/중단만 기록하며 실제 HTTP·다운로드 없음 |
+| `authenticatedDownload/fakeFetch/token/clear` | 기존 `createApiClient`·합성 세션·mock fetch → 인증 헤더와 blob 전송 경로 검증. 정상 흐름에서 인증 초기화를 호출하면 assertion. 전역 fetch는 테스트 후 복구하며 외부 접속 없음 |
+| `cleanupDownload/remove/click/createElement/appendChild/createObjectURL/revokeObjectURL` | 가짜 DOM·객체 URL → 클릭 성공/오류 모두 링크·URL 해제 검증. 반환은 mock별 객체/표시값, 클릭 실패 예외는 테스트가 확인. 이벤트 배열만 변경하고 실제 브라우저 파일 생성 없음 |
+| `DecisionPreviewReport.test.sfcModule/reportComponent/renderReport/reportData/reportBrief` | Vue 소스·합성 보고서 → 기존 renderer와 자식 컴포넌트를 포함한 메모리 SFC/SSR HTML·검증 입력. 소스 읽기·컴파일/렌더링 오류 전파, 임시 모듈/파일 쓰기 없음 |
+| `DecisionPreviewReport.test.reportTools/observation` | 합성 목록·미리보기·파일·소명 → 실제 SSR에서 표·파일명·출처·소계/미분류/페이지 한계 및 실패 답변에서도 도구 결과 표시 검증. READY/PARTIAL 외 상태에서는 이전 자료 숨김, 소명 원문은 explanationId로만 중복 제거하고 전사 수량/다른 도구 수량과 합산하지 않음 |
+| `DecisionPreviewReport.test.emptyTemplates` | 빈 실제 목록 관찰 → 보고서 자료 틀 없음·추가 입력 안내와 파일 미생성 표시 검증. 비어 있는 결과를 성공 보고서나 미조회로 대체하지 않으며 외부 부작용 없음 |
 
 ## 로컬 화면 확인용 임시 실행 도구
 
