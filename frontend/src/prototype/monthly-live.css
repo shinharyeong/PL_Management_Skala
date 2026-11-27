@@ -47,7 +47,7 @@
 .monthly-panel .version-grid.live-version-grid th,
 .monthly-panel .version-grid.live-version-grid td { width: auto; padding: 18px; border-right: 1px solid #e6e6e6; overflow-wrap: anywhere; }
 .monthly-panel .version-grid.live-version-grid thead th { background: #f6f6f5; color: #646461; }
-.monthly-panel .version-grid.live-version-grid th.current-version { background: #1f2220; color: white; }
+.monthly-panel .version-grid.live-version-grid th.current-version { background: #30441b; color: white; }
 .monthly-panel .version-grid.live-version-grid th.new-version { background: #fff3d9; color: #9a5a14; }
 .monthly-panel .version-grid.live-version-grid th > span,
 .monthly-panel .version-grid.live-version-grid th > small { display: block; margin-top: 8px; font-size: 12px; font-weight: 400; line-height: 1.7; }
@@ -92,7 +92,7 @@
 
 .monthly-panel .gap-amount-units{display:inline-flex;align-items:center;padding:3px;gap:3px;border:1px solid #dadad8;border-radius:8px;background:#efefee}
 .monthly-panel .gap-amount-units button{border:0;border-radius:5px;background:transparent;padding:6px 10px;min-height:30px;white-space:nowrap;color:#777773;font-size:12px;font-weight:550}
-.monthly-panel .gap-amount-units button[aria-pressed=true]{background:#fff;color:#1f2220;box-shadow:0 1px 4px #38383720}
+.monthly-panel .gap-amount-units button[aria-pressed=true]{background:#fff;color:#30441b;box-shadow:0 1px 4px #38383720}
 .monthly-panel .gap-amount-suffix{font-size:12px;color:#666663}
 .monthly-panel .gap-condition-input.amount-input input{width:112px}
 

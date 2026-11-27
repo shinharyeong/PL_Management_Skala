@@ -30,7 +30,6 @@ function loadOrgImprovementPanel() { return import('./OrgImprovementPanel.vue') 
 const OrgImprovementPanel = defineAsyncComponent(loadOrgImprovementPanel)
 import { clockText } from './auth-demo.js'
 import { pageTitles } from './router.js'
-import NavIcon from './NavIcon.vue'
 import FeedbackToast from './FeedbackToast.vue'
 import BusinessConfirm from './BusinessConfirm.vue'
 import {settleBusinessConfirmation} from './business-confirm.js'
@@ -211,8 +210,6 @@ watch(() => store.actor?.id, () => settleBusinessConfirmation(false))
       <a class="brand topbar-brand" :href="store.actor.role === 'org' ? '#/org-requests' : '#/home'"><img class="brand-logo" src="/assets/celljango-logo.svg" alt="셀장고" width="236" height="100"></a>
       <nav class="top-nav" aria-label="주 메뉴">
         <a v-for="menu in menus" :key="menu.id" :href="`#/${menu.id}`" class="top-link" :class="{ active: menuSelected(menu.id) }" :aria-current="menuSelected(menu.id) ? 'page' : undefined">
-          <img v-if="menu.icon" :src="`/assets/${menu.icon}.svg`" alt="" />
-          <NavIcon v-else :name="menu.id" />
           <span><span :data-copy-key="'pages.'+menu.id">{{ copy.pages[menu.id] || menu.label }}</span></span><span v-if="menu.id === 'notifications' && store.unread" class="top-count">{{ store.unread }}</span>
         </a>
       </nav>

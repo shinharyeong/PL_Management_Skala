@@ -1,9 +1,9 @@
 /* Shared visual language for the prototype; the API application is unaffected. */
-.app-layout{--canvas:#f0f0ef;--line:#e3e3e2;--text:#1f1f1f;--muted:#676763;--navy:#202020;--selected:#e9e9e9;--surface:#fff;--sage:#4e6e4f;--lime:#e7e7e4;color:var(--text);background:var(--canvas);font-size:16px;letter-spacing:-.025em}
+.app-layout{--canvas:#f3f5ef;--line:#e2e7da;--text:#1f1f1f;--muted:#676763;--navy:#202020;--selected:#edf3e4;--surface:#fff;--sage:#30441b;--lime:#e6eedb;color:var(--text);background:var(--canvas);font-size:16px;letter-spacing:-.025em}
 :where(.app-layout) h1{font-size:30px;letter-spacing:-1.1px;line-height:1.5}:where(.app-layout) h2{letter-spacing:-.5px}
 .card{border-radius:14px;border-color:#e8e9e5;box-shadow:0 1px 2px #1f1f1f0a}
-:where(.app-layout) .btn{min-height:42px;font-size:14px;border-color:#dcdcdb;border-radius:999px;padding-inline:18px;transition:background .15s,border-color .15s,box-shadow .15s}
-:where(.app-layout) .btn.primary{box-shadow:0 3px 6px #1f222014}:where(.app-layout) .btn:hover:not(:disabled){border-color:#bcbcba;background:#f7f7f7}
+:where(.app-layout) .btn{min-height:42px;font-size:14px;border-color:#dcdcdb;border-radius:10px;padding-inline:18px;transition:background .15s,border-color .15s,box-shadow .15s}
+:where(.app-layout) .btn.primary{box-shadow:0 3px 6px #30441b14}:where(.app-layout) .btn:hover:not(:disabled){border-color:#bcbcba;background:#f7f7f7}
 :where(.app-layout) input,:where(.app-layout) select,:where(.app-layout) textarea{border-color:#dadad9;border-radius:9px;min-height:44px}
 :where(.app-layout) .field label{font-size:14px}:where(.app-layout) .field{gap:9px}th{font-size:13px;font-weight:500}.badge{font-size:13px;border-radius:6px;padding:4px 10px}
 .page-heading{gap:8px;margin-bottom:6px}.page-heading>p:not(.breadcrumb){font-size:14px}.breadcrumb{font-size:12px;font-weight:500;letter-spacing:.01em;margin-bottom:4px}
@@ -23,7 +23,7 @@
 .sidebar .workspace-nav{margin:8px 0 8px 24px;border-color:var(--line);padding-left:12px}.sidebar .workspace-nav .nav-link{font-size:13px;min-height:40px;padding:8px 10px}
 .sidebar-user{position:relative;margin-top:auto;padding:22px 8px 0 52px;border-top:1px solid var(--line);gap:4px;min-height:104px}
 .sidebar-user strong{font-size:13px;color:var(--text)}.sidebar-user small{color:var(--muted);font-size:12px}.sidebar-user .text-button{color:var(--muted);font-size:12px;min-height:32px;text-decoration:underline;text-underline-offset:3px}
-.user-avatar{position:absolute;left:4px;top:24px;width:34px;height:34px;border-radius:10px;background:#e7e7e4;color:#1f2220;display:grid;place-items:center;font-size:13px;font-weight:700}
+.user-avatar{position:absolute;left:4px;top:24px;width:34px;height:34px;border-radius:10px;background:#e6eedb;color:#263617;display:grid;place-items:center;font-size:13px;font-weight:700}
 .workspace-shell{flex:1;min-width:0;background:var(--canvas)}
 .main-content{width:100%;max-width:1640px;padding:32px 36px 48px;margin:0 auto}
 .hp-table-scroll:focus-visible,.hp-waterfall-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:8px}
@@ -32,24 +32,24 @@
 @media(max-width:760px){.app-layout{font-size:15px}.prototype-banner{flex-wrap:wrap;gap:2px}.sidebar{width:100%;min-width:0;height:auto;padding:18px 16px;overflow:visible;gap:16px}.sidebar .role-caption,.user-avatar{display:none}.sidebar nav{gap:8px}.sidebar .nav-link{min-height:44px;padding:10px 12px;font-size:13px}.sidebar-user{position:absolute;right:20px;top:16px;padding:0;border:0;min-height:0;margin:0}.sidebar .workspace-nav{margin:0;padding:0;border:0}.main-content{padding:24px 16px 40px}.card{border-radius:12px}}
 /* 상단 메뉴: 사이드바 대신 로고·메뉴·사용자를 한 줄에 두어 표 영역을 넓힌다 */
 .app-layout.top-layout{flex-direction:column}
-.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:20px;padding:10px 32px;background:#f0f0eff0;backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
-.topbar .brand{display:inline-flex;flex-shrink:0}.topbar .brand:hover{text-decoration:none}.topbar .brand-logo{height:40px}
+/* 상단 메뉴: 화면 위에 떠 있는 반투명 카드. 글자만 두고, 선택은 검정 둥근 네모로 표시한다 */
+.app-layout.top-layout{background:radial-gradient(1100px 520px at 50% -160px,#ffffff 0%,#ffffff00 70%),var(--canvas)}
+.topbar{position:sticky;top:12px;z-index:20;display:flex;align-items:center;gap:20px;margin:12px 24px 0;padding:8px 10px 8px 16px;background:#ffffffc7;backdrop-filter:blur(14px) saturate(1.2);border:1px solid #ffffffe6;border-radius:16px;box-shadow:0 1px 2px #30441b0d,0 8px 24px #30441b0f}
+.topbar .brand{display:inline-flex;flex-shrink:0}.topbar .brand:hover{text-decoration:none}.topbar .brand-logo{height:36px}
 .top-nav{display:flex;align-items:center;gap:2px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}.top-nav::-webkit-scrollbar{display:none}
 .top-link:first-child{margin-left:auto}.top-link:last-child{margin-right:auto}
-.top-link{display:inline-flex;align-items:center;gap:8px;flex-shrink:0;white-space:nowrap;padding:8px 14px;border-radius:999px;color:#474745;font-size:14px;font-weight:500;text-decoration:none}
-.top-link:hover{background:#e7e9e3;color:var(--text);text-decoration:none}
-.top-link.active{background:#1f2220;color:#fff;font-weight:600}
-.top-link img,.top-link .nav-icon{width:16px;height:16px;flex-shrink:0}.top-link img{filter:brightness(0);opacity:.55}.top-link.active img{filter:brightness(0) invert(1);opacity:.95}
-.top-count{background:#e3e3e2;color:#51514e;border-radius:999px;min-width:22px;padding:0 7px;font-size:12px;line-height:20px;text-align:center}
-.top-link.active .top-count,.workspace-tab.active .top-count{background:#ffffff30;color:#fff}
-.topbar-user{display:flex;align-items:center;gap:10px;flex-shrink:0}
-.topbar-user .user-avatar{position:static;width:32px;height:32px;font-size:12px}
+.top-link{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;white-space:nowrap;padding:7px 13px;border-radius:9px;color:#3c3d3b;font-size:14px;font-weight:500;text-decoration:none;transition:background .15s,color .15s}
+.top-link:hover{background:#30441b0d;color:var(--text);text-decoration:none}
+.top-link.active{background:#30441b;color:#fff;font-weight:600}
+.top-count{background:#30441b0f;color:#51514e;border-radius:6px;min-width:20px;padding:0 6px;font-size:12px;line-height:19px;text-align:center}
+.top-link.active .top-count,.workspace-tab.active .top-count{background:#ffffff2e;color:#fff}
+.topbar-user{display:flex;align-items:center;gap:10px;flex-shrink:0;padding-left:12px;border-left:1px solid #30441b14}
+.topbar-user .user-avatar{position:static;width:32px;height:32px;border-radius:9px;font-size:12px}
 .topbar-user-text{display:flex;flex-direction:column;line-height:1.3}.topbar-user-text strong{font-size:13px}.topbar-user-text small{font-size:11px;color:var(--muted)}
 .topbar-user .text-button{color:var(--muted);font-size:12px;text-decoration:underline;text-underline-offset:3px}
-.workspace-tabs{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 32px;border-bottom:1px solid var(--line)}
-.workspace-tabs-label{font-size:12px;color:var(--muted);margin-right:4px}
-.workspace-tab{display:inline-flex;align-items:center;gap:8px;border:1px solid #dcdcdb;background:#fff;border-radius:999px;padding:5px 8px 5px 14px;font-size:13px;color:var(--text)}
-.workspace-tab:hover{border-color:#bdbdbb}.workspace-tab.active{border-color:#1f2220;background:#1f2220;color:#fff;font-weight:600}
-@media(max-width:1240px){.topbar{gap:12px;padding-inline:20px}.topbar-user-text{display:none}.top-link{padding:8px 10px;font-size:13px;gap:6px}}
-@media(max-width:1180px){.top-link img,.top-link .nav-icon{display:none}}
-@media(max-width:760px){.topbar{flex-wrap:wrap;padding:10px 16px}.top-nav{order:3;flex-basis:100%}.topbar-user{margin-left:auto}.workspace-tabs{padding:8px 16px}}
+.workspace-tabs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:14px 36px 0}
+.workspace-tabs-label{font-size:12px;color:var(--muted);margin-right:6px}
+.workspace-tab{display:inline-flex;align-items:center;gap:8px;border:1px solid #30441b14;background:#ffffffb3;border-radius:9px;padding:5px 8px 5px 12px;font-size:13px;color:var(--text)}
+.workspace-tab:hover{background:#fff;border-color:#30441b26}.workspace-tab.active{border-color:#30441b;background:#30441b;color:#fff;font-weight:600}
+@media(max-width:1240px){.topbar{gap:12px;margin-inline:16px}.topbar-user-text{display:none}.top-link{padding:7px 10px;font-size:13px}.workspace-tabs{padding-inline:28px}}
+@media(max-width:760px){.topbar{flex-wrap:wrap;margin:8px 12px 0;padding:8px 10px}.top-nav{order:3;flex-basis:100%}.topbar-user{margin-left:auto;border-left:0}.workspace-tabs{padding:10px 16px 0}}

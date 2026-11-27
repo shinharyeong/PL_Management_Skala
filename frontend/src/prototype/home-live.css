@@ -36,7 +36,7 @@
 .home-live .hp-kpi:last-child .muted, .home-live .hp-kpi:last-child .hp-muted { color: var(--muted); }
 .home-live .hp-kpi:last-child .hp-increase { color: #a84545; }
 .home-live .hp-kpi:last-child .hp-decrease { color: #4467a5; }
-.home-live .hp-kpi:last-child .hp-good { color: #2e512e; }
+.home-live .hp-kpi:last-child .hp-good { color: #46642a; }
 .home-live .hp-kpi:last-child .hp-bad { color: #993e4a; }
 
 /* Closing status is a narrow strip, with every count and workflow note retained. */
@@ -48,7 +48,7 @@
 .home-live .hp-close-steps li::after { display: none; }
 .home-live .hp-close-steps li > span { order: 1; white-space: normal; }
 .home-live .hp-close-steps li > b { order: 2; display: inline; height: auto; min-width: 0; width: auto; padding: 0; border: 0; box-shadow: none; background: transparent; color: #4c4c49; font-size: 14px; line-height: 20px; font-weight: 650; border-radius: 0; }
-.home-live .hp-close-steps li.active > b { color: #1f2220; background: transparent; }
+.home-live .hp-close-steps li.active > b { color: #30441b; background: transparent; }
 .home-live .hp-close-notes { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; grid-column: 1/-1; }
 .home-live .hp-close-notes p { font-size: 10px; line-height: 15px; }
 .home-live .hp-close-notes .hp-good { color: var(--muted); }
@@ -263,7 +263,7 @@
 .home-live .hp-kpi-top .hp-kpis { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .home-live .hp-revenue-share { display:flex; flex-direction:column; gap:6px; min-width:0; }
 .hp-revenue-pie { display:block; width:min(100%,190px); height:190px; margin:0 auto; flex-shrink:0; }
-.hp-revenue-pie path:focus-visible { outline:2px solid #2b2d2a; outline-offset:2px; }
+.hp-revenue-pie path:focus-visible { outline:2px solid #263617; outline-offset:2px; }
 .hp-revenue-legend { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:7px; }
 .hp-revenue-legend li { display:grid; grid-template-columns:8px minmax(0,1fr) auto auto; align-items:center; gap:7px; font-size:11px; }
 .hp-revenue-legend i { width:8px; height:8px; border-radius:2px; }
@@ -419,3 +419,19 @@
 @container financial-overview (min-width:900px) {
  .home-live .hp-side-column > .hp-recent-cells { flex:1 0 auto; }
 }
+
+/* 마감 진행 단계: 진행률 링(완료는 체크, 진행 중은 채워지는 링과 %, 대기는 점선) */
+.home-live .hp-work-summary .hp-step-dot,
+.home-live .hp-work-summary .hp-step-complete .hp-step-dot,
+.home-live .hp-work-summary .hp-step-progress .hp-step-dot { width:36px; height:36px; border:0; background:transparent; border-radius:50%; }
+.hp-step-dot .hp-step-ring { width:36px; height:36px; flex-shrink:0; overflow:visible; }
+.hp-step-ring .ring-track { fill:#fff; stroke:#e2e7da; stroke-width:3; }
+.hp-step-waiting .hp-step-ring .ring-track { stroke-dasharray:3 3.3; stroke:#d3d8cc; }
+.hp-step-ring .ring-fill { fill:none; stroke:#30441b; stroke-width:3; stroke-linecap:round; transition:stroke-dasharray .4s ease; }
+.hp-step-ring .ring-done { fill:#30441b; }
+.hp-step-ring .ring-check { fill:none; stroke:#fff; stroke-width:2.6; stroke-linecap:round; stroke-linejoin:round; }
+.hp-step-ring .ring-text { font-size:9.5px; font-weight:700; fill:#263617; font-variant-numeric:tabular-nums; }
+.hp-step-ring .ring-idle { fill:#c9cfc1; }
+.home-live .hp-work-summary .hp-close-steps li:not(:last-child)::after { top:18px; left:calc(50% + 24px); width:calc(100% - 48px); background:#e2e7da; }
+.home-live .hp-work-summary .hp-close-steps li.hp-step-complete:not(:last-child)::after { background:#30441b; }
+@media (prefers-reduced-motion: reduce) { .hp-step-ring .ring-fill { transition:none; } }

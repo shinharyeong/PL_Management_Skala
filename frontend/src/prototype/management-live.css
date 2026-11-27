@@ -22,16 +22,16 @@
  .live-management .mg-stat strong { font-size:30px; }
  .live-management .mg-report-grid { grid-template-columns:minmax(0,1fr); }
 }
-.live-management .badge.mg-status-blue { background:#ebebea; color:#1f2220; }
+.live-management .badge.mg-status-blue { background:#ebebea; color:#30441b; }
 .live-management .badge.mg-status-purple { background:#f2eafe; color:#7435b6; }
 .live-management .badge.mg-status-red { background:#fff0f2; color:#ad4755; }
 .live-management .badge.mg-status-gray { background:#f3f3f2; color:#646462; }
 .live-management .badge.mg-status-green { background:#eeeeed; color:#444442; border:1px solid #a8d8be; font-weight:700; }
 
-.live-management .mg-unread { background:#f8f8f8; border:2px solid #abc2a3; border-left:6px solid #1f2220; }
+.live-management .mg-unread { background:#f8f8f8; border:2px solid #abc2a3; border-left:6px solid #30441b; }
 .live-management .mg-read { background:#fafafa; border:1px solid #e5e5e4; border-left:4px solid #c6c6c5; }
 .live-management .notification-read-label { display:inline-flex; padding:3px 9px; border-radius:6px; font-weight:700; }
-.live-management .is-unread { background:#1f2220; color:#fff; }
+.live-management .is-unread { background:#30441b; color:#fff; }
 .live-management .is-read { background:#eaeae9; color:#666663; }
 .live-management .badge.mg-status-amber { background:#fff0bd; color:#805200; border:1px solid #e7c469; }
 .live-management .badge.mg-status-blue { background:#eeeeed; color:#545452; border:1px solid #cacac9; font-weight:700; }
