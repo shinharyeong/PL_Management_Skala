@@ -398,6 +398,7 @@ components:
       type: string
       enum:
       - ACTUAL_VS_PLAN
+      - ACTUAL_VS_PREVIOUS
       - ESTIMATE_VS_PREVIOUS
       - ESTIMATE_VS_PLAN
       description: 실적 vs 계획 / 추정 vs 직전 추정 / 추정 vs 계획 (FR-MONTH-005)
@@ -622,6 +623,10 @@ components:
           - SUBMISSION
           - REPLY
           - OVERDUE
+        workflowStatus:
+          type: string
+          enum: [REQUEST_NEEDED, WAITING, REVIEW_NEEDED, APPROVED]
+          description: 해당 요청·조직의 현재 업무 상태. 승인 완료 건은 목록·배지에서 제외된다.
         title:
           type: string
           example: 10월 매출 Gap 소명 회신 도착
@@ -699,13 +704,18 @@ components:
           $ref: '#/components/schemas/Timestamp'
         dueAt:
           $ref: '#/components/schemas/Timestamp'
+        workflowStatus:
+          type: string
+          enum: [REQUEST_NEEDED, WAITING, REVIEW_NEEDED, APPROVED]
+          description: 관리 목록과 알림이 공유하는 현재 업무 상태
         displayStatus:
           type: string
           enum:
+          - NOT_REQUESTED
           - SUBMITTED
           - OVERDUE
           - WAITING
-          description: 제출 완료 / 기한 경과 / 회신 대기 (FR-YEAR-002, FR-MONTH-002). 최신 제출본 상태와 기한으로 계산
+          description: 요청 필요 / 제출 완료 / 기한 경과 / 회신 대기. 미선택 조직은 NOT_REQUESTED이며 발송일·기한은 null이다. 선택 조직은 최신 제출본 상태와 조직별 기한으로 계산한다.
         latestSubmission:
           oneOf:
           - $ref: '#/components/schemas/SubmissionSummary'
@@ -935,6 +945,39 @@ components:
           $ref: '#/components/schemas/Money'
         actual:
           $ref: '#/components/schemas/Money'
+        comparisons:
+          type: array
+          description: 실제 검토 비교 기준. 첫 실적은 계획·전월 추정, 첫 미래 추정은 전월 같은 월 추정, 재제출은 당월 직전 제출값. 빈 배열이면 비교 자료 없음.
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              basis:
+                enum: [PLAN, PREVIOUS]
+              baselineSubmissionId:
+                $ref: '#/components/schemas/Id'
+              baselineScenario:
+                enum: [PLAN, ACTUAL, ESTIMATE]
+              baselineAmount:
+                $ref: '#/components/schemas/Money'
+              currentAmount:
+                $ref: '#/components/schemas/Money'
+              diff:
+                $ref: '#/components/schemas/Money'
+              rate:
+                $ref: '#/components/schemas/Rate'
+        previousEstimate:
+          description: 첫 제출 시 고정한 전월 승인 제출본의 동일 월 추정. 재제출에서도 참고 열로 유지하며, 판정은 comparisons를 사용한다.
+          $ref: '#/components/schemas/Money'
+        scenario:
+          type: [string, 'null']
+          enum: [ACTUAL, ESTIMATE, PLAN, null]
+          description: 상세 행의 현재 값(actual)의 구분. 상위 합계 행은 null.
+        month:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 12
         diff:
           $ref: '#/components/schemas/Money'
         rate:
@@ -1582,6 +1625,7 @@ paths:
       tags:
       - 알림 모아보기
       summary: NOTI-01 알림 목록(날짜 묶음) + 요약 지표
+      description: 처리한 연간 제출 알림(APPROVED·REJECTED)은 목록과 안 읽음 건수에서 제외한다. 제출·재제출 원본 이력은 유지한다.
       x-fr:
       - FR-NOTI-A-001
       - FR-NOTI-A-002
@@ -2369,6 +2413,54 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /submission-requests/{requestId}/targets:
+    post:
+      operationId: addMonthlyRequestTargets
+      tags: [제출 요청]
+      summary: 기존 월간 요청에 미요청 조직 추가 발송
+      description: 진행 중인 월간 요청만 지원한다. 기존 요청과 선택 조직의 제출·기한은 유지한다. 모든 선택 조직이 미요청 상태여야 하며 실패하면 전체를 취소한다. 추가 조직의 기한·메시지·발송 시각은 별도로 보관한다.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organizationIds, dueAt]
+              properties:
+                organizationIds:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: '#/components/schemas/Id'
+                dueAt:
+                  $ref: '#/components/schemas/Timestamp'
+                message:
+                  type: string
+                  maxLength: 5000
+      responses:
+        '200':
+          description: 추가 발송 완료 (동일 Idempotency-Key 재시도는 결과 재사용)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmissionRequest'
+        '400':
+          description: 과거 기한, 마감·연간 요청 또는 유효하지 않은 조직
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 요청 없음
+        '409':
+          description: REQUEST_TARGET_ALREADY_SELECTED 이미 발송한 조직 포함 또는 명령 공통 충돌
   /submission-requests/{requestId}:
     get:
       operationId: getSubmissionRequest
@@ -2840,8 +2932,8 @@ paths:
       operationId: actOnReviewItems
       tags:
       - Gap 검토
-      summary: GAP-07 선택 항목 처리(제외 / 선택 항목 검토하기 / 소명 요청)
-      description: '- `EXCLUDE`: 검토 필요 → 제외됨(사유 기록)
+      summary: GAP-07 선택 항목 처리(승인 / 선택 항목 검토하기 / 소명 요청)
+      description: '- `APPROVE`: 검토 필요·선정 → 직접 승인. EXCLUDE는 호환 별칭이며 결과는 ACCEPTED 탭에 집계.
 
         - `SELECT`: 검토 필요 → 검토 완료(사업부 하위 메뉴 생성)
 
@@ -2875,6 +2967,7 @@ paths:
                 action:
                   type: string
                   enum:
+                  - APPROVE
                   - EXCLUDE
                   - SELECT
                   - REQUEST_EXPLANATION
@@ -3491,8 +3584,16 @@ paths:
                           oneOf:
                           - $ref: '#/components/schemas/Id'
                           - type: 'null'
+                        draftSubmissionId:
+                          description: 마지막 제출본보다 나중에 업로드한 최신 초안. 작성 이어가기에 사용하며 재제출 코멘트는 submissionId로 조회한다.
+                          oneOf:
+                          - $ref: '#/components/schemas/Id'
+                          - type: 'null'
                         dueAt:
                           $ref: '#/components/schemas/Timestamp'
+                        message:
+                          type: [string, "null"]
+                          description: 이 조직에 보낸 제출 요청 메시지. 추가 발송 시 조직별 메시지.
                         action:
                           type: string
                           enum:

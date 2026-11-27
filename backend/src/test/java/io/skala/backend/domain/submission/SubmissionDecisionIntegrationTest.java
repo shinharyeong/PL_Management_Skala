@@ -188,7 +188,7 @@ class SubmissionDecisionIntegrationTest extends PostgresIntegrationTest {
         mvc.perform(get("/api/v1/submissions/{id}", nov).with(manager))
                 .andExpect(jsonPath("$.rejectedItems.length()").value(1))
                 .andExpect(jsonPath("$.rejectedItems[0].reviewItemId").value(rent))
-                .andExpect(jsonPath("$.rejectedItems[0].item").value("임차료 · 11월 추정"))
+                .andExpect(jsonPath("$.rejectedItems[0].item").value("임차료 · 11월 실적"))
                 .andExpect(jsonPath("$.rejectedItems[0].sourceCell").value("비용!O5"))
                 .andExpect(jsonPath("$.rejectedItems[0].reason").value("임차료 근거가 부족합니다."))
                 .andExpect(jsonPath("$.rejectedItems[0].previousExplanation.answer").value("변경 사유"));
@@ -283,8 +283,8 @@ class SubmissionDecisionIntegrationTest extends PostgresIntegrationTest {
     }
 
     private List<Line> novemberLines() {
-        return List.of(line(10, SALES_KEY, "REVENUE", value(11, "ESTIMATE", "1300", "O10")),
-                line(5, RENT_KEY, "COST", value(11, "ESTIMATE", "50", "O5")));
+        return List.of(line(10, SALES_KEY, "REVENUE", value(11, "ACTUAL", "1300", "O10")),
+                line(5, RENT_KEY, "COST", value(11, "ACTUAL", "50", "O5")));
     }
 
     private Map<String, JsonNode> itemsByName(long submissionId) throws Exception {

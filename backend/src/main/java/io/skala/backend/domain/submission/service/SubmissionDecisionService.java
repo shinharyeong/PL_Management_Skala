@@ -102,6 +102,7 @@ public class SubmissionDecisionService {
     private static boolean notAccepted(ReviewItem item, ReviewExplanation e) {
         return item != null && Boolean.TRUE.equals(item.getActive())
                 && item.getWorkflowState() != WorkflowState.EXCLUDED
+                && item.getWorkflowState() != WorkflowState.APPROVED
                 && Objects.equals(e.getRound(), item.getCurrentRound())
                 && e.getVerdict() != ExplanationVerdict.ACCEPTED;
     }

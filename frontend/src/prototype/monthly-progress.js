@@ -1,10 +1,17 @@
 import { status } from './live-api.js'
 
+import {organizationWorkflowStatus} from './review-status.js'
+
+export function monthlyOrganizationStatus(org) {
+ return organizationWorkflowStatus({...org,selected:org.monthlyRequested ?? !!org.latestSubmission}).label
+}
+
 // 요청 상세에는 미선택 조직도 포함된다. 행의 존재가 발송을 뜻하지 않는다.
 export function monthlyProgress(target) {
   const requested = target?.selected === true
   return {
     monthlyRequested: requested,
+    workflowStatus: target?.workflowStatus,
     submissionStatus: !requested ? '요청 필요' : status(target.displayStatus),
     requestedAt: requested ? target.requestedAt : null,
     requestDue: requested ? target.dueAt : null,

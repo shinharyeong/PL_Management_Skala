@@ -41,6 +41,7 @@ public class GapCalculator {
 
     private final SubmissionRequestRepository submissionRequestRepository;
     private final PlanBaselines planBaselines;
+    private final MonthlyReviewPolicy monthlyPolicy;
     private final BaselineResolver baselineResolver;
     private final FinancialValueRepository financialValueRepository;
     private final ReviewItemRepository reviewItemRepository;
@@ -53,35 +54,25 @@ public class GapCalculator {
         gapComparisonRepository.deleteAllBySubmissionId(submission.getId());
         SubmissionRequest request = submissionRequestRepository.findById(submission.getRequestId()).orElseThrow();
 
-        Map<GapBasis, Submission> sources = sources(submission, request);
-        Map<GapBasis, Map<Key, Aggregate>> values = values(sources);
+        MonthlyReviewPolicy.Context context = monthlyPolicy.load(submission);
         Map<GapComparisonType, GapThreshold> thresholds = new EnumMap<>(GapComparisonType.class);
         for (GapComparisonType type : GapComparisonType.values()) {
             gapThresholdRepository.findFirstByComparisonOrderByIdDesc(type).ifPresent(t -> thresholds.put(type, t));
         }
-
         for (ReviewItem item : reviewItemRepository.findAllWithReportItemBySubmissionId(submission.getId())) {
-            if (!Boolean.TRUE.equals(item.getActive())) {
-                continue;
-            }
+            Key key = new Key(item.getReportItem().getId(), item.getYear(), item.getMonth(), item.getScenario());
+            if (!Boolean.TRUE.equals(item.getActive()) || !MonthlyReviewPolicy.inScope(request, key)) continue;
             boolean exceeded = false;
-            for (GapBasis basis : GapBasis.values()) {
-                GapComparisonType type = GapRules.typeOf(item.getScenario(), basis);
-                GapThreshold threshold = type == null ? null : thresholds.get(type);
-                if (threshold == null || !sources.containsKey(basis) || item.getCurrentAmount() == null) {
-                    continue;
-                }
-                Aggregate base = values.get(basis).get(new Key(item.getReportItem().getId(), item.getYear(),
-                        item.getMonth(), GapRules.baselineScenarioOf(type)));
-                if (base == null) {
-                    continue;
-                }
-                BigDecimal current = item.getCurrentAmount();
+            for (MonthlyReviewPolicy.Comparison comparison : context.comparisons(key)) {
+                GapThreshold threshold = thresholds.get(comparison.type());
+                if (threshold == null && comparison.type() == GapComparisonType.ACTUAL_VS_PREVIOUS)
+                    threshold = thresholds.get(GapComparisonType.ACTUAL_VS_PLAN);
+                if (threshold == null || item.getCurrentAmount() == null) continue;
+                BigDecimal current = item.getCurrentAmount(), base = comparison.amount();
                 boolean over = GapRules.exceeded(threshold.getPercentEnabled(), threshold.getPercent(),
-                        threshold.getAmountEnabled(), threshold.getAmount(), base.total(), current);
-                gapComparisonRepository.save(GapComparison.of(item, basis, sources.get(basis),
-                        GapRules.baselineScenarioOf(type), base.total(), current, GapRules.rate(current, base.total()),
-                        threshold, over));
+                        threshold.getAmountEnabled(), threshold.getAmount(), base, current);
+                gapComparisonRepository.save(GapComparison.of(item, comparison.basis(), comparison.source(),
+                        comparison.scenario(), base, current, GapRules.rate(current, base), threshold, over));
                 exceeded |= over;
             }
             item.markGap(exceeded);
@@ -94,8 +85,8 @@ public class GapCalculator {
         if (request.getType() == RequestType.MONTHLY_ACTUAL) {
             planBaselines.confirmedPlan(request.getId(), submission.getOrganizationId())
                     .ifPresent(plan -> sources.put(GapBasis.PLAN, plan));
-            Baseline previous = baselineResolver.resolveApproved(submission, request);
-            if (previous.kind() == BaselineKind.PREV_MONTH_APPROVED) {
+            Baseline previous = baselineResolver.comparisonBaseline(submission, request);
+            if (previous.submission() != null && previous.kind() != BaselineKind.ANNUAL_PLAN) {
                 sources.put(GapBasis.PREVIOUS, previous.submission());
             }
         }

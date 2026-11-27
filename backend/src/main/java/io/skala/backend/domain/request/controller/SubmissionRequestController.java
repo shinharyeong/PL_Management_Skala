@@ -1,6 +1,7 @@
 package io.skala.backend.domain.request.controller;
 
 import io.skala.backend.domain.request.dto.CreateSubmissionRequestRequest;
+import io.skala.backend.domain.request.dto.AddRequestTargetsRequest;
 import io.skala.backend.domain.request.dto.RequestDetailResponse;
 import io.skala.backend.domain.request.dto.SubmissionRequestResponse;
 import io.skala.backend.domain.request.service.SubmissionRequestService;
@@ -41,6 +42,15 @@ public class SubmissionRequestController {
             SubmissionRequestResponse created = requestService.create(actor, request);
             return ResponseEntity.created(URI.create("/api/v1/submission-requests/" + created.id())).body(created);
         });
+    }
+
+    @PostMapping("/{requestId}/targets")
+    public ResponseEntity<String> addTargets(@PathVariable Long requestId,
+            @RequestHeader(IdempotentCommandExecutor.HEADER) String idempotencyKey,
+            @Valid @RequestBody AddRequestTargetsRequest request) {
+        AuthenticatedUser actor = currentUser.get();
+        return idempotency.execute(actor.id(), "POST /api/v1/submission-requests/" + requestId + "/targets",
+                idempotencyKey, request, () -> ResponseEntity.ok(requestService.addTargets(actor, requestId, request)));
     }
 
     @GetMapping

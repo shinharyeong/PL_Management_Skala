@@ -11,7 +11,7 @@ export function syncWorkspace(saved, latest, conditions) {
   // Sent requests already represent an explicitly created workspace. SELECTED
   // rows alone still do not create a new tab merely by calculating.
   for(const item of latest.filter(awaitingExplanationReview)){
-    if(!existing.has(item.id))rows.push({...item,conditions:{...conditions},restored:true})
+    if(!existing.has(item.id))rows.push({...item,conditions:{...conditions,...item.conditions},restored:true})
   }
   return rows
 }

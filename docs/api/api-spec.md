@@ -186,7 +186,8 @@ HOME-03~06 계산 기준:
 | REQ-01 | GET | `/organizations` | 요청 대상 조직 목록(체크박스 표) | `active=true`, `q` | `items[{id, code, name, managers[{name, email}]}]` | P | YEAR-001, MONTH-001 | organization, app_user |
 | REQ-02 | POST | `/submission-requests` | 연간 계획·월간 시트 요청 일괄 발송 | `type`=ANNUAL_PLAN·MONTHLY_ACTUAL, `year`, `month`(월간만), `dueAt`, `message`, `organizationIds[]`(기본 전체) | `201` `request{id, type, year, month, status: OPEN}` · 오류 `REQUEST_ALREADY_EXISTS` | P | YEAR-001, MONTH-001 | submission_request, request_target, notification |
 | REQ-03 | GET | `/submission-requests` | 요청 목록(진행 중인 요청) | `type`, `year`, `status` | `items[{id, type, year, month, requestedAt, dueAt, status, submittedCount, targetCount}]` | P | YEAR-002, MONTH-002 | submission_request, request_target, submission |
-| REQ-04 | GET | `/submission-requests/{requestId}` | 조직별 진행 현황 표 | — | `request`, `targets[{organization, requestedAt(=요청 발송일), dueAt, displayStatus: SUBMITTED·OVERDUE·WAITING, latestSubmission{id, status, label}}]` | P | YEAR-002, MONTH-002 | request_target, submission |
+| REQ-03A | POST | `/submission-requests/{requestId}/targets` | 진행 중인 월간 요청의 미요청 조직에 추가 발송 | `organizationIds[]`, `dueAt`, `message` | 요청 요약 · 기존 제출·기한 유지, 추가 조직별 발송 시각·기한·메시지 저장. 이미 발송한 조직이 섞이면 전체 취소(`REQUEST_TARGET_ALREADY_SELECTED`) | P | MONTH-001 | request_target.dispatch_* |
+| REQ-04 | GET | `/submission-requests/{requestId}` | 조직별 진행 현황 표 | — | `request`, `targets[{organization, selected, requestedAt(=조직별 요청 발송일), dueAt, displayStatus: NOT_REQUESTED·SUBMITTED·OVERDUE·WAITING, latestSubmission{id, status, label}}]` · 미요청 조직의 발송일·기한은 null | P | YEAR-002, MONTH-002 | request_target, submission |
 | REQ-05 | GET | `/submissions` | 조직 행을 눌렀을 때 회신 이력 카드 | `requestId`, `organizationId` | `items[{id, label, status, submittedBy, submittedAt, replyMessage, file{name, url}, reviewComment, reviewedAt}]` | P | YEAR-003, MONTH-003 | submission |
 | REQ-06 | POST | `/submissions/{submissionId}/decisions` | 회신 수락 또는 재제출 요청(재요청 시 코멘트 필수). 전 조직 수락 시 연간·월간 master 자동 생성 | `decision`=APPROVE·REJECT, `comment`(REJECT 필수), `rejectedReviewItemIds[]`(반려 항목), `expectedStateToken` | `submission{status, approvedLabel}`, `masterPublished{id, label}?` · 오류 `EXPLANATIONS_NOT_ACCEPTED`, `COMMENT_REQUIRED` | P | YEAR-003, MONTH-003, HIST-004 | submission.reject_reason·approved_seq, review_item.rejected, master_version, annual_master |
 | REQ-07 | GET | `/submissions/{submissionId}/file` | 회신 첨부(제출 엑셀) 다운로드 | — | 파일 스트림 | P·O | YEAR-003, MONTH-003, ARCH-002 | stored_object |
@@ -221,7 +222,7 @@ HOME-03~06 계산 기준:
 
 | ID | 메서드 | 경로 | 설명 | 주요 요청 | 주요 응답 | 권한 | FR | 관련 테이블 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| INBOX-01 | GET | `/inbox` | 내 조직의 열린 요청 카드(제출 요청·소명 요청) | — | `organization`, `openCount`, `items[{kind: SUBMISSION·EXPLANATION, title, requestId, dueAt, action: START_SUBMISSION·START_EXPLANATION, link}]` | O | NOTI-U-001, 002 | submission_request, request_target, review_explanation |
+| INBOX-01 | GET | `/inbox` | 내 조직의 열린 요청 카드(제출 요청·소명 요청) | — | `organization`, `openCount`, `items[{kind: SUBMISSION·EXPLANATION, title, requestId, submissionId, draftSubmissionId, dueAt, action: START_SUBMISSION·START_EXPLANATION, link}]` — `draftSubmissionId`는 마지막 제출본 이후 업로드한 최신 초안(없으면 null), `submissionId`는 재제출 요청·소명 대상 제출본 | O | NOTI-U-001, 002 | submission_request, request_target, submission, review_explanation |
 
 ## 8. 엑셀 업로드·검증 (FR-UPLOAD) — 조직 담당자
 
@@ -513,3 +514,35 @@ report-ai app은 상태를 저장하지 않는다. 저장·권한·감사는 bac
 `app.dev-tools.enabled` 기본 false. 꺼지면 계정 조회·개발 로그인·문구 쓰기는 404이며 공통 문구 읽기는 유지한다. 켜져 있으면 `app.dev-tools.access-key`(`APP_DEV_TOOLS_ACCESS_KEY`, `app-secrets`)와 같은 `X-Dev-Access-Key`가 있어야 계정 조회·개발 로그인이 된다. 키를 설정하지 않으면 켜도 모두 403이다. 로컬 프로필과 배포 ConfigMap(개발·시연 클러스터)은 `require-access-key: false`로 키 없이 쓴다(`docs/infrastructure.md` 4절 「개발 도구」). 사용자·조직을 자동 생성하지 않는다.
 
 Flyway `V20261125_1800__shared_ui_copy.sql`: `ui_copy_override` 테이블. 기존 업무 테이블과 금액 데이터는 변경하지 않는다.
+
+### 관리 목록·알림의 공통 업무 상태
+
+`workflowStatus`는 요청·조직의 최신 제출본과 현재 소명 회차로 계산하며, 요청 상세의 조직 행과 알림에 동일하게 제공한다.
+
+| 코드 | 표시 | 색 | 판단 기준 |
+| --- | --- | --- | --- |
+| REQUEST_NEEDED | 요청 필요 | 회색 | 해당 조직에 요청 미발송 |
+| WAITING | 회신 대기 | 파랑 | 시트 미제출·파일 재제출 대기 또는 소명 회신 대기 |
+| REVIEW_NEEDED | 검토 필요 | 주황 | 제출본 검토 또는 요청한 소명의 회신 검토 필요 |
+| APPROVED | 승인 완료 | 초록 | 최신 제출본 승인 완료 |
+
+회신을 받은 항목과 회신 대기 항목이 섞이면 경영기획팀이 처리할 수 있는 회신 검토를 우선 표시한다. 기한 경과는 회신 기한의 경고 정보로 유지한다. 읽음/안 읽음은 업무 처리 상태와 별개다. 소명 수락만으로 제출본 승인 완료가 되지 않는다.
+
+승인 완료된 요청·조직의 제출·소명·기한 경과 알림은 목록과 배지에서 함께 제외한다. 수락한 개별 소명 회신 알림도 제외한다. 제출·소명 원본과 버전 이력은 삭제하지 않는다. 알림 화면은 30초 간격으로 현재 상태를 갱신한다.
+
+### 월간 비교 정책 — monthly-comparison/2.0
+
+- 원본 엑셀은 모든 월을 저장한다. 월간 review_item은 요청 연도의 당월 ACTUAL과 다음 달~12월 ESTIMATE만 생성한다. PLAN·과거 ACTUAL·당월 이전 ESTIMATE는 월간 검토 대상이 아니다. 연간 계획 검증은 기존 정책을 유지한다.
+- 첫 제출: 당월 실적은 확정 연간 계획의 같은 월 PLAN 및 전월 마지막 승인본의 같은 월 ESTIMATE와 비교한다. 미래 월 추정은 전월 마지막 승인본의 같은 월 ESTIMATE와 비교한다.
+- 재제출: 같은 요청·조직의 직전 제출본(반려본 포함)의 같은 월·구분과 비교한다. 당월 계획 차이나 전월 추정 차이가 재제출의 새 변경으로 잡히지 않는다. 검토 대기 중 중복 제출 제한은 유지한다.
+- 검증 시 submission.review_baseline_submission_id와 review_policy_version을 저장한다. 제출 전 기준이 바뀌면 재검증해야 하며, 제출 후 조회는 저장된 기준을 사용한다. 전월 자료가 없는 첫 운영 월은 비교 가능한 계획만 사용한다. 기존 1월 운영 규칙대로 확정 연간 계획을 사용하며 미래 추정의 전월 비교는 없다.
+- gap_comparison.basis=PREVIOUS인 ACTUAL도 지원한다. ACTUAL_VS_PREVIOUS 조건을 별도로 설정할 수 있으며, 아직 없으면 ACTUAL_VS_PLAN 조건을 사용한다. 미래 ESTIMATE에는 PLAN 비교를 저장하지 않는다.
+- 차이율·금액 조건은 각각 >=, 켠 조건은 AND. 첫 실적의 두 비교 중 하나라도 넘으면 해당 검토 항목의 gap_exceeded=true다. 비율 판정은 표시용 반올림값을 사용하지 않는다. 누락값과 0은 구분한다.
+- 계산기 조회는 호환성을 위해 ACTUAL_VS_PLAN 및 ESTIMATE_VS_PLAN으로 실적/추정 행을 함께 받는다. 네 금액 열은 참고 표시이며, 실제 조건 필터와 호버 비교는 각 상세 행의 comparisons 배열을 사용한다. 이 배열에는 label·basis·baselineSubmissionId·baselineScenario·baselineAmount·currentAmount·diff·rate를 제공한다.
+- previousEstimate는 첫 제출에서 고정한 전월 파일의 같은 월 추정으로 표시한다. 재제출의 실제 기준은 comparisons의 직전 실적/추정이다.
+- V20261127_1200 마이그레이션은 원본 financial 값과 소명 이력을 유지한다. 기존 파생 검토/GAP 결과를 monthly_review_policy_archive에 보존한 뒤 범위 밖 항목을 비활성화하고 기존 제출의 Gap을 새 정책에 맞춰 계산한다. 보존된 당시 조건을 우선 적용한다. 기존 초안은 재검증이 필요하다.
+
+### 계산기 항목 승인과 4개 탭
+
+계산기 탭은 전체 / 검토 필요(NEEDS_REVIEW·SELECTED·RE_REVIEW) / 회신 대기(IN_PROGRESS) / 승인됨(ACCEPTED)이다. 검토 필요의 상세 행은 검토 전·회신 도착으로 구분한다.
+`POST /review-items/actions`의 `APPROVE`는 소명 요청 전 항목을 직접 승인한다. workflow_state=APPROVED로 저장하고 APPROVE 이력을 남긴다. 소명 수락과 직접 승인 모두 API tab=ACCEPTED로 집계한다. 기존 EXCLUDE 명령은 직접 승인의 호환 별칭이며 EXCLUDED 상태 항목도 승인으로 이관한다. 제출본 승인·master 생성은 별도 절차다. 기존 EXCLUDE 이벤트 기록은 보존한다.

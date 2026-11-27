@@ -1,7 +1,7 @@
 @media screen {
 /* Shared work-screen density. Financial values, messages and controls remain readable. */
-.app-layout { --workspace-chrome:32px; font-size:14px; line-height:1.5; min-height:calc(100dvh - var(--workspace-chrome)); }
-.app-layout.development-workspace { --workspace-chrome:69px; }
+.app-layout { --workspace-chrome:0px; font-size:14px; line-height:1.5; min-height:calc(100dvh - var(--workspace-chrome)); }
+.app-layout.development-workspace { --workspace-chrome:37px; }
 .app-layout .main-content:not(.home-overview) { max-width:1720px; padding:18px 24px 24px; }
 .app-layout .main-content:not(.home-overview) :is(.page-stack,.management-panels,.org-panel) { gap:12px; }
 .app-layout .main-content:not(.home-overview) h1 { font-size:23px; line-height:32px; letter-spacing:-.7px; }
@@ -106,14 +106,14 @@
 .app-layout .main-content:not(.home-overview) .gap-controls > .actions .btn { min-width:0; }
 .app-layout .main-content:not(.home-overview) .gap-amount-units { padding:2px; gap:2px; }
 .app-layout .main-content:not(.home-overview) .gap-amount-units button { padding:3px 7px; min-height:26px; }
-.app-layout .main-content:not(.home-overview) .status-tabs { grid-template-columns:repeat(6,minmax(0,1fr)); gap:5px; }
-.app-layout .main-content:not(.home-overview) .status-tabs button { min-height:36px; padding:5px 10px; border-radius:7px; font-size:13px; }
+.app-layout .main-content:not(.home-overview) .status-tabs { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:5px; overflow:visible; }
+.app-layout .main-content:not(.home-overview) .status-tabs button { min-width:0; min-height:36px; padding:5px 10px; border-radius:7px; font-size:13px; }
 .app-layout .main-content:not(.home-overview) .calculator-pipeline { padding:0 4px; gap:6px; }
 .app-layout .main-content:not(.home-overview) .result-toolbar { padding:7px 10px; gap:8px 12px; border-radius:8px; }
 .app-layout .main-content:not(.home-overview) .org-context { padding:5px 8px; gap:7px; min-width:120px; }
 .app-layout .main-content:not(.home-overview) .sort-field select { min-width:140px; }
 .app-layout .main-content:not(.home-overview) .monthly-panel[data-page=calculator] { gap:8px; }
-.app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table { max-height:clamp(200px,calc(100dvh - 560px),720px); overflow:auto; }
+.app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table { max-height:var(--gap-result-max-height,clamp(200px,calc(100dvh - 560px),720px)); overflow:auto; }
 .app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table thead { position:sticky; top:0; z-index:3; }
 .app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table thead th { height:38px; padding:8px 12px; }
 .app-layout .main-content:not(.home-overview) .hierarchy-table.live-gap-table tbody th,
@@ -284,8 +284,8 @@
   .app-layout .main-content:not(.home-overview) .version-controls { grid-template-columns:minmax(0,1fr); }
   .app-layout .main-content:not(.home-overview) .gap-controls > .actions { margin-left:0; width:100%; }
   .app-layout .main-content:not(.home-overview) .gap-controls > .actions .btn { flex:1; }
-  .app-layout .main-content:not(.home-overview) .status-tabs { display:flex; overflow:auto; flex-wrap:nowrap; }
-  .app-layout .main-content:not(.home-overview) .status-tabs button { min-width:96px; flex:0 0 auto; min-height:40px; }
+  .app-layout .main-content:not(.home-overview) .status-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); overflow:visible; }
+  .app-layout .main-content:not(.home-overview) .status-tabs button { min-width:0; min-height:36px; }
   .app-layout .main-content:not(.home-overview) .calculator-actions-dock .btn.primary { min-width:0; }
   .app-layout .main-content:not(.home-overview) .cell-layout { grid-template-columns:minmax(0,1fr); }
   .app-layout .main-content:not(.home-overview) .snapshot-card { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -293,4 +293,40 @@
   .app-layout .main-content:not(.home-overview) .org-history-filters { flex-wrap:wrap; }
   .app-layout .main-content:not(.home-overview) .mg-annual-organizations > .mg-table-scroll { max-height:520px; }
 }
+}
+
+/* Notification inbox: scan title first, with origin and action in consistent columns. */
+.app-layout .main-content:not(.home-overview) .notification-date-heading { display:flex; align-items:center; gap:9px; margin:8px 0 2px; color:#7b8797; font-size:12px; }
+.app-layout .main-content:not(.home-overview) .notification-date-heading h2 { margin:0; color:#344257; font-size:13px; font-weight:650; }
+.notification-date-unread { color:#3465bd; font-size:11px; }
+.notification-date-line { flex:1; height:1px; background:#e1e6ee; margin-left:3px; }
+.app-layout .main-content:not(.home-overview) .mg-notification { --notification-color:#3767be; --notification-tint:#edf3ff; display:grid; grid-template-columns:36px minmax(0,1fr) auto; align-items:center; gap:14px; padding:14px 16px; border:1px solid #e0e6ef; border-left:3px solid transparent; border-radius:10px; background:#fff; box-shadow:none; transition:border-color .15s,box-shadow .15s; }
+.app-layout .main-content:not(.home-overview) .mg-notification.notification-kind-reply { --notification-color:#8060aa; --notification-tint:#f2edf9; }
+.app-layout .main-content:not(.home-overview) .mg-notification.notification-kind-overdue { --notification-color:#bd5648; --notification-tint:#fff0eb; }
+.app-layout .main-content:not(.home-overview) .mg-notification.mg-unread { border-left-color:var(--notification-color); background:#fafcff; }
+.app-layout .main-content:not(.home-overview) .mg-notification:hover { border-color:#bdcde2; border-left-color:var(--notification-color); box-shadow:0 2px 8px #263c5710; }
+.notification-type-icon { display:flex; align-items:center; justify-content:center; width:36px; height:36px; border-radius:10px; background:var(--notification-tint); color:var(--notification-color); }
+.notification-type-icon svg { width:19px; height:19px; }
+.app-layout .main-content:not(.home-overview) .mg-notification-body { display:flex; flex-direction:column; gap:5px; }
+.app-layout .main-content:not(.home-overview) .mg-notification-meta { display:flex; align-items:center; gap:9px; font-size:11px; }
+.notification-type-label { color:var(--notification-color); font-weight:650; }
+.app-layout .main-content:not(.home-overview) .mg-notification .notification-read-label { display:inline-flex; align-items:center; gap:4px; padding:0; background:transparent; font-size:10px; font-weight:500; color:#9aa4b3; }
+.app-layout .main-content:not(.home-overview) .mg-notification .notification-read-label.is-unread { color:#3767be; }
+.notification-unread-indicator { width:5px; height:5px; border-radius:50%; background:currentColor; }
+.app-layout .main-content:not(.home-overview) .mg-notification h3 { margin:0; color:#253249; font-size:14px; line-height:1.5; font-weight:650; }
+.app-layout .main-content:not(.home-overview) .mg-notification.mg-read h3 { font-weight:500; color:#586477; }
+.notification-source { display:flex; flex-wrap:wrap; align-items:center; gap:6px 9px; color:#788497; font-size:12px; }
+.notification-source strong { font-weight:500; color:#59677b; }
+.notification-org-code { font-size:10px; color:#8b96a6; font-variant-numeric:tabular-nums; }
+.notification-actor { padding-left:9px; border-left:1px solid #dce2ea; line-height:1; }
+.app-layout .main-content:not(.home-overview) .mg-notification-action { display:flex; flex-direction:column; align-items:flex-end; gap:12px; min-width:190px; }
+.notification-action-line { display:flex; align-items:center; gap:10px; }
+.app-layout .main-content:not(.home-overview) .notification-action-line .badge { font-size:11px; padding:3px 7px; border-radius:5px; white-space:nowrap; }
+.app-layout .main-content:not(.home-overview) .mg-notification-action .btn { display:inline-flex; align-items:center; justify-content:center; gap:9px; min-width:94px; min-height:30px; padding:5px 10px; font-size:12px; color:#345a91; border:1px solid #d4dfed; background:#fff; border-radius:6px; }
+.app-layout .main-content:not(.home-overview) .mg-notification-action .btn:hover { background:#edf3fc; border-color:#aebfd8; }
+@media(max-width:900px) {
+ .app-layout .main-content:not(.home-overview) .mg-notification { grid-template-columns:30px minmax(0,1fr); gap:10px; padding:12px; }
+ .notification-type-icon { width:30px; height:30px; border-radius:8px; align-self:start; }
+ .app-layout .main-content:not(.home-overview) .mg-notification-action { grid-column:2; min-width:0; flex-direction:row; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; width:100%; }
+ .notification-action-line { margin-left:auto; }
 }

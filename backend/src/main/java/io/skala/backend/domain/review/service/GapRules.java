@@ -33,8 +33,8 @@ public final class GapRules {
             return false;
         }
         BigDecimal gap = current.subtract(baseline).abs();
-        BigDecimal rate = rate(current, baseline);
-        boolean percentOk = !percentEnabled || (rate == null ? gap.signum() != 0 : rate.abs().compareTo(percent) >= 0);
+        boolean percentOk = !percentEnabled || (baseline.signum() == 0 ? gap.signum() != 0
+                : gap.multiply(BigDecimal.valueOf(100)).compareTo(baseline.abs().multiply(percent)) >= 0);
         boolean amountOk = !amountEnabled || gap.compareTo(amount) >= 0;
         return percentOk && amountOk;
     }
@@ -48,19 +48,20 @@ public final class GapRules {
                 case PLAN -> null;
             };
         }
-        return itemScenario == Scenario.ESTIMATE ? GapComparisonType.ESTIMATE_VS_PREVIOUS : null;
+        return itemScenario == Scenario.ESTIMATE ? GapComparisonType.ESTIMATE_VS_PREVIOUS
+                : itemScenario == Scenario.ACTUAL ? GapComparisonType.ACTUAL_VS_PREVIOUS : null;
     }
 
     /** 비교 종류의 기준(PLAN 또는 PREVIOUS)과 기준 쪽 구분 */
     public static GapBasis basisOf(GapComparisonType type) {
-        return type == GapComparisonType.ESTIMATE_VS_PREVIOUS ? GapBasis.PREVIOUS : GapBasis.PLAN;
+        return (type == GapComparisonType.ESTIMATE_VS_PREVIOUS || type == GapComparisonType.ACTUAL_VS_PREVIOUS) ? GapBasis.PREVIOUS : GapBasis.PLAN;
     }
 
     public static Scenario itemScenarioOf(GapComparisonType type) {
-        return type == GapComparisonType.ACTUAL_VS_PLAN ? Scenario.ACTUAL : Scenario.ESTIMATE;
+        return (type == GapComparisonType.ACTUAL_VS_PLAN || type == GapComparisonType.ACTUAL_VS_PREVIOUS) ? Scenario.ACTUAL : Scenario.ESTIMATE;
     }
 
     public static Scenario baselineScenarioOf(GapComparisonType type) {
-        return type == GapComparisonType.ESTIMATE_VS_PREVIOUS ? Scenario.ESTIMATE : Scenario.PLAN;
+        return (type == GapComparisonType.ESTIMATE_VS_PREVIOUS || type == GapComparisonType.ACTUAL_VS_PREVIOUS) ? Scenario.ESTIMATE : Scenario.PLAN;
     }
 }

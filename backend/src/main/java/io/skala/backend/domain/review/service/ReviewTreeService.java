@@ -1,9 +1,11 @@
 package io.skala.backend.domain.review.service;
 
 import io.skala.backend.domain.financial.entity.ReportItem;
+import io.skala.backend.domain.financial.repository.FinancialValueRepository;
 import io.skala.backend.domain.financial.value.Scenario;
 import io.skala.backend.domain.request.entity.SubmissionRequest;
 import io.skala.backend.domain.request.repository.SubmissionRequestRepository;
+import io.skala.backend.domain.request.value.RequestType;
 import io.skala.backend.domain.review.dto.ReviewTreeResponse;
 import io.skala.backend.domain.review.dto.ReviewTreeResponse.Node;
 import io.skala.backend.domain.review.entity.GapComparison;
@@ -37,6 +39,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.data.domain.Limit;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -59,6 +62,8 @@ public class ReviewTreeService {
     private final ReviewExplanationRepository reviewExplanationRepository;
     private final GapComparisonRepository gapComparisonRepository;
     private final GapCalculator gapCalculator;
+    private final MonthlyReviewPolicy monthlyPolicy;
+    private final FinancialValueRepository financialValueRepository;
 
     @Transactional(readOnly = true)
     public ReviewTreeResponse tree(AuthenticatedUser user, Long requestId, Long organizationId,
@@ -84,8 +89,10 @@ public class ReviewTreeService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
 
         GapBasis basis = GapRules.basisOf(type);
-        Map<Key, Aggregate> baseline = gapCalculator.values(gapCalculator.sources(submission, request))
-                .getOrDefault(basis, Map.of());
+        Map<GapBasis, Map<Key, Aggregate>> sourceValues = gapCalculator.values(gapCalculator.sources(submission, request));
+        Map<Key, Aggregate> baseline = sourceValues.getOrDefault(basis, Map.of());
+        MonthlyReviewPolicy.Context context = monthlyPolicy.load(submission);
+        Map<Key, Aggregate> previous = monthlyPolicy.previousForecast(context);
         Map<Long, GapComparison> gaps = gapComparisonRepository.findAllBySubmissionId(submission.getId()).stream()
                 .filter(g -> g.getBasis() == basis)
                 .collect(Collectors.toMap(g -> g.getReviewItem().getId(), Function.identity()));
@@ -97,13 +104,14 @@ public class ReviewTreeService {
         String query = q == null || q.isBlank() ? null : q.strip().toLowerCase(Locale.ROOT);
         List<Leaf> leaves = new ArrayList<>();
         for (ReviewItem item : reviewItemRepository.findAllWithReportItemBySubmissionId(submission.getId())) {
-            if (!Boolean.TRUE.equals(item.getActive()) || item.getScenario() != scenario) {
+            if (!Boolean.TRUE.equals(item.getActive()) || item.getScenario() != scenario
+                    || !MonthlyReviewPolicy.inScope(request, new Key(item.getReportItem().getId(), item.getYear(), item.getMonth(), item.getScenario()))) {
                 continue;
             }
             ReviewExplanation current = ReviewItemQueryService.currentExplanation(
                     explanations.getOrDefault(item.getId(), List.of()), item);
             GapComparison gap = gaps.get(item.getId());
-            boolean exceeded = gap != null && Boolean.TRUE.equals(gap.getExceeded());
+            boolean exceeded = Boolean.TRUE.equals(item.getGapExceeded());
             boolean visible = exceeded || current != null || item.getWorkflowState() != WorkflowState.NEEDS_REVIEW;
             if (!visible && !selectedTab.equals("ALL")) {
                 continue;
@@ -118,10 +126,16 @@ public class ReviewTreeService {
             }
             Aggregate base = baseline.get(new Key(item.getReportItem().getId(), item.getYear(), item.getMonth(),
                     GapRules.baselineScenarioOf(type)));
-            BigDecimal plan = gap != null ? gap.getBaselineAmount() : base == null ? null : base.total();
+            Aggregate planned = context.planned().get(new Key(item.getReportItem().getId(), item.getYear(), item.getMonth(), Scenario.PLAN));
+            BigDecimal plan = basis == GapBasis.PLAN ? (planned == null ? null : planned.total())
+                    : context.primary(new Key(item.getReportItem().getId(), item.getYear(), item.getMonth(), item.getScenario()));
+            Aggregate previousEstimate = previous.get(new Key(item.getReportItem().getId(), item.getYear(),
+                    item.getMonth(), Scenario.ESTIMATE));
             leaves.add(new Leaf(item.getReportItem(), leafName(item.getMonth(), item.getScenario()), plan,
                     item.getCurrentAmount(), itemTab, stage(itemTab), exceeded, String.valueOf(item.getId()),
-                    ReviewItemTokens.of(item, current, submission)));
+                    ReviewItemTokens.of(item, current, submission), previousEstimate == null ? null : previousEstimate.total(),
+                    item.getScenario(), item.getMonth(), MonthlyReviewPolicy.response(context,
+                            new Key(item.getReportItem().getId(), item.getYear(), item.getMonth(), item.getScenario()), item.getCurrentAmount())));
         }
         counts.put("ALL", counts.values().stream().mapToInt(Integer::intValue).sum());
 
@@ -155,7 +169,12 @@ public class ReviewTreeService {
 
     /** 계층 표의 상세 행. 검토 항목이 아닌 행(버전 비교)은 tab·stage·reviewItemId·stateToken이 null */
     record Leaf(ReportItem reportItem, String name, BigDecimal plan, BigDecimal actual, String tab, Integer stage,
-                boolean exceeded, String reviewItemId, String stateToken) {
+                boolean exceeded, String reviewItemId, String stateToken, BigDecimal previousEstimate,
+                Scenario scenario, Integer month, List<ReviewTreeResponse.ComparisonValue> comparisons) {
+        Leaf(ReportItem reportItem, String name, BigDecimal plan, BigDecimal actual, String tab, Integer stage,
+             boolean exceeded, String reviewItemId, String stateToken) {
+            this(reportItem, name, plan, actual, tab, stage, exceeded, reviewItemId, stateToken, null, null, null, List.of());
+        }
     }
 
     static String leafName(int month, Scenario scenario) {
@@ -225,7 +244,8 @@ public class ReviewTreeService {
         return new Node(String.valueOf(leaf.reportItem().getId()), leaf.name(), level, Amounts.money(leaf.plan()),
                 Amounts.money(leaf.actual()), Amounts.money(Amounts.diff(leaf.actual(), leaf.plan())),
                 Amounts.rate(leaf.actual(), leaf.plan()), leaf.stage(), leaf.tab(), leaf.exceeded(),
-                leaf.reviewItemId(), leaf.stateToken(), List.of());
+                leaf.reviewItemId(), leaf.stateToken(), List.of(), Amounts.money(leaf.previousEstimate()),
+                leaf.scenario() == null ? null : leaf.scenario().name(), leaf.month(), leaf.comparisons());
     }
 
     /** 진행 단계: 1 차이 항목 확인 → 2 검토 결과 확정 → 3 조직 소명 수집 → 4 보완 내용 재검토 → 5 승인 및 확정 */

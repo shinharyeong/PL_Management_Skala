@@ -10,5 +10,6 @@ public enum WorkflowState {
     /** 소명 요청함 */
     REQUESTED,
     /** 제외 */
+    APPROVED,
     EXCLUDED
 }

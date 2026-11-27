@@ -1,5 +1,6 @@
 // The first width includes the three 10px hierarchy gutters.
-export const gapColumnMinimums = [180, 96, 96, 96, 80, 110]
+// 좁은 화면에서는 표 내부를 가로로 스크롤한다. 자동 맞춤 때문에 금액을 잘라 보이지 않게 압축하지 않는다.
+export const gapColumnMinimums = [240, 128, 128, 128, 128, 112]
 const valid = widths => Array.isArray(widths) && widths.length === gapColumnMinimums.length && widths.every(width=>Number.isFinite(width)&&width>0)
 export function fitGapColumns(widths, available) {
   if (!valid(widths) || !Number.isFinite(available) || available<=0) return null

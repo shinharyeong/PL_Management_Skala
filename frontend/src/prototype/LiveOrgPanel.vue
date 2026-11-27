@@ -84,7 +84,7 @@ watch(()=>store.activeRequest,()=>{file.value=null;fileError.value='';reply.valu
 let generation=0
 onBeforeUnmount(()=>generation++)
 watch([()=>props.page,()=>store.activeRequest],async()=>{const g=++generation;preview.value=null;diagnostics.value=null;submission.value=null;loading.value=true
-try{if(['org-requests','org-history'].includes(props.page))await store.loadInbox();else{const item=store.activeOrgRequest;if(!item)return;request.value={request:{dueAt:item.dueAt}};if(item.submissionId){const s=await store.api('/api/v1/submissions/'+item.submissionId);if(g===generation)submission.value=normalizeSubmission(s)}}}catch(e){store.error=e.message}finally{if(g===generation)loading.value=false}},{immediate:true})
+try{if(['org-requests','org-history'].includes(props.page))await store.loadInbox();else{const item=store.activeOrgRequest;if(!item)return;request.value={request:{dueAt:item.dueAt}};const id=item.draftSubmissionId||item.submissionId;if(id){const s=await store.api('/api/v1/submissions/'+id);if(g!==generation)return;submission.value=normalizeSubmission(s);if(['QUEUED','RUNNING'].includes(s.parsingJob?.status))await waitForParsing(s,g);else if(s.parsingJob?.status==='FAILED'){const result=await store.api(`/api/v1/submissions/${s.id}/diagnostics`);if(g===generation)diagnostics.value=result}}}}catch(e){if(g===generation)store.error=e.message}finally{if(g===generation)loading.value=false}},{immediate:true})
 /** 선택한 요청의 제출 또는 소명 화면을 연다.
  * Args: item 요청 DTO. Returns: 없음. Raises: 없음.
  * Side Effects: 활성 요청과 현재 화면을 변경한다.
@@ -94,30 +94,51 @@ function open(item){store.activateOrgRequest(item.id);emit('navigate',item.kind=
  * Args: 없음. Returns: Promise<void>. Raises: API 오류를 호출부에 전달한다.
  * Side Effects: 제출본 조회와 화면 상태를 갱신한다.
  */
-async function reload(){if(submission.value)submission.value=normalizeSubmission(await store.api('/api/v1/submissions/'+submission.value.id))}
+async function reload(){const id=submission.value?.id,g=generation;if(!id)return;const result=await store.api('/api/v1/submissions/'+id);if(g===generation&&submission.value?.id===id)submission.value=normalizeSubmission(result)}
+
+async function waitForParsing(s,g){
+ const deadline=Date.now()+5*60*1000
+ while(['QUEUED','RUNNING'].includes(s.parsingJob?.status)&&Date.now()<deadline){
+  await new Promise(resolve=>setTimeout(resolve,1000));if(g!==generation)return null
+  s=await store.api('/api/v1/submissions/'+s.id);if(g!==generation)return null
+  submission.value=normalizeSubmission(s)
+ }
+ if(g!==generation)return null
+ if(s.parsingJob?.status==='FAILED'){const result=await store.api(`/api/v1/submissions/${s.id}/diagnostics`);if(g===generation)diagnostics.value=result}
+ return s
+}
+
+async function retryParsing(){await store.run(async()=>{
+ const id=submission.value?.id,g=++generation;if(!id)return;loading.value=false
+ await store.api(`/api/v1/submissions/${id}/parsing-retries`,{method:'POST',body:{expectedStateToken:submission.value.stateToken}})
+ if(g!==generation)return
+ diagnostics.value=null;const result=await store.api('/api/v1/submissions/'+id);if(g!==generation)return
+ submission.value=normalizeSubmission(result);const parsed=await waitForParsing(result,g)
+ if(parsed?.parsingJob?.status==='SUCCEEDED')await validate()
+})}
 /** 검증 시작을 눌렀을 때만 선택한 파일을 업로드하고 파싱 뒤 검증한다.
  * Args: 없음. Returns: Promise<void>. Raises: 오류는 store.run이 표시한다.
  * Side Effects: 파일 POST·파싱 상태 조회·검증 요청을 수행한다.
  */
-async function upload(){if(!file.value)return;await store.run(async()=>{const g=generation,body=new FormData();body.set('file',file.value);let s;try{s=await store.api(`/api/v1/submission-requests/${store.activeOrgRequest.requestId}/submissions`,{method:'POST',body})}catch(error){if(['INVALID_FILENAME','ORGANIZATION_MISMATCH'].includes(error.code))error.message=filenameHelp.value;throw error};submission.value=normalizeSubmission(s)
-for(let n=0;n<40&&['QUEUED','RUNNING'].includes(s.parsingJob?.status);n++){await new Promise(r=>setTimeout(r,500));if(g!==generation)return;s=await store.api('/api/v1/submissions/'+s.id);if(g!==generation)return;submission.value=normalizeSubmission(s)}
-if(s.parsingJob?.status==='SUCCEEDED')await validate();else if(s.parsingJob?.status==='FAILED')diagnostics.value=await store.api(`/api/v1/submissions/${s.id}/diagnostics`)
+async function upload(){if(!file.value)return;await store.run(async()=>{const g=++generation,body=new FormData();loading.value=false;body.set('file',file.value);let s;try{s=await store.api(`/api/v1/submission-requests/${store.activeOrgRequest.requestId}/submissions`,{method:'POST',body})}catch(error){if(['INVALID_FILENAME','ORGANIZATION_MISMATCH'].includes(error.code))error.message=filenameHelp.value;throw error};if(g!==generation)return;submission.value=normalizeSubmission(s)
+const parsed=await waitForParsing(s,g)
+if(parsed?.parsingJob?.status==='SUCCEEDED')await validate()
 })}
 /** 현재 제출본 상태 토큰으로 파일 검증을 실행한다.
  * Args: 없음. Returns: Promise<void>. Raises: API 오류를 호출부에 전달한다.
  * Side Effects: 검증 POST와 최신 진단 조회를 수행한다.
  */
-async function validate(){if(!submission.value)return;await store.api(`/api/v1/submissions/${submission.value.id}/validation`,{method:'POST',body:{expectedStateToken:submission.value.stateToken}});await reload();diagnostics.value=await store.api(`/api/v1/submissions/${submission.value.id}/diagnostics`)}
+async function validate(){const s=submission.value,g=generation;if(!s)return;await store.api(`/api/v1/submissions/${s.id}/validation`,{method:'POST',body:{expectedStateToken:s.stateToken}});if(g!==generation)return;await reload();const result=await store.api(`/api/v1/submissions/${s.id}/diagnostics`);if(g===generation)diagnostics.value=result}
 /** 최신 제출본의 제출 미리보기와 상태 토큰을 받는다.
  * Args: 없음. Returns: Promise<void>. Raises: 오류는 store.run이 표시한다.
  * Side Effects: 조회 후 확인 Dialog를 연다.
  */
-async function confirm(){await store.run(async()=>{await reload();preview.value=await store.api(`/api/v1/submissions/${submission.value.id}/submit-preview`)})}
+async function confirm(){await store.run(async()=>{const id=submission.value?.id,g=generation;if(!id)return;await reload();if(g!==generation)return;const result=await store.api(`/api/v1/submissions/${id}/submit-preview`);if(g===generation)preview.value=result})}
 /** 확인한 상태 토큰과 회신 메시지로 제출을 확정한다.
  * Args: 없음. Returns: Promise<void>. Raises: 오류는 store.run이 표시한다.
  * Side Effects: 제출 POST·요청함 갱신 후 이력 화면으로 이동한다.
  */
-async function submit(){await store.run(async()=>{await store.api(`/api/v1/submissions/${submission.value.id}/submit`,{method:'POST',body:{replyMessage:reply.value,expectedStateToken:preview.value.stateToken}});preview.value=null;await store.loadInbox();emit('navigate','org-history')})}
+async function submit(){await store.run(async()=>{const g=generation;await store.api(`/api/v1/submissions/${submission.value.id}/submit`,{method:'POST',body:{replyMessage:reply.value,expectedStateToken:preview.value.stateToken}});if(g!==generation)return;preview.value=null;await store.loadInbox();if(g===generation)emit('navigate','org-history')})}
 /** 서버 제출 양식을 다운로드한다.
  * Args: 없음. Returns: Promise<void>. Raises: 오류는 store.run이 표시한다.
  * Side Effects: 파일 조회 후 사용자 다운로드를 시작한다.
@@ -133,7 +154,7 @@ async function template(){await store.run(async()=>saveFile(await store.api('/ap
       <div class="org-section-heading"><h2 id="org-open-title"><span data-copy-key="organizationText.text002">{{ copy.organizationText.text002 }}</span></h2><span class="muted">{{store.orgRequests.length}}<span data-copy-key="organizationText.text003">{{ copy.organizationText.text003 }}</span></span></div>
       <article v-for="item in store.orgRequests" :key="item.id" class="org-request-card" :class="{'org-resubmit':item.isResubmit}">
         <div class="org-live-request-content"><span class="badge" :class="item.isResubmit?'recheck':item.kind==='EXPLANATION'?'progress':'submitted'">{{item.isResubmit?'재제출 필요':item.kind==='EXPLANATION'?'소명 요청':'제출 요청'}}</span><h3>{{item.title}}</h3><div v-if="item.reviewComment" class="org-rerequest-comment"><strong><span data-copy-key="organizationText.text004">{{ copy.organizationText.text004 }}</span></strong><p>{{item.reviewComment}}</p></div><p v-if="item.message" class="org-request-message">{{item.message}}</p><p class="muted"><span data-copy-key="organizationText.text005">{{ copy.organizationText.text005 }}</span> {{date(item.dueAt)}}</p></div>
-        <button class="btn primary" :disabled="store.busy" @click="open(item)">{{item.isResubmit?'재제출 시작':item.kind==='EXPLANATION'?'소명 시작':'제출 시작'}}</button>
+        <button class="btn primary" :disabled="store.busy" @click="open(item)">{{item.draftSubmissionId?'작성 이어가기':item.isResubmit?'재제출 시작':item.kind==='EXPLANATION'?'소명 시작':'제출 시작'}}</button>
       </article>
       <p v-if="!store.orgRequests.length" class="muted org-empty"><span data-copy-key="organizationText.text006">{{ copy.organizationText.text006 }}</span></p>
     </section>
@@ -167,7 +188,7 @@ async function template(){await store.run(async()=>saveFile(await store.api('/ap
       </template>
       <template v-else><h2><span data-copy-key="organizationText.text031">{{ copy.organizationText.text031 }}</span></h2><p v-if="request?.request?.message" class="org-baseline muted org-live-message">{{request.request.message}}</p><p class="muted"><span data-copy-key="organizationText.text005">{{ copy.organizationText.text005 }}</span> {{date(request?.request?.dueAt)}} <span data-copy-key="organizationText.text032">{{ copy.organizationText.text032 }}</span></p></template>
       <template v-if="submission">
-        <div class="org-live-validation"><div><strong>{{submission.versionLabel}}</strong><span class="badge" :class="statusClass(submission.status)">{{status(submission.status)}}</span><p class="muted"><span data-copy-key="organizationText.text033">{{ copy.organizationText.text033 }}</span> {{ {QUEUED:'대기',RUNNING:'진행 중',SUCCEEDED:'완료',FAILED:'실패'}[submission.parsing?.status] || submission.parsing?.status }}</p></div><div class="actions"><button class="btn" :disabled="store.busy" @click="store.run(reload)"><span data-copy-key="organizationText.text034">{{ copy.organizationText.text034 }}</span></button><button v-if="submission.status==='DRAFT'" class="btn" :disabled="store.busy || submission.parsing?.status!=='SUCCEEDED'" @click="store.run(validate)"><span data-copy-key="organizationText.text035">{{ copy.organizationText.text035 }}</span></button></div></div>
+        <div class="org-live-validation"><div><strong>{{submission.versionLabel}}</strong><span class="badge" :class="statusClass(submission.status)">{{status(submission.status)}}</span><p class="muted"><span data-copy-key="organizationText.text033">{{ copy.organizationText.text033 }}</span> {{ {QUEUED:'대기',RUNNING:'진행 중',SUCCEEDED:'완료',FAILED:'실패'}[submission.parsing?.status] || submission.parsing?.status }}</p></div><div class="actions"><button class="btn" :disabled="store.busy" @click="store.run(reload)"><span data-copy-key="organizationText.text034">{{ copy.organizationText.text034 }}</span></button><button v-if="submission.parsing?.retryAllowed" class="btn" :disabled="store.busy" @click="retryParsing">파일 검증 재시도</button><button v-if="submission.status==='DRAFT'" class="btn" :disabled="store.busy || submission.parsing?.status!=='SUCCEEDED'" @click="store.run(validate)"><span data-copy-key="organizationText.text035">{{ copy.organizationText.text035 }}</span></button></div></div>
         <p v-if="['QUEUED','RUNNING'].includes(submission.parsing?.status)" class="notice"><span data-copy-key="organizationText.text036">{{ copy.organizationText.text036 }}</span></p>
         <details v-if="diagnostics" class="org-live-diagnostics" open><summary><span data-copy-key="organizationText.text037">{{ copy.organizationText.text037 }}</span> {{diagnostics.errorCount}}<span data-copy-key="organizationText.text003">{{ copy.organizationText.text003 }}</span></summary><div class="org-table-scroll"><table class="org-history-table"><thead><tr><th><span data-copy-key="organizationText.text038">{{ copy.organizationText.text038 }}</span></th><th><span data-copy-key="organizationText.text039">{{ copy.organizationText.text039 }}</span></th><th><span data-copy-key="organizationText.text040">{{ copy.organizationText.text040 }}</span></th><th><span data-copy-key="organizationText.text041">{{ copy.organizationText.text041 }}</span></th></tr></thead><tbody><tr v-for="(item,i) in diagnostics.items" :key="i"><td>{{item.sourceCell || '위치 확인 필요'}}</td><td>{{item.item || '—'}}</td><td>{{item.rule}}</td><td>{{item.guide}}</td></tr></tbody></table></div></details>
         <CurrentSubmissionReviews :key="submission.id" :submission="submission" @changed="reload" />

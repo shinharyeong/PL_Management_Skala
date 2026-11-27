@@ -19,7 +19,7 @@ public record NotificationListResponse(String nextCursor, Summary summary, Map<S
 
     /** 기한 경과(OVERDUE)는 actor가 null이고 occurredAt이 회신 기한이다. */
     public record Item(String id, NotificationType type, String title, OrganizationRef organization, UserRef actor,
-                       OffsetDateTime occurredAt, boolean read, Link link) {
+                       OffsetDateTime occurredAt, boolean read, Link link, String workflowStatus) {
     }
 
     public record OrganizationRef(String id, String code, String name) {

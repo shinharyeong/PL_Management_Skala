@@ -18,6 +18,7 @@ public record ReviewActionRequest(
 
     public enum Action {
         EXCLUDE,
+        APPROVE,
         SELECT,
         REQUEST_EXPLANATION
     }

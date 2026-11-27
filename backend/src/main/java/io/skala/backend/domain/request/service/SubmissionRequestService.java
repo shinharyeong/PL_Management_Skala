@@ -3,6 +3,7 @@ package io.skala.backend.domain.request.service;
 import io.skala.backend.domain.master.entity.AnnualPlan;
 import io.skala.backend.domain.master.repository.AnnualPlanRepository;
 import io.skala.backend.domain.request.dto.CreateSubmissionRequestRequest;
+import io.skala.backend.domain.request.dto.AddRequestTargetsRequest;
 import io.skala.backend.domain.request.dto.RequestDetailResponse;
 import io.skala.backend.domain.request.dto.SubmissionRequestResponse;
 import io.skala.backend.domain.request.entity.RequestTarget;
@@ -108,6 +109,43 @@ public class SubmissionRequestService {
         return summary(request.getId());
     }
 
+    /** Serialize additional dispatches on the parent request; never mutate already selected targets. */
+    @Transactional
+    public SubmissionRequestResponse addTargets(AuthenticatedUser actor, Long requestId, AddRequestTargetsRequest input) {
+        actor.requireRole(UserRole.PLANNER);
+        if (jdbc.queryForList("SELECT id FROM submission_request WHERE id = ? FOR UPDATE", Long.class, requestId).isEmpty()) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+        SubmissionRequestResponse request = summary(requestId);
+        if (request.type() != RequestType.MONTHLY_ACTUAL || request.status() != RequestStatus.OPEN) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "진행 중인 월간 요청에만 조직을 추가할 수 있습니다.");
+        }
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        if (!input.dueAt().isAfter(now)) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST, "회신 기한은 현재 시각 이후로 설정해 주세요.");
+        }
+        Set<Long> ids = new HashSet<>(input.organizationIds());
+        // Validate the entire batch first; a stale/already dispatched selection must not partially succeed.
+        for (Long id : ids) {
+            List<Boolean> selected = jdbc.queryForList("""
+                    SELECT t.selected FROM request_target t JOIN organization o ON o.id = t.organization_id
+                     WHERE t.request_id = ? AND t.organization_id = ? AND NOT t.excluded AND o.active
+                    """, Boolean.class, requestId, id);
+            if (selected.isEmpty()) {
+                throw new BusinessException(ErrorCode.INVALID_REQUEST, "요청에 추가할 수 없는 조직이 포함되어 있습니다.");
+            }
+            if (selected.getFirst()) throw RequestErrorCode.REQUEST_TARGET_ALREADY_SELECTED.exception();
+        }
+        for (Long id : ids) {
+            jdbc.update("""
+                    UPDATE request_target SET selected = true, dispatch_requested_at = ?, dispatch_due_at = ?,
+                           dispatch_message = ?, dispatch_requested_by = ?
+                     WHERE request_id = ? AND organization_id = ? AND NOT selected AND NOT excluded
+                    """, now, input.dueAt(), input.message(), actor.id(), requestId, id);
+        }
+        return summary(requestId);
+    }
+
     /**
      * 월간 요청의 대상 조직마다 '확정 연간 계획' 제출본을 넣는다(실적 대 계획 Gap·1월 비교 기준).
      * 요청을 보내는 시점의 최신 연간 master 기준이며, 나중에 연간 master가 다시 만들어져도 이미 보낸 요청은 그대로 둔다.
@@ -160,7 +198,7 @@ public class SubmissionRequestService {
         SubmissionRequestResponse request = summary(requestId);
         OffsetDateTime now = OffsetDateTime.now(clock);
         List<RawTarget> raw = jdbc.query("""
-                SELECT o.id, o.code, o.name, t.selected, ls.id AS sub_id, ls.status AS sub_status, ls.seq AS sub_seq
+                SELECT o.id, o.code, o.name, t.selected, t.dispatch_requested_at, t.dispatch_due_at, ls.id AS sub_id, ls.status AS sub_status, ls.seq AS sub_seq, %s AS workflow_status
                   FROM request_target t
                   JOIN organization o ON o.id = t.organization_id
                   LEFT JOIN LATERAL (
@@ -168,9 +206,10 @@ public class SubmissionRequestService {
                         WHERE s.request_id = t.request_id AND s.organization_id = t.organization_id AND s.status <> 'DRAFT'
                         ORDER BY s.seq DESC LIMIT 1) ls ON true
                  WHERE t.request_id = ? AND NOT t.excluded
-                 ORDER BY t.selected DESC, o.code""",
+                 ORDER BY t.selected DESC, o.code""".formatted(WorkflowStatusSql.forTarget("t.request_id", "t.organization_id")),
                 (rs, i) -> new RawTarget(rs.getLong("id"), rs.getString("code"), rs.getString("name"), rs.getBoolean("selected"),
-                        (Long) rs.getObject("sub_id"), rs.getString("sub_status"), (Integer) rs.getObject("sub_seq")),
+                        (Long) rs.getObject("sub_id"), rs.getString("sub_status"), (Integer) rs.getObject("sub_seq"),
+                        utc(rs.getObject("dispatch_requested_at", OffsetDateTime.class)), utc(rs.getObject("dispatch_due_at", OffsetDateTime.class)), rs.getString("workflow_status")),
                 requestId);
         Map<Long, List<OrganizationResponse.Manager>> managers = organizationQueryService.managersOf(
                 raw.stream().map(RawTarget::orgId).toList());
@@ -181,11 +220,13 @@ public class SubmissionRequestService {
                     label(request, t.seq()));
             // 최신 제출본이 반려(재제출 요청)면 아직 제출하지 않은 것으로 보고 기한 기준으로 표시한다.
             boolean submitted = latest != null && !"REJECTED".equals(t.submissionStatus());
-            String display = submitted ? "SUBMITTED"
-                    : request.dueAt() != null && request.dueAt().isBefore(now) ? "OVERDUE" : "WAITING";
+            OffsetDateTime due = t.dispatchDueAt() != null ? t.dispatchDueAt() : request.dueAt();
+            String display = !t.selected() ? "NOT_REQUESTED" : submitted ? "SUBMITTED"
+                    : due != null && due.isBefore(now) ? "OVERDUE" : "WAITING";
             return new RequestDetailResponse.Target(
                     new OrganizationResponse(String.valueOf(t.orgId()), t.code(), t.name(), managers.getOrDefault(t.orgId(), List.of())),
-                    t.selected(), request.requestedAt(), request.dueAt(), display, latest);
+                    t.selected(), t.selected() ? (t.dispatchRequestedAt() != null ? t.dispatchRequestedAt() : request.requestedAt()) : null,
+                    t.selected() ? due : null, display, latest, t.workflowStatus());
         }).toList();
         return new RequestDetailResponse(request, targets);
     }
@@ -226,6 +267,6 @@ public class SubmissionRequestService {
     }
 
     private record RawTarget(Long orgId, String code, String name, boolean selected, Long submissionId,
-                             String submissionStatus, Integer seq) {
+                             String submissionStatus, Integer seq, OffsetDateTime dispatchRequestedAt, OffsetDateTime dispatchDueAt, String workflowStatus) {
     }
 }

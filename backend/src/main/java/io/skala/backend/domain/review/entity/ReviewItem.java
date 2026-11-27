@@ -153,9 +153,9 @@ public class ReviewItem extends BaseTimeEntity {
         this.workflowState = WorkflowState.SELECTED;
     }
 
-    /** 검토에서 제외(GAP-07 EXCLUDE). 사유를 남긴다. */
-    public void exclude(String note) {
-        this.workflowState = WorkflowState.EXCLUDED;
+    /** 소명 요청 없이 항목 승인(GAP-07 APPROVE). 제출본 승인은 별도다. */
+    public void approveWithoutExplanation(String note) {
+        this.workflowState = WorkflowState.APPROVED;
         this.workflowNote = note;
     }
 

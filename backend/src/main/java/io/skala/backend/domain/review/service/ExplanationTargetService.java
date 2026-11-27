@@ -42,6 +42,7 @@ public class ExplanationTargetService {
     static final int ORG_ROUND = 1;
 
     private final FinancialValueRepository financialValueRepository;
+    private final MonthlyReviewPolicy monthlyPolicy;
     private final ReviewItemRepository reviewItemRepository;
     private final ReviewExplanationRepository reviewExplanationRepository;
     private final ReviewAttachmentRepository reviewAttachmentRepository;
@@ -64,7 +65,10 @@ public class ExplanationTargetService {
                 financialValueRepository.findRequestYearValuesBySubmissionId(submission.getId()));
         Map<Key, Aggregate> before = baseline == null ? null : ChangeDetector.aggregate(
                 financialValueRepository.findRequestYearValuesBySubmissionId(baseline.getId()));
-        List<Detection> detections = ChangeDetector.detect(current, before);
+        boolean monthly = monthlyPolicy.request(submission).getMonth() != null;
+        List<Detection> detections = monthly ? monthlyPolicy.load(submission, baseline).detections() : ChangeDetector.detect(current, before);
+        String policy = monthly ? MonthlyReviewPolicy.VERSION : POLICY_VERSION;
+        if (monthly) submission.recordReviewBaseline(baseline, policy);
 
         Map<Key, ReviewItem> existing = byKey(reviewItemRepository.findAllWithReportItemBySubmissionId(submission.getId()));
         Map<Long, ReviewExplanation> existingRound1 = reviewExplanationRepository.findAllBySubmissionId(submission.getId())
@@ -87,9 +91,9 @@ public class ExplanationTargetService {
             if (item == null) {
                 item = reviewItemRepository.save(ReviewItem.create(submission, d.reportItem(), d.key().year(),
                         d.key().month(), d.key().scenario(), d.current(), d.changed(), d.sourceFingerprint(),
-                        context, POLICY_VERSION));
+                        context, policy));
             } else {
-                item.refresh(d.current(), d.changed(), d.sourceFingerprint(), context, POLICY_VERSION);
+                item.refresh(d.current(), d.changed(), d.sourceFingerprint(), context, policy);
             }
             touched.add(item.getId());
 
@@ -160,6 +164,8 @@ public class ExplanationTargetService {
      */
     @Transactional(readOnly = true)
     public boolean prepared(Submission submission, Submission baseline) {
+        if (monthlyPolicy.request(submission).getMonth() != null)
+            return MonthlyReviewPolicy.VERSION.equals(submission.getReviewPolicyVersion());
         if (!reviewItemRepository.findAllWithReportItemBySubmissionId(submission.getId()).isEmpty()) {
             return true;
         }
@@ -176,6 +182,8 @@ public class ExplanationTargetService {
     public boolean contextMatches(Submission submission, Submission baseline) {
         Map<Key, Aggregate> before = baseline == null ? Map.of() : ChangeDetector.aggregate(
                 financialValueRepository.findRequestYearValuesBySubmissionId(baseline.getId()));
+        MonthlyReviewPolicy.Context context = monthlyPolicy.request(submission).getMonth() == null ? null : monthlyPolicy.load(submission, baseline);
+        if (context != null && !java.util.Objects.equals(submission.getReviewBaseline() == null ? null : submission.getReviewBaseline().getId(), baseline == null ? null : baseline.getId())) return false;
         for (ReviewItem item : reviewItemRepository.findAllWithReportItemBySubmissionId(submission.getId())) {
             if (!Boolean.TRUE.equals(item.getActive())) {
                 continue;
@@ -183,7 +191,7 @@ public class ExplanationTargetService {
             Key key = new Key(item.getReportItem().getId(), item.getYear(), item.getMonth(), item.getScenario());
             Aggregate base = before.get(key);
             String expected = ChangeDetector.contextFingerprint(item.getReportItem().getCode(), key,
-                    baseline == null ? null : baseline.getId(), base == null ? null : base.total());
+                    baseline == null ? null : baseline.getId(), context == null ? (base == null ? null : base.total()) : context.primary(key));
             if (!expected.equals(item.getContextFingerprint())) {
                 return false;
             }

@@ -92,6 +92,18 @@ public class Submission {
     @Column(name = "approved_seq")
     private Integer approvedSeq;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "review_baseline_submission_id")
+    private Submission reviewBaseline;
+
+    @Column(name = "review_policy_version", length = 80)
+    private String reviewPolicyVersion;
+
+    public void recordReviewBaseline(Submission baseline, String policy) {
+        this.reviewBaseline = baseline;
+        this.reviewPolicyVersion = policy;
+    }
+
     /** 업로드한 파일로 제출 초안(DRAFT)을 만든다. 회차(seq)는 제출할 때 정한다. */
     public static Submission draft(Long requestId, Long organizationId, String originalFilename,
                                    StoredObject sourceObject, AppUser uploadedBy, OffsetDateTime uploadedAt) {

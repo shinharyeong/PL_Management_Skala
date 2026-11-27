@@ -20,10 +20,10 @@ const evidenceByVersion=ref({})
 // 조직이 회신한 최신 소명: 경영기획팀이 여기서 수락하거나 보완을 요청한다(#116에서 빠진 결정 폼 복원)
 const latest=computed(()=>detail.value?.explanations?.at(-1))
 const note=ref(''), decided=ref('')
-function decide(verdict){return store.run(async()=>{await store.decideExplanation(props.id,verdict,note.value.trim());decided.value=verdict==='ACCEPT'?'소명을 수락했습니다.':'소명 보완을 요청했습니다.';note.value=''})}
-let generation=0
-onBeforeUnmount(()=>generation++)
-watch(()=>props.id,id=>{generation++;note.value='';decided.value='';evidenceByVersion.value={};store.reviewDetail=null;store.evidence=null;store.versions=null;if(id)store.openDetail(id).catch(e=>store.error=e.message)},{immediate:true})
+function decide(verdict){const id=props.id;return store.run(async()=>{await store.decideExplanation(id,verdict,note.value.trim());if(mounted&&props.id===id){decided.value=verdict==='ACCEPT'?'소명을 수락했습니다.':'소명 보완을 요청했습니다.';note.value=''}})}
+let generation=0,mounted=true
+onBeforeUnmount(()=>{mounted=false;generation++;if(store.activeReviewId===props.id)store.activeReviewId=null})
+watch(()=>props.id,id=>{generation++;note.value='';decided.value='';evidenceByVersion.value={};store.reviewDetail=null;store.evidence=null;store.versions=null;if(id)store.openDetail(id).catch(e=>{if(mounted&&props.id===id)store.error=e.message})},{immediate:true})
 watch(()=>[detail.value,store.versions,store.evidence],async()=>{
  const g=++generation;evidenceByVersion.value={}
  if(!detail.value || !store.versions)return

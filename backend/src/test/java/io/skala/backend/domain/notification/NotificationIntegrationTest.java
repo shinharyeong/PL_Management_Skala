@@ -17,6 +17,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
+import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -158,6 +159,41 @@ class NotificationIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.unreadCount").value(0));
         mvc.perform(auth(get("/api/v1/me/badges"), planner)).andExpect(jsonPath("$.unreadNotifications").value(0));
+    }
+
+    @Test
+    void reviewedAnnualSubmissionsLeaveTheInboxAndBadgeButKeepTheirSubmissionHistory() throws Exception {
+        long annual = insertSubmission(annualRequest);
+        long annualNotification = insertNotification(plannerId, "SUBMISSION", "annual:" + annual,
+                annualRequest, annual, "연간 제출", OffsetDateTime.now(ZoneOffset.UTC));
+        insertNotification(plannerId, "SUBMISSION", "monthly:" + submissionId, monthlyRequest,
+                submissionId, "월간 제출", OffsetDateTime.now(ZoneOffset.UTC));
+        for (String state : List.of("PENDING", "REJECTED", "APPROVED")) {
+            jdbc.update("update submission set status=?,approved_seq=? where id=?", state,
+                    "APPROVED".equals(state) ? 1 : null, annual);
+            int expected = "PENDING".equals(state) ? 2 : 1;
+            mvc.perform(auth(get("/api/v1/notifications"), planner))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.typeCounts.ALL").value(expected))
+                    .andExpect(jsonPath("$.typeCounts.SUBMISSION").value(expected))
+                    .andExpect(jsonPath("$.summary.unreadCount").value(expected));
+            mvc.perform(auth(get("/api/v1/me/badges"), planner))
+                    .andExpect(jsonPath("$.unreadNotifications").value(expected));
+        }
+        insertNotification(plannerId, "REPLY", "monthly-reply:" + submissionId, monthlyRequest,
+                submissionId, "월간 소명 회신", OffsetDateTime.now(ZoneOffset.UTC));
+        insertNotification(plannerId, "OVERDUE", "monthly-overdue:" + submissionId, monthlyRequest,
+                null, "월간 기한 경과", OffsetDateTime.now(ZoneOffset.UTC));
+        jdbc.update("update submission set status='APPROVED',approved_seq=1 where id=?", submissionId);
+        mvc.perform(auth(get("/api/v1/notifications"), planner))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.typeCounts.ALL").value(0))
+                .andExpect(jsonPath("$.summary.unreadCount").value(0));
+        mvc.perform(auth(get("/api/v1/me/badges"), planner))
+                .andExpect(jsonPath("$.unreadNotifications").value(0));
+        // 삭제나 읽음 상태 조작 없이 보이는 범위만 바꾼다. 원본 제출본·알림 이력은 유지한다.
+        assertThat(jdbc.queryForObject("select count(*) from submission where id=?", Integer.class, annual)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select read_at is null from notification where id=?", Boolean.class,
+                annualNotification)).isTrue();
     }
 
     private ResultActions markRead(String json, String key) throws Exception {

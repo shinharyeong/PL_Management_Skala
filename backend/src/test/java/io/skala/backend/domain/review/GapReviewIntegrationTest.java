@@ -119,7 +119,7 @@ class GapReviewIntegrationTest extends PostgresIntegrationTest {
     void 기준을_적용하면_이후_제출에서_Gap을_계산하고_계층형_표와_요약에_보인다() throws Exception {
         // GAP-03: 아직 적용한 기준이 없으면 3종 모두 꺼진 기본값
         JsonNode current = json(mvc.perform(get("/api/v1/gap-thresholds/current").with(planner)).andExpect(status().isOk()));
-        assertThat(current.get("items")).hasSize(3);
+        assertThat(current.get("items")).hasSize(4);
         mvc.perform(get("/api/v1/gap-thresholds/current").with(manager)).andExpect(status().isForbidden());
 
         // GAP-05: 둘 다 끄면 400, 낡은 토큰 409, 정상 적용 201
@@ -141,9 +141,9 @@ class GapReviewIntegrationTest extends PostgresIntegrationTest {
         validate(draft).andExpect(jsonPath("$.baseline.kind").value("NONE"));
         mvc.perform(get("/api/v1/review-items").with(manager)
                 .param("view", "ORG").param("submissionId", String.valueOf(draft)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.progress.required").value(0))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.progress.required").value(1))
                 .andExpect(jsonPath("$.groups[0].months[0].items[0].current").value("1300"))
-                .andExpect(jsonPath("$.groups[0].months[0].items[0].answerState").value("NOT_REQUIRED"))
+                .andExpect(jsonPath("$.groups[0].months[0].items[0].answerState").value("EMPTY"))
                 .andExpect(jsonPath("$.groups[0].months[0].items[0].baseline").isEmpty());
         submit(draft).andExpect(status().isOk());
         Map<String, Object> gap = jdbc.queryForMap("""
@@ -224,12 +224,12 @@ class GapReviewIntegrationTest extends PostgresIntegrationTest {
                 Map.of("dueAt", "2099-01-01T00:00:00Z", "message", "차이 원인을 적어 주세요.")).andExpect(status().isOk()));
         assertThat(requested.at("/items/0/tab").asText()).isEqualTo("IN_PROGRESS");
         assertThat(jdbc.queryForObject("""
-                select request_note from review_explanation where review_item_id = ? and round = 1""", String.class,
+                select request_note from review_explanation where review_item_id = ? order by round desc limit 1""", String.class,
                 Long.parseLong(itemId))).isEqualTo("차이 원인을 적어 주세요.");
         act("EXCLUDE", itemId, requested.at("/items/0/stateToken").asText(), Map.of("note", "x"))
                 .andExpect(status().isConflict());
 
-        // 최초 소명 대상이 없던 항목은 요청 후에도 1회차다. 회차가 아닌 요청 여부로 회신을 허용한다.
+        // 업로드 소명 이후의 경영기획 요청에도 회차가 아닌 요청 여부로 회신을 허용한다.
         mvc.perform(put("/api/v1/review-items/{id}/answer", itemId).with(manager)
                 .header("Idempotency-Key", key()).contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsBytes(Map.of("answer", "요청받은 첫 회차 소명 회신", "expectedStateToken", requested.at("/items/0/stateToken").asText()))))
@@ -286,6 +286,95 @@ class GapReviewIntegrationTest extends PostgresIntegrationTest {
         }
     }
 
+    @Test
+    void 계산기는_전월승인본의_동일월추정을_보여주며_당월승인으로_기준을_바꾸지_않는다() throws Exception {
+        long oct = monthly(10);
+        long previous = draft(oct, "oct", List.of(line(10, value(11, "ESTIMATE", "1100", "M10"))));
+        validate(previous);
+        jdbc.update("update submission set status = 'APPROVED', seq = 1, approved_seq = 1 where id = ?", previous);
+        long nov = monthly(11);
+        long current = draft(nov, "nov", List.of(line(10, value(11, "ACTUAL", "1200", "M10"),
+                value(12, "ESTIMATE", "0", "N10"))));
+        validate(current);
+        jdbc.update("update submission set status = 'PENDING', seq = 1 where id = ?", current);
+        JsonNode actual = leaf(nov);
+        assertThat(actual.get("plan").asText()).isEqualTo("1000");
+        assertThat(actual.get("actual").asText()).isEqualTo("1200");
+        assertThat(actual.get("previousEstimate").asText()).isEqualTo("1100");
+        assertThat(actual.get("scenario").asText()).isEqualTo("ACTUAL");
+        assertThat(actual.get("month").asInt()).isEqualTo(11);
+        jdbc.update("update submission set status = 'APPROVED', approved_seq = 1 where id = ?", current);
+        assertThat(leaf(nov).get("previousEstimate").asText()).isEqualTo("1100");
+        JsonNode estimates = json(mvc.perform(get("/api/v1/review-items").with(planner)
+                .param("view", "PLANNER").param("requestId", String.valueOf(nov))
+                .param("organizationId", String.valueOf(orgId)).param("tab", "ALL")
+                .param("comparison", "ESTIMATE_VS_PLAN")).andExpect(status().isOk()));
+        JsonNode estimate = java.util.stream.StreamSupport.stream(
+                estimates.at("/tree/0/children/0/children").spliterator(), false)
+                .filter(node -> node.get("month").asInt() == 12).findFirst().orElseThrow();
+        assertThat(estimate.get("actual").asText()).isEqualTo("0");
+        assertThat(estimate.get("scenario").asText()).isEqualTo("ESTIMATE");
+        assertThat(estimate.get("previousEstimate").isNull()).isTrue();
+    }
+
+    @Test
+    void 첫제출은_전월추정과계획_재제출은_당월직전제출을_비교하고_과거실적을_제외한다() throws Exception {
+        for (String comparison : List.of("ACTUAL_VS_PLAN","ACTUAL_VS_PREVIOUS","ESTIMATE_VS_PREVIOUS")) {
+            JsonNode settings=json(mvc.perform(get("/api/v1/gap-thresholds/current").with(planner)));
+            apply(Map.of("comparison",comparison,"percentEnabled",true,"percent","5","amountEnabled",false,"amount","0"),settings.get("stateToken").asText()).andExpect(status().isCreated());
+        }
+        long oct=monthly(10);
+        long old=draft(oct,"oct-policy",List.of(line(10,value(11,"ESTIMATE","1100","M10"),value(12,"ESTIMATE","900","N10"))));
+        validate(old);
+        jdbc.update("update submission set status='APPROVED',seq=1,approved_seq=1 where id=?",old);
+        long nov=monthly(11);
+        long first=draft(nov,"nov-first-policy",List.of(line(10,value(9,"ACTUAL","777","K10"),
+                value(11,"ACTUAL","1200","M10"),value(12,"ESTIMATE","1000","N10"),value(11,"PLAN","9999","O10"))));
+        validate(first).andExpect(jsonPath("$.progress.required").value(2));
+        assertThat(jdbc.queryForObject("select count(*) from review_item where submission_id=? and active",Integer.class,first)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from financial_value v join financial_line l on l.id=v.line_id where l.submission_id=?",Integer.class,first)).isEqualTo(4);
+        submit(first).andExpect(status().isOk());
+        JsonNode initial=leaf(nov);
+        assertThat(initial.get("comparisons")).hasSize(2);
+        assertThat(initial.at("/comparisons/0/baselineAmount").asText()).isEqualTo("1000");
+        assertThat(initial.at("/comparisons/1/baselineAmount").asText()).isEqualTo("1100");
+        assertThat(initial.at("/comparisons/1/baselineScenario").asText()).isEqualTo("ESTIMATE");
+        assertThat(jdbc.queryForObject("select count(*) from gap_comparison g join review_item i on i.id=g.review_item_id where i.submission_id=?",Integer.class,first)).isEqualTo(3);
+        jdbc.update("update submission set status='REJECTED',reject_reason='수정 필요' where id=?",first);
+        long second=draft(nov,"nov-second-policy",List.of(line(10,value(11,"ACTUAL","1250","M10"),value(12,"ESTIMATE","950","N10"))));
+        validate(second).andExpect(jsonPath("$.progress.required").value(2));
+        submit(second).andExpect(status().isOk());
+        JsonNode revised=leaf(nov);
+        assertThat(revised.get("comparisons")).hasSize(1);
+        assertThat(revised.at("/comparisons/0/baselineSubmissionId").asText()).isEqualTo(String.valueOf(first));
+        assertThat(revised.at("/comparisons/0/baselineScenario").asText()).isEqualTo("ACTUAL");
+        assertThat(revised.at("/comparisons/0/diff").asText()).isEqualTo("50");
+        assertThat(jdbc.queryForObject("select baseline_amount from gap_comparison g join review_item i on i.id=g.review_item_id where i.submission_id=? and i.scenario='ESTIMATE'",java.math.BigDecimal.class,second)).isEqualByComparingTo("1000");
+        assertThat(jdbc.queryForObject("select count(*) from gap_comparison g join review_item i on i.id=g.review_item_id where i.submission_id=? and g.basis='PLAN'",Integer.class,second)).isZero();
+        jdbc.update("update submission set status='APPROVED',approved_seq=1 where id=?",second);
+        assertThat(leaf(nov).at("/comparisons/0/baselineSubmissionId").asText()).isEqualTo(String.valueOf(first));
+        long unchanged=draft(nov,"nov-third-policy",List.of(line(10,value(11,"ACTUAL","1250","M10"),value(12,"ESTIMATE","950","N10"))));
+        validate(unchanged).andExpect(jsonPath("$.progress.required").value(0));
+    }
+
+    @Test
+    void 소명없이_직접승인하면_승인탭에_합산되고_제출본승인과는_구분된다() throws Exception {
+        long nov=monthly(11);
+        long submission=draft(nov,"direct-approval",List.of(line(10,value(11,"ACTUAL","1300","M10"))));
+        validate(submission);
+        submit(submission).andExpect(status().isOk());
+        JsonNode row=leaf(nov);
+        JsonNode result=json(act("APPROVE",row.get("reviewItemId").asText(),row.get("stateToken").asText(),Map.of())
+                .andExpect(status().isOk()));
+        assertThat(result.at("/items/0/tab").asText()).isEqualTo("ACCEPTED");
+        assertThat(result.at("/tabCounts/EXCLUDED").asInt()).isZero();
+        assertThat(jdbc.queryForObject("select workflow_state from review_item where id=?",String.class,row.get("reviewItemId").asLong())).isEqualTo("APPROVED");
+        assertThat(jdbc.queryForObject("select action from review_workflow_event where review_item_id=? order by id desc limit 1",String.class,row.get("reviewItemId").asLong())).isEqualTo("APPROVE");
+        assertThat(jdbc.queryForObject("select status from submission where id=?",String.class,submission)).isEqualTo("PENDING");
+        act("SELECT",row.get("reviewItemId").asText(),result.at("/items/0/stateToken").asText(),Map.of())
+                .andExpect(status().isConflict());
+    }
+
     private JsonNode leaf(long requestId) throws Exception {
         JsonNode tree = json(mvc.perform(get("/api/v1/review-items").param("view", "PLANNER")
                 .param("requestId", String.valueOf(requestId)).param("organizationId", String.valueOf(orgId))
@@ -327,6 +416,11 @@ class GapReviewIntegrationTest extends PostgresIntegrationTest {
     }
 
     private ResultActions submit(long submissionId) throws Exception {
+        for (Long itemId : jdbc.queryForList("select i.id from review_item i join review_explanation e on e.review_item_id=i.id where i.submission_id=? and i.active and e.verdict='PENDING' and e.answer is null", Long.class, submissionId)) {
+            JsonNode item=json(mvc.perform(get("/api/v1/review-items/{id}",itemId).with(manager)).andExpect(status().isOk()));
+            mvc.perform(put("/api/v1/review-items/{id}/answer",itemId).with(manager).header("Idempotency-Key",key())
+                    .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(Map.of("answer","업로드 변경 사유", "expectedStateToken",item.get("stateToken").asText())))).andExpect(status().isOk());
+        }
         return mvc.perform(post("/api/v1/submissions/{id}/submit", submissionId).with(manager)
                 .header("Idempotency-Key", key()).contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of("expectedStateToken", token(submissionId)))));

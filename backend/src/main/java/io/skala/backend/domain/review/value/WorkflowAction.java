@@ -7,6 +7,7 @@ public enum WorkflowAction {
     SELECT,
     /** 제외 */
     EXCLUDE,
+    APPROVE,
     /** 소명 요청 */
     REQUEST_EXPLANATION
 }

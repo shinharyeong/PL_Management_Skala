@@ -44,3 +44,28 @@ test('command retry reuses idempotency key, logout accepts 204 and only current 
     await assert.rejects(api('/api/v1/me'));assert.equal(cleared,1)
   }finally{globalThis.fetch=previous}
 })
+
+test('a command retry keeps its key until the response body has been read successfully', async () => {
+  const previous = globalThis.fetch, keys = []
+  const api = createApiClient({ token: () => 'actor', clear() {} })
+  try {
+    globalThis.fetch = async (path, options) => {
+      keys.push(options.headers.get('Idempotency-Key'))
+      return { ok: true, status: 200, json: async () => { if (keys.length === 1) throw new TypeError('body disconnected'); return { id: 'created-once' } } }
+    }
+    await assert.rejects(api('/api/v1/submission-requests', { method: 'POST', body: { year: 2026 } }))
+    assert.deepEqual(await api('/api/v1/submission-requests', { method: 'POST', body: { year: 2026 } }), { id: 'created-once' })
+    assert.equal(keys[0], keys[1])
+    await api('/api/v1/submission-requests', { method: 'POST', body: { year: 2026 } })
+    assert.notEqual(keys[1], keys[2])
+  } finally { globalThis.fetch = previous }
+})
+
+test('a session change during response body reading does not expose the previous actor data', async () => {
+  const previous = globalThis.fetch; let token = 'first'
+  const api = createApiClient({ token: () => token, clear() {} })
+  try {
+    globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => { token = 'second'; return { private: true } } })
+    await assert.rejects(api('/api/v1/me'), error => error.name === 'AbortError')
+  } finally { globalThis.fetch = previous }
+})

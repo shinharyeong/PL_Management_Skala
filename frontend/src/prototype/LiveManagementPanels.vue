@@ -23,7 +23,7 @@ import './management.css'
 import './management-live.css'
 const props=defineProps({page:String}),emit=defineEmits(['navigate']),store=usePrototypeStore()
 const year=ref(store.notificationTarget?.year||seoulPeriod().year),archiveYear=ref(seoulPeriod().year),month=ref(seoulPeriod().month)
-const bulkSelected=ref([]),bulkDialog=ref(false)
+const bulkSelected=ref([]),bulkDialog=ref(null)
 const pendingTargets=computed(()=>store.annualRows.filter(t=>t.latestSubmission?.status==='PENDING'))
 const allPending=computed({get:()=>pendingTargets.value.length>0&&pendingTargets.value.every(t=>bulkSelected.value.includes(t.organization.id)),set:value=>bulkSelected.value=value?pendingTargets.value.map(t=>t.organization.id):[]})
 const recipients=ref([]),due=ref(''),message=ref('연간 계획을 작성해 제출해 주세요.'),expanded=ref(''),reply=ref(null),comment=ref(''),formError=ref('')
@@ -37,14 +37,14 @@ const expandedAnnualRows=computed(annualExpansion)
 const archiveChanges=computed(flattenArchiveChanges)
 const archiveYears=[seoulPeriod().year-1,seoulPeriod().year,seoulPeriod().year+1]
 const dateTime=value=>value?new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value)):'—'
-let generation=0,archiveGeneration=0,replyGeneration=0,changeGeneration=0
-onBeforeUnmount(()=>{generation++;archiveGeneration++;replyGeneration++;changeGeneration++})
+let generation=0,archiveGeneration=0,replyGeneration=0,changeGeneration=0,disposed=false
+onBeforeUnmount(()=>{disposed=true;generation++;archiveGeneration++;replyGeneration++;changeGeneration++})
 /** 선택 화면·유효 연도의 연간 계획 또는 조직 목록을 조회한다.
  * Args: 없음. Returns: Promise<void>. Raises: 없음; 오류는 store에 안내한다.
  * Side Effects: 서버 조회와 화면 목록 초기화. 이전 조회 응답은 세대 번호로 차단한다.
  */
 async function load(){
- const g=++generation
+ const g=++generation;replyGeneration++
  expanded.value='';reply.value=null;formError.value='';bulkSelected.value=[]
  if(props.page.startsWith('annual')&&!validYear(year.value))return
  try{
@@ -76,7 +76,7 @@ async function send(){
  if(!validYear(year.value)||!recipients.value.length||!message.value.trim()||!Number.isFinite(seoulDeadline(due.value))||seoulDeadline(due.value)<=Date.now()){formError.value='계획 연도와 요청 대상, 메시지, 현재 시각 이후의 회신 기한을 확인해 주세요.';return}
  if(await store.run(()=>store.createRequest('ANNUAL_PLAN',recipients.value,due.value,message.value,Number(year.value))))emit('navigate','annual')
 }
-async function decide(decision){if(await store.run(()=>store.decideSubmission(reply.value,decision,comment.value))){reply.value=null;await load()}}
+async function decide(decision){const g=generation;if(await store.run(()=>store.decideSubmission(reply.value,decision,comment.value))){if(!disposed&&g===generation){reply.value=null;await load()}}}
 /** 확인한 대기 조직을 순서대로 승인하고 성공·실패 결과를 안내한다.
  * Args: 없음. Returns: Promise<void>.
  * Raises: 없음; 서버 오류는 조직별 안내로 남긴다.
@@ -84,14 +84,14 @@ async function decide(decision){if(await store.run(()=>store.decideSubmission(re
  */
 async function bulkAccept(){
  const chosen=pendingTargets.value.filter(t=>bulkSelected.value.includes(t.organization.id))
- bulkDialog.value=false
+ bulkDialog.value?.close()
  let success=0;const failures=[]
  await store.run(async()=>{for(const target of chosen){try{
   const current=await store.api('/api/v1/submissions/'+target.latestSubmission.id)
   if(current.status!=='PENDING')throw new Error('제출본 상태가 변경됐습니다.')
   await store.decideSubmission(current,'APPROVE','');success++
  }catch(e){failures.push(target.organization.name+': '+e.message)}}})
- await load()
+ if(!disposed)await load()
  store.notify(`${success}개 조직 수락 완료${failures.length?' · '+failures.join(' · '):''}`,failures.length?'error':'info')
 }
 /** 유효한 조직·연월의 제출 이력과 마스터 목록을 조회한다.
@@ -170,9 +170,9 @@ function flattenArchiveChanges(){return (changeHistory.value?.dates||[]).flatMap
   <template v-else-if="page==='annual'">
 
    <section class="card mg-annual-progress" aria-labelledby="annual-master-title"><div class="mg-section-heading"><h2 id="annual-master-title">{{year}}<span data-copy-key="managementText.text011">{{ copy.managementText.text011 }}</span></h2><span class="badge" :class="annualMasters?.state==='CONFIRMED'?'mg-status-blue':'mg-status-amber'">{{annualMasters?.state==='CONFIRMED'?'확정':annualMasters?.state==='NO_REQUEST'?'요청 전':annualMasters?.state==='WAITING'?'확정 대기':'조회 중'}}</span></div><p v-if="annualMasterError" class="error" role="alert"><span data-copy-key="managementText.text012">{{ copy.managementText.text012 }}</span> {{annualMasterError}}</p><template v-else-if="annualMasters"><p v-if="!annualMasters.items.length" class="mg-small-note">{{annualMasters.state==='NO_REQUEST'?'선택한 연도의 연간 계획 요청이 없습니다.':'요청 대상 조직의 제출본을 모두 수락하면 연간 master가 자동 생성됩니다.'}}</p><template v-else><div class="mg-table-scroll"><table class="mg-table"><thead><tr><th><span data-copy-key="managementText.text015">{{ copy.managementText.text015 }}</span></th><th><span data-copy-key="managementText.text016">{{ copy.managementText.text016 }}</span></th><th><span data-copy-key="managementText.text017">{{ copy.managementText.text017 }}</span></th><th><span data-copy-key="managementText.text018">{{ copy.managementText.text018 }}</span></th><th><span data-copy-key="managementText.text019">{{ copy.managementText.text019 }}</span></th></tr></thead><tbody><tr v-for="(master,index) in annualMasters.items" :key="master.id"><td><strong>{{master.label}}</strong><span v-if="index===0" class="badge mg-status-blue"><span data-copy-key="managementText.text020">{{ copy.managementText.text020 }}</span></span></td><td>{{dateTime(master.createdAt)}}</td><td>{{master.createdByName}}</td><td>{{master.organizationCount}}<span data-copy-key="managementText.text021">{{ copy.managementText.text021 }}</span></td><td><button class="btn" :disabled="store.busy" @click="downloadAnnualMaster(master)"><span data-copy-key="managementText.text022">{{ copy.managementText.text022 }}</span></button></td></tr></tbody></table></div></template></template></section>
-   <section class="card mg-annual-progress mg-annual-organizations"><div class="mg-section-heading"><h2><span data-copy-key="managementText.text023">{{ copy.managementText.text023 }}</span></h2><div class="mg-actions"><button class="btn primary" :disabled="store.busy||!bulkSelected.length" @click="bulkDialog.showModal()"><span data-copy-key="managementText.text025">{{ copy.managementText.text025 }}</span> {{bulkSelected.length}}<span data-copy-key="managementText.text026">{{ copy.managementText.text026 }}</span></button></div></div><div class="mg-table-scroll" tabindex="0" role="region" aria-label="연간 계획 조직별 진행 현황"><table class="mg-table"><thead><tr><th><input v-model="allPending" type="checkbox" aria-label="검토 대기 조직 전체 선택" :disabled="store.busy"></th><th><span data-copy-key="managementText.text028">{{ copy.managementText.text028 }}</span></th><th><span data-copy-key="managementText.text029">{{ copy.managementText.text029 }}</span></th><th><span data-copy-key="managementText.text030">{{ copy.managementText.text030 }}</span></th><th><span data-copy-key="managementText.text031">{{ copy.managementText.text031 }}</span></th><th>수신 담당자</th><th><span data-copy-key="managementText.text032">{{ copy.managementText.text032 }}</span></th></tr></thead><tbody>
+   <section class="card mg-annual-progress mg-annual-organizations"><div class="mg-section-heading"><h2><span data-copy-key="managementText.text023">{{ copy.managementText.text023 }}</span></h2><div class="mg-actions"><button class="btn primary" :disabled="store.busy||!bulkSelected.length" @click="bulkDialog.showModal()"><span data-copy-key="managementText.text025">{{ copy.managementText.text025 }}</span> {{bulkSelected.length}}<span data-copy-key="managementText.text026">{{ copy.managementText.text026 }}</span></button></div></div><div class="mg-table-scroll" tabindex="0" role="region" aria-label="연간 계획 조직별 진행 현황"><table class="mg-table"><thead><tr><th><input v-model="allPending" type="checkbox" aria-label="검토 대기 조직 전체 선택" :disabled="store.busy||!pendingTargets.length"></th><th><span data-copy-key="managementText.text028">{{ copy.managementText.text028 }}</span></th><th><span data-copy-key="managementText.text029">{{ copy.managementText.text029 }}</span></th><th><span data-copy-key="managementText.text030">{{ copy.managementText.text030 }}</span></th><th><span data-copy-key="managementText.text031">{{ copy.managementText.text031 }}</span></th><th>수신 담당자</th><th><span data-copy-key="managementText.text032">{{ copy.managementText.text032 }}</span></th></tr></thead><tbody>
      <template v-for="target in store.annualRows" :key="target.organization.id">
-      <tr :id="'annual-org-'+target.organization.id" class="organization-reveal-row" :class="{'mg-selected-row':expanded===target.organization.id}"><td><input v-model="bulkSelected" type="checkbox" :value="target.organization.id" :disabled="store.busy||target.latestSubmission?.status!=='PENDING'" :aria-label="target.organization.name+' 일괄 수락 선택'"></td><td><button class="mg-row-link" :aria-expanded="expanded===target.organization.id" @click="toggleRow(target)">{{target.organization.name}}</button></td><td>{{target.organization.code}}</td><td>{{dateTime(target.requestedAt)}}</td><td>{{dateTime(target.dueAt)}}</td><td>{{managerOf(target.organization.id)}}</td><td><span class="badge" :class="'mg-status-'+annualTargetStatus(target).tone">{{annualTargetStatus(target).label}}</span><small v-if="target.selected && target.latestSubmission" class="mg-submission-state">{{status(target.displayStatus)}}</small></td></tr>
+      <tr :id="'annual-org-'+target.organization.id" class="organization-reveal-row" :class="{'mg-selected-row':expanded===target.organization.id}"><td><input v-model="bulkSelected" type="checkbox" :value="target.organization.id" :disabled="store.busy||target.latestSubmission?.status!=='PENDING'" :aria-label="target.organization.name+' 일괄 수락 선택'"></td><td><button class="mg-row-link" :aria-expanded="expanded===target.organization.id" @click="toggleRow(target)">{{target.organization.name}}</button></td><td>{{target.organization.code}}</td><td>{{dateTime(target.requestedAt)}}</td><td>{{dateTime(target.dueAt)}}</td><td>{{managerOf(target.organization.id)}}</td><td><span class="badge" :class="'mg-status-'+annualTargetStatus(target).tone">{{annualTargetStatus(target).label}}</span></td></tr>
       <tr v-if="expanded===target.organization.id" class="mg-expanded"><td colspan="7"><article v-if="reply" class="mg-reply"><h3>{{reply.submittedBy?.name||'—'}} · {{reply.organization.name}}</h3><small class="muted">{{dateTime(reply.submittedAt)}} <span data-copy-key="managementText.text033">{{ copy.managementText.text033 }}</span></small><p>{{reply.replyMessage||'회신 메시지 없음'}}</p><button class="btn mg-file-btn" @click="store.run(()=>store.downloadSubmission(reply.id,reply.file.name))">{{reply.file.name}} ↓</button><div class="mg-history-note"><strong><span data-copy-key="managementText.text034">{{ copy.managementText.text034 }}</span></strong><p>{{dateTime(target.requestedAt)}} <span data-copy-key="managementText.text035">{{ copy.managementText.text035 }}</span></p><p>{{dateTime(reply.submittedAt)}} · {{reply.label}} · {{reply.file.name}}</p></div><label class="mg-field"><span data-copy-key="managementText.text036">{{ copy.managementText.text036 }}</span><textarea v-model="comment" rows="3" :placeholder="reply.status==='PENDING' ? '회신에 대한 경영기획 코멘트를 입력하세요.' : '저장된 코멘트가 없습니다.'" :readonly="reply.status!=='PENDING'" aria-describedby="annual-comment-help"></textarea></label><p id="annual-comment-help" class="mg-small-note" role="status">{{ reply.status==='PENDING' ? '코멘트는 수락 또는 재요청할 때 함께 저장됩니다.' : '현재 상태: '+status(reply.status)+' · 처리가 완료된 제출본입니다. 코멘트 추가·수정은 현재 서버에서 지원하지 않습니다.' }}</p><div class="mg-actions"><button class="btn" :disabled="store.busy||!comment.trim()||reply.status!=='PENDING'" @click="decide('REJECT')"><span data-copy-key="managementText.text037">{{ copy.managementText.text037 }}</span></button><button class="btn primary" :disabled="store.busy||reply.status!=='PENDING'" @click="decide('APPROVE')">{{reply.status==='APPROVED'?'수락 완료':'수락'}}</button></div></article><p v-else class="mg-empty">{{target.latestSubmission?'회신을 불러오는 중입니다.':target.selected?'아직 회신한 내용이 없습니다.':'아직 연간 계획 요청을 보내지 않았습니다.'}}</p></td></tr>
      </template><tr v-if="!store.annualRows.length"><td colspan="7" class="mg-empty"><span data-copy-key="managementText.text038">{{ copy.managementText.text038 }}</span></td></tr>
     </tbody></table></div><p class="mg-small-note"><span data-copy-key="managementText.text039">{{ copy.managementText.text039 }}</span></p>
