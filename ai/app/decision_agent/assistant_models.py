@@ -59,6 +59,21 @@ class ExplanationArguments(OrganizationArguments):
     limit: StrictInt = Field(default=10, ge=1, le=20)
 
 
+class MonthlyPnlArguments(ContractModel):
+    """선택한 고정 기준월만 조회하며 기간·권한 범위를 임의 변경하지 않는 인자."""
+
+    organizationId: StrictStr | None = Field(default=None, pattern=r"^[1-9][0-9]*$", max_length=100,
+                                             description="기존 관찰의 조직 ID. 생략하면 허용 조직 전체를 조회한다.")
+
+
+class ReportItemArguments(MonthlyPnlArguments):
+    """보고 항목별 동일 제출본 계획·전망 비교를 읽을 선택 조건."""
+
+    reportItemId: StrictStr | None = Field(default=None, pattern=r"^[1-9][0-9]*$", max_length=100,
+                                           description="기존 근거 facts.reportItemId에서 읽은 보고 항목 ID. 임의 계정 ID를 입력하지 않는다.")
+    limit: StrictInt = Field(default=20, ge=1, le=50)
+
+
 class VersionArguments(ContractModel):
     """허용된 제출 버전 목록을 조회할 조직."""
 
@@ -229,12 +244,16 @@ ARGUMENT_MODELS = {
     "work_items": NoArguments, "review_request_draft": DraftArguments,
     "goal_preview": GoalPreviewArguments,
     "observation_detail": ObservationDetailArguments,
+    "monthly_pnl": MonthlyPnlArguments,
+    "report_item_breakdown": ReportItemArguments,
 }
 TOOL_DESCRIPTIONS = {
-    "analysis_context": "고정 master·snapshot과 선택 analysis의 목표·저장 후보·기존 계산을 읽는다.",
+    "analysis_context": "선택된 저장 analysis의 목표·후보·기존 계산이 질문에 필요한 경우 읽는다. context의 master·연도·기준월은 이미 고정되어 있으므로 단순 기준 재확인용 선행 조회로 쓰지 않는다. 저장 분석 없는 목표 비교는 goal_preview를 직접 사용한다.",
     "company_pnl": "고정 master의 전사 연간 전망·계획 차이와 업무 API의 지표별 증감·유불리 판정을 조회한다. 질문의 미해결 항목에 필요한 추가 근거를 판단한다. 비용 증가를 이익 개선으로 해석하지 않는다.",
     "profit_drivers": "계획 대비 영업이익 차이가 큰 항목을 조회한다. 절댓값이 큰 차이는 큰 미달일 수도 있으며 개선 순위가 아니다. 차이는 인과 원인이나 개선 가능액이 아니다.",
     "organization_pnl": "organizationId를 생략하면 모든 허용 조직의 손익·계획 대비 OP 차이·증감·유불리·순위를 한 번에 조회한다. signed 순위는 OP 차이 내림차순, absolute 순위는 절댓값순이다. 원인·개선 가능성은 이 수치만으로 단정하지 말고 필요한 소명이나 상세 근거를 추가로 확인한다.",
+    "monthly_pnl": "선택한 마스터의 고정 기준월 손익을 조회한다. 연간 전망이 아닌 period=MONTH이며 company는 전사, organizations.columns/summary는 허용 또는 선택 조직이다. organizations.total은 전사 합계여서 조직 필터의 합계로 쓰지 않는다. 임의 다른 월·연도 조회나 시계열 전체 조회는 아니다.",
+    "report_item_breakdown": "조직×보고 항목의 연간 전망·동일 제출본 PLAN·차이·이익 영향 근거를 읽는다. Home의 확정 연간 계획 비교와 기준이 다르므로 수치를 합치지 않는다. facts.reportItemId는 보고 항목 ID이며 개별 원장 계정행이 아니다. sourceLimit 전역 상한 뒤 필터하므로 availableCount와 sourceLimitMayApply를 보고 전체 자료인 것처럼 주장하지 않는다. 원인이나 절감 가능액은 이 차이만으로 확정하지 않는다.",
     "pnl_waterfall": "고정 master 손익의 워터폴 구성과 비교 기준을 조회한다.",
     "approved_explanations": "조직 ID를 생략하면 허용 조직의 승인 소명을 상한까지 읽는다. items.organizationId와 facts의 기간으로 분석 대상과 대조하고 label의 계정명이 아닌 items.text의 실제 회신에서 사유를 읽는다. total이 items 수보다 크면 일부 조회다. 필요한 조직이 목록에 없으면 실제 조회한 organizationId로 다시 요청하며, observation_detail은 이미 반환된 text의 잘린 내용만 더 읽을 수 있다. 계정명을 원인으로 바꾸거나 소명 승인을 새 과제 승인·개선액 증명으로 해석하지 않는다.",
     "submission_versions": "조직의 승인된 과거 제출 목록을 읽는다. 비교하려면 먼저 이 도구로 base ID를 확인한다.",

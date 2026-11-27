@@ -67,7 +67,7 @@ function judgmentDetail() {
   if (goal.value) return '선택한 확정 기준의 연간 전망과 입력 목표를 비교한 결과입니다.'
   if (rows.value.length) return '목표 대비 판단은 목표 금액을 입력한 비교 조회에서 확인할 수 있습니다.'
   if (sources.value.length) return '현재 확인된 근거는 아래 출처에서 볼 수 있습니다. 목표와의 차이는 비교 조회 후 표시합니다.'
-  if (props.result.state === 'ERROR') return props.result.message || '기준과 목표를 확인하고 다시 비교해 주세요.'
+  if (props.result.state === 'ERROR') return props.result.incompleteReason || props.result.message || '기준과 목표를 확인하고 다시 비교해 주세요.'
   return '왼쪽에서 기준과 목표를 정하면, 확인한 숫자와 근거가 이 보고서에 모입니다.'
 }
 const detail = computed(judgmentDetail)
@@ -131,7 +131,8 @@ function findingSeverity(kind) { return kind === 'FACT' ? 'secondary' : kind ===
       <p class="preview-report__section-label">이번 검토의 핵심</p>
       <h3>{{ headline }}</h3>
       <p :class="{ 'preview-report__brief-summary': brief }">{{ detail }}</p>
-      <p v-if="result.state === 'PARTIAL'" class="preview-report__partial"><i class="pi pi-info-circle" aria-hidden="true" />{{ result.status === 'NEEDS_INPUT' ? '추가 확인 필요 · 아래 질문에 필요한 자료를 확인해 주세요.' : '답변 일부 미완료 · 조회에 성공한 자료로 정리했습니다.' }}</p>
+      <p v-if="result.state === 'PARTIAL'" class="preview-report__partial"><i class="pi pi-info-circle" aria-hidden="true" />{{ result.executionSummary || (result.status === 'NEEDS_INPUT' ? '추가 확인 필요 · 아래 질문에 필요한 자료를 확인해 주세요.' : '답변 일부 미완료 · 조회에 성공한 자료로 정리했습니다.') }}</p>
+      <p v-if="result.state === 'PARTIAL' && result.incompleteReason && result.incompleteReason !== brief?.summary" class="preview-report__partial">{{ result.incompleteReason }}</p>
     </section>
 
     <section class="preview-report__metrics" aria-label="전망과 목표 비교">

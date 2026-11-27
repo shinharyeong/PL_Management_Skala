@@ -3,7 +3,7 @@
 LangGraph는 호출 순서·분기·재시도를 관리하고 이 모듈은 모델 호출 한 번을 담당한다.
 `chat_model()`의 BaseChatModel을 `ask_json()`이 호출해 JSON과 토큰 수를 반환한다.
 PDF VLM·자연어 SQL·보고 편집·핵심 문장이 같은 인터페이스를 사용하며,
-실제 전송은 openai_client.make_client가 만든 SDK 클라이언트의 chat.completions다.
+실제 전송은 openai_client.make_client가 만든 SDK를 사용하며 GPT-6은 Responses로 보낸다.
 예외는 호출부가 처리해 필요한 경우 기본 질의나 원문을 사용한다.
 """
 from __future__ import annotations
@@ -22,6 +22,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from ..config import Settings
 from . import openai_client
+from .responses_adapter import generate_response
 
 _ROLES = {"system": "system", "human": "user", "ai": "assistant"}
 
@@ -82,7 +83,7 @@ def sdk_tool_calls(message: Any) -> tuple[list[dict[str, Any]], list[dict[str, A
 
 
 class _SdkChatModel(BaseChatModel):
-    """OpenAI SDK chat.completions 를 LangChain 채팅 모델로 감싼다. 메시지 내용(글자·이미지 목록)은 바꾸지 않고 넘긴다."""
+    """공식 SDK의 GPT-6 Responses와 기존 Chat Completions를 같은 LangChain 인터페이스로 제공한다."""
 
     settings: Any
     model_name: str
@@ -135,8 +136,15 @@ class _SdkChatModel(BaseChatModel):
         Side Effects:
             openai_client.make_client로 SDK 요청 한 번을 수행한다. 원문 로그·파일을 만들지 않는다.
         """
-        if is_reasoning_model(self.model_name):   # gpt-6-luna 같은 추론 모델: max_tokens·temperature 를 받지 않고, 도구 호출은 추론 강도 none 이어야 한다
-            args = {"model": self.model_name, "max_completion_tokens": self.max_tokens, "reasoning_effort": self.settings.ai_reasoning_effort}
+        if self.model_name.startswith("gpt-6"):
+            message = generate_response(openai_client.make_client(self.settings), self.model_name, messages,
+                                        max_tokens=self.max_tokens, reasoning_effort=self.settings.openai_reasoning_effort,
+                                        json_mode=self.json_mode, options=kwargs)
+            return ChatResult(generations=[ChatGeneration(message=message)])
+        # GPT-5·o 계열은 기존 Chat Completions 설정을 유지하고 GPT-6 설정과 섞지 않는다.
+        if is_reasoning_model(self.model_name):
+            args = {"model": self.model_name, "max_completion_tokens": self.max_tokens,
+                    "reasoning_effort": self.settings.ai_reasoning_effort}
         else:
             args = {"model": self.model_name, "temperature": self.temperature, "max_tokens": self.max_tokens}
         if self.json_mode and not kwargs.get("tools"):
@@ -163,13 +171,26 @@ _REASONING_MODEL = re.compile(r"^(gpt-5|gpt-6|o\d)")
 
 
 def is_reasoning_model(name: str) -> bool:
-    """chat.completions 에서 max_tokens·temperature 대신 max_completion_tokens·reasoning_effort 를 쓰는 추론 모델 이름인지."""
+    """전송 경로 선택에 필요한 추론 모델 계열인지 판별한다.
+
+    Args: name 모델 이름.
+    Returns: GPT-5·GPT-6·o 숫자 계열이면 True. GPT-6은 호출부에서 Responses로 먼저 분기한다.
+    Raises: 없음.
+    Side Effects: 없음. 제공자의 모델 지원 여부를 조회하거나 보장하지 않는다.
+    """
     return bool(_REASONING_MODEL.match(str(name or "")))
 
 
 def chat_model(settings: Settings, *, max_tokens: int, temperature: float | None = None, model: str | None = None,
                json_mode: bool = True) -> BaseChatModel:
-    """LangChain 채팅 모델. temperature 를 주지 않으면 AI_TEMPERATURE, model 을 주지 않으면 OPENAI_MODEL."""
+    """실제 모델 이름에 따라 전송을 선택하는 공통 LangChain 모델을 구성한다.
+
+    Args: settings 실행 설정, max_tokens 출력 상한, temperature 선택 온도,
+        model 선택 모델, json_mode JSON 출력 형식 요청 여부.
+    Returns: 온도와 모델을 생략하면 AI_TEMPERATURE·OPENAI_MODEL을 사용하는 모델.
+    Raises: ValueError: 모델 구성 값이 LangChain 계약을 위반하는 경우.
+    Side Effects: 없음. 실제 모델 호출은 반환된 모델의 invoke 시점에만 수행한다.
+    """
     return _SdkChatModel(settings=settings, model_name=model or settings.openai_model,
                          temperature=settings.ai_temperature if temperature is None else temperature,
                          max_tokens=max_tokens, json_mode=json_mode)
@@ -182,13 +203,40 @@ class JsonReply:
     output_tokens: int
 
 
+class ModelOutputLimitError(ValueError):
+    """출력 한도에 도달한 JSON을 완성된 보고서 결과로 채택하지 않도록 구분한다."""
+
+    def __init__(self, input_tokens: int, output_tokens: int):
+        """원문 없이 종료 이유와 이미 사용한 토큰 수만 보관한다.
+
+        Args: input_tokens 입력 사용량, output_tokens 추론을 포함한 출력 사용량.
+        Returns: 없음.
+        Raises: 없음.
+        Side Effects: 없음. 응답 본문·키·추론은 보관하지 않는다.
+        """
+        super().__init__("모델 출력 길이 한도에 도달해 JSON 결과를 채택하지 않았습니다.")
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
 def ask_json(settings: Settings, system: str, user: str | list, *, max_tokens: int, temperature: float | None = None,
              model: str | None = None) -> JsonReply:
-    """JSON 응답 한 번. user 는 글자 또는 OpenAI 내용 목록(글자·image_url). JSON 이 아니면 json.JSONDecodeError."""
+    """완료된 JSON 응답 한 건과 실제 토큰 사용량을 반환한다.
+
+    Args: settings 실행 설정, system 지시, user 텍스트·이미지 블록, max_tokens 출력 상한,
+        temperature 생성 온도, model 선택 모델. GPT-6의 상한에는 추론 토큰도 포함한다.
+    Returns: 완료된 JSON과 입력·출력 사용량.
+    Raises: ModelOutputLimitError: 출력 한도 종료. JSONDecodeError: 완료 응답의 잘못된 JSON.
+        SDK 오류: 모델 요청 실패.
+    Side Effects: 외부 모델 한 번 호출. 결과 파일·원문 로그 생성 없음.
+    """
     reply = chat_model(settings, max_tokens=max_tokens, temperature=temperature, model=model).invoke(
         [SystemMessage(content=system), HumanMessage(content=user)])
     usage = reply.usage_metadata or {}
-    return JsonReply(json.loads(reply.content), int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0)))
+    input_tokens, output_tokens = int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
+    if reply.response_metadata.get("finish_reason") == "length":
+        raise ModelOutputLimitError(input_tokens, output_tokens)
+    return JsonReply(json.loads(reply.content), input_tokens, output_tokens)
 
 
 def ask_tools(settings: Settings, messages: list[BaseMessage], tools: list[dict[str, Any]], *,
@@ -207,6 +255,9 @@ def ask_tools(settings: Settings, messages: list[BaseMessage], tools: list[dict[
         SDK 오류 또는 ValueError: 호출·메시지 계약 오류.
     Side Effects:
         기존 SDK 전송 경로로 한 번 호출한다. 도구 실행은 수행하지 않는다.
+        계획·종료·수정 중 단일 제어 함수만 허용된 단계는 함수 응답을 필수로 요청한다.
     """
     model = chat_model(settings, max_tokens=max_tokens, temperature=temperature, json_mode=False)
-    return model.bind_tools(tools, tool_choice="auto", parallel_tool_calls=False).invoke(messages)
+    control_only = len(tools) == 1 and tools[0].get("function", {}).get("name") in {
+        "plan_analysis", "finish_answer", "repair_answer"}
+    return model.bind_tools(tools, tool_choice="required" if control_only else "auto", parallel_tool_calls=False).invoke(messages)

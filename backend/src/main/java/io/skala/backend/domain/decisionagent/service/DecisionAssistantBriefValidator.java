@@ -7,7 +7,8 @@ import java.util.regex.Pattern;
 
 /** 설명의 근거 연결·요구 항목 상태를 검증한다. 원문 일치만으로 해석의 진실성을 보증하지 않는다. */
 final class DecisionAssistantBriefValidator {
-    private static final Pattern NUMERIC = Pattern.compile("[\\p{N}%]|퍼센트|절반|두\\s*배|세\\s*배|[수일이삼사오육칠팔구십백천]+\\s*(?:억|조|만)(?=$|[^가-힣]|원|[은는이가을를의에와과도]|으로|보다|부터|까지|입니다|이며|이고|인데|증가|감소|절감|달성|확보|필요|부족|초과|미달|수준|규모|가량|정도)(?:\\s*원)?|\\b(?:million|billion|percent)\\b", Pattern.CASE_INSENSITIVE);
+    // 일반 명사 뒤 조사 '만'을 금액으로 보지 않되 명백한 수사·통화 단위는 계속 검사한다.
+    private static final Pattern NUMERIC = Pattern.compile("[\\p{N}%]|퍼센트|절반|두\\s*배|세\\s*배|(?:[수일이삼사오육칠팔구십백천]*[십백천][수일이삼사오육칠팔구십백천]*\\s*(?:억|조|만)(?:\\s*원)?|(?<![가-힣])[수일이삼사오육칠팔구]+\\s*(?:(?:억|조)(?:\\s*원)?|만\\s*원))(?=$|[^가-힣]|[은는이가을를의에와과도]|으로|보다|부터|까지|입니다|이며|이고|인데|증가|감소|절감|달성|확보|필요|부족|초과|미달|수준|규모|가량|정도)|\\b(?:million|billion|percent)\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern ASSERTED = Pattern.compile("보장(?:합니다|됩니다|했습니다)|(?:반드시|무조건)\\s*(?:달성|실현|성공|절감|확보)|(?:달성|확보|실현|절감)(?:됩니다|합니다|했습니다|하였습니다)|(?:추진\\s*승인|발송|저장|삭제)(?:을|를)?\\s*(?:완료|했습니다|하였습니다|처리했습니다)");
     private final DecisionAssistantJson json;
 
