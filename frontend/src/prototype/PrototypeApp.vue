@@ -173,7 +173,7 @@ watch(page,async value=>{
   <FeedbackToast />
   <div v-if="developmentEntry && !store.actor" class="prototype-banner"><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span> <span><span data-copy-key="shellText.text002">{{ copy.shellText.text002 }}</span></span></div>
   <div v-if="page === 'login'" class="auth-page">
-    <a class="brand auth-brand" href="#/login"><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span></a>
+    <a class="brand auth-brand" href="#/login"><img class="brand-logo" src="/assets/celljango-logo.svg" alt="셀장고" width="236" height="100"></a>
     <main class="auth-main">
       <section v-if="developmentEntry && authStep === 'email'" class="auth-form local-account-form"><h1><span data-copy-key="shellText.text003">{{ copy.shellText.text003 }}</span></h1><p class="muted"><span data-copy-key="shellText.text004">{{ copy.shellText.text004 }}</span></p><p class="muted">DB에 있는 계정을 선택하면 이메일 인증 없이 로그인합니다.</p><form v-if="devKeyRequired" class="dev-access-key" @submit.prevent="loadDevAccounts"><label for="dev-access-key">접근 키</label><input id="dev-access-key" v-model="devAccessKey" type="password" autocomplete="off" required><button class="btn primary" type="submit" :disabled="!devAccessKey.trim()">확인</button></form><p v-if="devAccountsError" class="error" role="alert">{{devAccountsError}}</p><p v-if="authError" class="error" role="alert">{{authError}}</p><div class="local-account-list"><button v-for="account in localAccounts" :key="account.email" class="local-account-button" :disabled="store.busy" @click="localSignIn(account)"><strong>{{account.name}}</strong><span>{{account.hint}}</span></button></div><p v-if="store.busy" class="muted" role="status"><span data-copy-key="shellText.text005">{{ copy.shellText.text005 }}</span></p><p v-if="store.error" class="error" role="alert">{{store.error}}</p></section>
       <form v-else class="auth-form" @submit.prevent="authStep === 'email' ? requestCode() : signIn()">
@@ -200,25 +200,23 @@ watch(page,async value=>{
     </main>
     <footer class="muted"><span data-copy-key="login.footer">{{ copy.login.footer }}</span></footer>
   </div>
-  <div v-else-if="store.actor" class="app-layout" :class="{'development-workspace':developmentEntry}">
+  <div v-else-if="store.actor" class="app-layout top-layout" :class="{'development-workspace':developmentEntry}">
     <a class="skip-link" href="#main-content" @click.prevent="focusMain"><span data-copy-key="shellText.text015">{{ copy.shellText.text015 }}</span></a>
-    <aside class="sidebar">
-      <a class="brand" :href="store.actor.role === 'org' ? '#/org-requests' : '#/home'"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span></a>
-      <p class="role-caption">{{ store.actor.role === 'org' ? '조직 담당자' : '경영기획팀' }}</p>
-      <nav aria-label="주 메뉴">
-        <template v-for="menu in menus" :key="menu.id">
-          <a :href="`#/${menu.id}`" class="nav-link" :class="{ active: menuSelected(menu.id) }" :aria-current="menuSelected(menu.id) ? 'page' : undefined">
-            <img v-if="menu.icon" :src="`/assets/${menu.icon}${menuSelected(menu.id) ? '-active' : ''}.svg`" alt="" />
-            <NavIcon v-else :name="menu.id" />
-            <span><span :data-copy-key="'pages.'+menu.id">{{ copy.pages[menu.id] || menu.label }}</span></span><span v-if="menu.id === 'notifications' && store.unread" class="nav-count">{{ store.unread }}</span>
-          </a>
-          <div v-if="menu.id === 'monthly' && store.workspaces.length" class="workspace-nav">
-            <button v-for="work in store.workspaces" :key="work.org" class="nav-link" :class="{ active: ['workspace','cell'].includes(page) && store.activeOrg === work.org }" @click="openWorkspace(work.org)"><span>{{ work.name }}</span><span class="nav-count">{{ work.count }}</span></button>
-          </div>
-        </template>
+    <header class="topbar">
+      <a class="brand topbar-brand" :href="store.actor.role === 'org' ? '#/org-requests' : '#/home'"><img class="brand-logo" src="/assets/celljango-logo.svg" alt="셀장고" width="236" height="100"></a>
+      <nav class="top-nav" aria-label="주 메뉴">
+        <a v-for="menu in menus" :key="menu.id" :href="`#/${menu.id}`" class="top-link" :class="{ active: menuSelected(menu.id) }" :aria-current="menuSelected(menu.id) ? 'page' : undefined">
+          <img v-if="menu.icon" :src="`/assets/${menu.icon}.svg`" alt="" />
+          <NavIcon v-else :name="menu.id" />
+          <span><span :data-copy-key="'pages.'+menu.id">{{ copy.pages[menu.id] || menu.label }}</span></span><span v-if="menu.id === 'notifications' && store.unread" class="top-count">{{ store.unread }}</span>
+        </a>
       </nav>
-      <div class="sidebar-user"><span class="user-avatar" aria-hidden="true">{{ store.actor.name.slice(0,1) }}</span><strong>{{ store.actor.name }}</strong><small>{{ store.actor.department }}</small><button class="text-button" @click="logoutDialog.showModal()"><span data-copy-key="login.logout">{{ copy.login.logout }}</span></button></div>
-    </aside>
+      <div class="topbar-user"><span class="user-avatar" aria-hidden="true">{{ store.actor.name.slice(0,1) }}</span><span class="topbar-user-text"><strong>{{ store.actor.name }}</strong><small>{{ store.actor.role === 'org' ? store.actor.department : '경영기획팀' }}</small></span><button class="text-button" @click="logoutDialog.showModal()"><span data-copy-key="login.logout">{{ copy.login.logout }}</span></button></div>
+    </header>
+    <div v-if="monthlyPages.includes(page) && store.workspaces.length" class="workspace-tabs" role="group" aria-label="검토 중인 조직">
+      <span class="workspace-tabs-label">검토 중인 조직</span>
+      <button v-for="work in store.workspaces" :key="work.org" class="workspace-tab" :class="{ active: ['workspace','cell'].includes(page) && store.activeOrg === work.org }" @click="openWorkspace(work.org)"><span>{{ work.name }}</span><span class="top-count">{{ work.count }}</span></button>
+    </div>
     <div class="workspace-shell">
     <main id="main-content" class="main-content" :class="{ 'home-overview': page === 'home' }" tabindex="-1">
       <p v-if="store.error" class="notice error" role="alert">{{ store.error }}</p><p v-if="store.busy" class="muted" role="status"><span data-copy-key="shellText.text016">{{ copy.shellText.text016 }}</span></p>

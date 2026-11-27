@@ -14,13 +14,13 @@
   .p-dialog{max-width:calc(100vw - 2rem)}.p-dialog-content{line-height:1.6}
   .p-fileupload{min-width:0}.p-fileupload-file-list{overflow-wrap:anywhere}
   .sidebar .p-menu{border:0;background:transparent;width:100%;padding:0}
-  .sidebar .p-menu-item-link{min-height:46px;border-radius:8px;gap:12px;color:#c1cde0;text-decoration:none}
-  .sidebar .p-menu-item-link.active{color:#1d4ed8;background:#eaf1ff;font-weight:700}
+  .sidebar .p-menu-item-link{min-height:46px;border-radius:8px;gap:12px;color:#d1d1d0;text-decoration:none}
+  .sidebar .p-menu-item-link.active{color:#7c7c79;background:#eaeaea;font-weight:700}
   .sidebar .p-menu-item-link.workspace-item{padding-left:2rem;font-size:13px}
   .sidebar .p-menu-item-link>svg,.sidebar .p-menu-item-link>img{width:20px;height:20px;flex-shrink:0}
   .sidebar .p-menu-item-link .p-badge{margin-left:auto}
-  .sidebar .p-menu-item-content:hover .p-menu-item-link{color:#1e293b}
-  .sidebar-user .p-button{justify-self:start;color:#c1cde0}
+  .sidebar .p-menu-item-content:hover .p-menu-item-link{color:#2d2d2c}
+  .sidebar-user .p-button{justify-self:start;color:#d1d1d0}
   .local-account-button.p-button{display:flex;align-items:flex-start;flex-direction:column;text-align:left;width:100%}
   .local-account-button span{font-size:12px;font-weight:400}
   .auth-form .p-inputtext{width:100%}.auth-cta{width:100%;margin-top:1rem}

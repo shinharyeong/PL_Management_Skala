@@ -17,7 +17,7 @@ const change=row=>cellChange(row,columns.value.length)
 const state=value=>({CONFIRMED:'확정',CURRENT:'현재 기준',NEW:'신규 업로드 · 미확정'}[value] || value)
 function date(value){if(!value)return '—';const d=new Date(value);return Number.isNaN(d.getTime())?value:new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(d)}
 const evidenceByVersion=ref({})
-// 조직이 회신한 최신 소명: 경영기획팀이 여기서 수락하거나 보완을 요청한다(#116에서 빠진 결정 폼 복원)
+// 조직이 회신한 최신 소명: 경영기획팀이 여기서 수락하거나 보완을 요청한다(#3c3c3b에서 빠진 결정 폼 복원)
 const latest=computed(()=>detail.value?.explanations?.at(-1))
 const note=ref(''), decided=ref('')
 function decide(verdict){const id=props.id;return store.run(async()=>{await store.decideExplanation(id,verdict,note.value.trim());if(mounted&&props.id===id){decided.value=verdict==='ACCEPT'?'소명을 수락했습니다.':'소명 보완을 요청했습니다.';note.value=''}})}
@@ -54,7 +54,7 @@ watch(()=>[detail.value,store.versions,store.evidence],async()=>{
 </template>
 
 <style scoped>
-.cell-version-change{background:#f5f8fe;text-align:right}
+.cell-version-change{background:#fafaf9;text-align:right}
 .live-reply{display:flex;flex-direction:column;gap:10px}
 .live-reply h3{font-size:15px;margin:0}
 .live-reply .preserve-lines{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}

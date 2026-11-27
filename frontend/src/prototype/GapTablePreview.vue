@@ -39,11 +39,11 @@ function toggleAll(value,ids) { selected.value = value ? visible.value.filter(ro
 </template>
 
 <style>
-.app-layout.gap-preview{display:block;min-height:100vh;padding:28px 32px;background:#f3f6fa}
+.app-layout.gap-preview{display:block;min-height:100vh;padding:28px 32px;background:#f7f7f6}
 .gap-preview-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:18px}
 .gap-preview-heading h1{font-size:26px}.gap-preview-heading .breadcrumb{margin:0 0 6px}
-.gap-preview-controls{display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin:24px 0 18px;padding:16px;background:white;border:1px solid #dce4ef;border-radius:12px}
-.gap-preview-controls label{display:flex;align-items:center;gap:10px;font-size:13px}.gap-preview-controls select,.gap-preview-controls input{background:white;padding:9px 12px;border:1px solid #d0daea;min-height:40px}
-.gap-preview-controls>span{margin-left:auto;font-size:13px;color:#53647a}.gap-preview-table{max-width:100%;min-width:0}.gap-preview-note{margin-top:20px;font-size:13px;color:#627186}
+.gap-preview-controls{display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin:24px 0 18px;padding:16px;background:white;border:1px solid #e6e6e5;border-radius:12px}
+.gap-preview-controls label{display:flex;align-items:center;gap:10px;font-size:13px}.gap-preview-controls select,.gap-preview-controls input{background:white;padding:9px 12px;border:1px solid #dededc;min-height:40px}
+.gap-preview-controls>span{margin-left:auto;font-size:13px;color:#686865}.gap-preview-table{max-width:100%;min-width:0}.gap-preview-note{margin-top:20px;font-size:13px;color:#767672}
 @media(max-width:700px){.app-layout.gap-preview{padding:20px 12px}.gap-preview-heading{align-items:flex-start}.gap-preview-controls{gap:12px}.gap-preview-controls>span{margin-left:0}}
 </style>

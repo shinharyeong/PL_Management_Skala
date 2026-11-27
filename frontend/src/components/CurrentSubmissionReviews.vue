@@ -229,16 +229,16 @@ onBeforeUnmount(dispose)
 </template>
 
 <style scoped>
-.first-submission-notice {padding:12px 16px;background:#f0f5fb;border-radius:8px;color:#415672;}
+.first-submission-notice {padding:12px 16px;background:#f6f6f5;border-radius:8px;color:#5b5b58;}
 .review-group > summary,.review-period > summary {cursor:pointer;font-weight:700;padding:10px;border-radius:7px;}
-.review-group > summary {background:#203e61;color:white;}
-.review-period {margin:8px 0 8px 8px;border-left:2px solid #d7e3f0;padding-left:8px;}
+.review-group > summary {background:#414140;color:white;}
+.review-period {margin:8px 0 8px 8px;border-left:2px solid #e4e4e3;padding-left:8px;}
 .review-period > summary {background:#e4f2f3;color:#195866;margin-bottom:8px;}
 summary small {float:right;font-weight:400;}
 .review-period .review-item {margin-bottom:8px;}
 .answer-state {align-self:flex-start;font-size:12px;border-radius:6px;padding:2px 7px;background:#fff2d5;color:#8a5300;}
-.answer-state.NOT_REQUIRED,.answer-state.WRITTEN,.answer-state.INHERITED {background:#e3f4eb;color:#226446;}
-.previous-explanation {padding:16px;background:#f2f7f2;border:1px solid #d9e9dc;border-radius:10px;}
+.answer-state.NOT_REQUIRED,.answer-state.WRITTEN,.answer-state.INHERITED {background:#ececeb;color:#444442;}
+.previous-explanation {padding:16px;background:#f5f5f4;border:1px solid #e1e1e1;border-radius:10px;}
 .previous-explanation h4 {margin:0;}
 
 .review-layout { display:grid; grid-template-columns:minmax(200px,1fr) minmax(0,3fr); gap:20px; }

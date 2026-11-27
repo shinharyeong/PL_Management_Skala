@@ -5,7 +5,17 @@ import Aura from '@primeuix/themes/aura'
 import 'primeicons/primeicons.css'
 
 const preset = definePreset(Aura, {
-  semantic: { primary: Object.fromEntries([50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map(shade => [shade, `{blue.${shade}}`])) },
+  // 무채색 기본색: 버튼·선택은 먹색, 초록은 로고·차트에만
+  semantic: { primary: { 50: '#f6f6f5', 100: '#ececea', 200: '#d9d9d6', 300: '#bdbdb9', 400: '#8f908c', 500: '#1f2220',
+    600: '#383a37', 700: '#2b2d2a', 800: '#1f2220', 900: '#161715', 950: '#0d0e0c' } },
+  // 안내(info) 배지·메시지·알림도 파랑 대신 같은 무채색으로 맞춘다
+  components: {
+    tag: { colorScheme: { light: { info: { background: '{primary.100}', color: '{primary.700}' } } } },
+    message: { colorScheme: { light: { info: { background: '{primary.50}', borderColor: '{primary.200}', color: '{primary.700}',
+      outlined: { color: '{primary.700}', borderColor: '{primary.700}' }, simple: { color: '{primary.700}' } } } } },
+    toast: { colorScheme: { light: { info: { background: '{primary.50}', borderColor: '{primary.200}', color: '{primary.700}',
+      detailColor: '{surface.700}' } } } },
+  },
 })
 
 /** 연결 화면에 공통 테마와 한국어 위젯 안내를 설치한다.

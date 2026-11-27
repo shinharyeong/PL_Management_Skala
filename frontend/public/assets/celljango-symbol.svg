@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="셀장고">
+<title>셀장고</title>
+<rect x="9" y="3" width="24" height="42" rx="4" fill="#4e6e4f"/>
+<rect x="12" y="6" width="18" height="36" rx="2" fill="#f4f6f2"/>
+<rect x="13.5" y="13" width="15" height="17" fill="none" stroke="#6f9563" stroke-width="2"/><rect x="26.0" y="27.5" width="5" height="5" fill="#6f9563" stroke="#f4f6f2" stroke-width="0.92"/>
+<path fill="#24331f" transform="translate(15.71 26.5) scale(0.0115)" d="M411 -717H553V-590H411ZM185 -810H307V-770Q307 -679 288.5 -597.0Q270 -515 226.0 -451.0Q182 -387 105 -351L16 -470Q82 -501 118.5 -548.0Q155 -595 170.0 -652.5Q185 -710 185 -770ZM220 -810H341V-770Q341 -711 354.0 -658.0Q367 -605 399.5 -563.5Q432 -522 490 -497L410 -375Q335 -407 293.5 -466.0Q252 -525 236.0 -603.0Q220 -681 220 -770ZM687 -843H840V-361H687ZM498 -832H648V-364H498ZM192 -332H840V-64H353V37H193V-179H681V-209H192ZM193 -33H867V91H193Z"/>
+<path d="M33 4 L42 7.5 V40.5 L33 44 Z" fill="#6a8a68"/>
+</svg>

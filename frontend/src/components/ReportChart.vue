@@ -8,8 +8,8 @@ import { reportChartModel } from '../lib/report-display.js'
 
 const props = defineProps({ block: { type: Object, required: true } })
 const model = computed(() => reportChartModel(props.block))
-const palette = ['#2563eb', '#0d9488', '#8b5cf6', '#d97706', '#e11d48', '#64748b']
-const data = computed(() => ({ labels: model.value.labels, datasets: [{ label: props.block.title || props.block.metric || '금액', data: model.value.values, backgroundColor: model.value.rows.map((_,i) => palette[i % palette.length]), borderColor: '#2563eb', borderWidth: 2 }] }))
+const palette = ['#7ca070', '#0d9488', '#8b5cf6', '#d97706', '#b44a61', '#747e71']
+const data = computed(() => ({ labels: model.value.labels, datasets: [{ label: props.block.title || props.block.metric || '금액', data: model.value.values, backgroundColor: model.value.rows.map((_,i) => palette[i % palette.length]), borderColor: '#7ca070', borderWidth: 2 }] }))
 const options = computed(() => ({ responsive: true, maintainAspectRatio: false, animation: false,
   plugins: { legend: { display: model.value.type === 'doughnut' }, tooltip: { callbacks: { label: exactTooltip } } },
   ...(model.value.type === 'doughnut' ? {} : { scales: { y: { beginAtZero: true } } }),

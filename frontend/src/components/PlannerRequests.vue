@@ -314,7 +314,7 @@ onBeforeUnmount(dispose)
   border: 1px solid #e7e4de;
   border-radius: 12px;
   background: #fff;
-  color: #16181d;
+  color: #1a1a19;
   font-size: 15px;
   font-weight: 700;
   line-height: 1.45;
@@ -336,7 +336,7 @@ onBeforeUnmount(dispose)
   gap: 20px;
   margin-bottom: 27px;
 }
-.progress-heading h2 { color: #16181d; font-size: 16px; font-weight: 700; line-height: 1.45; }
+.progress-heading h2 { color: #1a1a19; font-size: 16px; font-weight: 700; line-height: 1.45; }
 .progress-controls { display: flex; align-items: center; gap: 14px; }
 .progress-controls select {
   width: 178px;
@@ -358,7 +358,7 @@ onBeforeUnmount(dispose)
   min-width: 850px;
   table-layout: fixed;
   border-collapse: collapse;
-  color: #16181d;
+  color: #1a1a19;
   font-size: 13px;
   line-height: 1.45;
 }
@@ -381,7 +381,7 @@ onBeforeUnmount(dispose)
 }
 .progress-table-wrap td { height: 54px; padding: 12px 7px; border-bottom: 1px solid #e7e4de; vertical-align: middle; overflow-wrap: anywhere; }
 .progress-table-wrap .organization-name { font-weight: 500; }
-.progress-table-wrap .recipient-name { color: #9ea2a9; }
+.progress-table-wrap .recipient-name { color: #a3a5a2; }
 .actual-recipient { display:block; color:#4a4844; }
 .progress-table-wrap tbody tr:last-child td { border-bottom: 1px solid #e7e4de; }
 .request-state {
@@ -395,10 +395,10 @@ onBeforeUnmount(dispose)
   line-height: 1.45;
   white-space: nowrap;
 }
-.request-state.waiting { color: #2e5bc9; background: #eaf0fb; }
+.request-state.waiting { color: #7d7d7a; background: #f3f3f2; }
 .request-state.submitted { color: #b7791f; background: #fbf2e0; }
-.request-state.overdue { color: #c4453a; background: #fbeae8; }
-.request-state.approved { color: #216943; background: #e8f4ec; }
+.request-state.overdue { color: #b4524a; background: #fbeae8; }
+.request-state.approved { color: #385238; background: #e8f4ec; }
 .progress-table-wrap td small { display: block; margin-top: 4px; color: #7c808a; font-size: 10px; }
 .detail-link { color: #75552f; font-size: 11px; }
 .detail-link:hover { text-decoration: underline; }
@@ -406,11 +406,11 @@ onBeforeUnmount(dispose)
 .submission-progress { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .submission-progress progress { width: 110px; height: 6px; border: 0; border-radius: 999px; overflow: hidden; appearance: none; background: #efeeea; }
 .submission-progress progress::-webkit-progress-bar { background: #efeeea; }
-.submission-progress progress::-webkit-progress-value { background: #14171e; border-radius: 999px; }
-.submission-progress progress::-moz-progress-bar { background: #14171e; border-radius: 999px; }
+.submission-progress progress::-webkit-progress-value { background: #191919; border-radius: 999px; }
+.submission-progress progress::-moz-progress-bar { background: #191919; border-radius: 999px; }
 .summary-state { font-size: 11px; }
 .progress-note { margin-top: 12px; color: #9a9690; font-size: 11px; }
-.master-status { margin-bottom:20px; padding:14px 18px; border:1px solid #e7e4de; border-radius:10px; background:#faf9f6; }.master-status summary { font-size:12px; }.master-status[open]>div { margin-top:14px; }.status-tabs { display:flex; gap:6px; margin-bottom:18px; }.status-tabs button { padding:8px 13px; background:transparent; border-radius:7px; font-size:12px; color:#777; }.status-tabs .active { background:#14171e; color:white; }.row-toggle { padding:0; text-align:left; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; }.expanded { background:#faf7f1; }.expanded-detail>td { padding:24px!important; background:#fcfbf9; }.reply-header { display:flex; justify-content:space-between; align-items:center; gap:20px; }.reply-header p { font-size:11px; color:#9ea2a9; margin-top:6px; }.reply-explanations { margin:20px 0; }.reply-explanations summary { font-size:12px; }.review-actions { display:flex; align-items:center; justify-content:space-between; gap:18px; flex-wrap:wrap; }.review-actions form { width:100%; }.review-actions form>.button-row { justify-content:flex-end; margin-top:12px; }.annual-confirmation { padding:18px; border:1px solid var(--line); background:white; border-radius:10px; margin-top:18px; }.annual-confirmation summary { font-size:13px; }.request-type { gap:25px; }
+.master-status { margin-bottom:20px; padding:14px 18px; border:1px solid #e7e4de; border-radius:10px; background:#faf9f6; }.master-status summary { font-size:12px; }.master-status[open]>div { margin-top:14px; }.status-tabs { display:flex; gap:6px; margin-bottom:18px; }.status-tabs button { padding:8px 13px; background:transparent; border-radius:7px; font-size:12px; color:#777; }.status-tabs .active { background:#191919; color:white; }.row-toggle { padding:0; text-align:left; background:transparent; font-weight:inherit; color:inherit; font-size:inherit; }.expanded { background:#faf7f1; }.expanded-detail>td { padding:24px!important; background:#fcfbf9; }.reply-header { display:flex; justify-content:space-between; align-items:center; gap:20px; }.reply-header p { font-size:11px; color:#a3a5a2; margin-top:6px; }.reply-explanations { margin:20px 0; }.reply-explanations summary { font-size:12px; }.review-actions { display:flex; align-items:center; justify-content:space-between; gap:18px; flex-wrap:wrap; }.review-actions form { width:100%; }.review-actions form>.button-row { justify-content:flex-end; margin-top:12px; }.annual-confirmation { padding:18px; border:1px solid var(--line); background:white; border-radius:10px; margin-top:18px; }.annual-confirmation summary { font-size:13px; }.request-type { gap:25px; }
 .master-status h3 { margin-bottom:8px; }.master-status p { font-size:13px; line-height:1.7; }.master-status .muted { max-width:720px; margin-top:7px; font-size:12px; }.master-status .button { flex-shrink:0; }
 .progress-empty { display: flex; min-height: 220px; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #7c808a; font-size: 13px; text-align: center; }
 .empty-link { color: #75552f; font-size: 12px; }

@@ -50,7 +50,7 @@ export async function reportPng(definition, result, base) {
   if (height > 28000) throw new Error('PNG 한 장으로 만들기에는 내용이 많습니다. XLSX 또는 인쇄·PDF 저장을 사용해 주세요.')
   canvas.width = width; canvas.height = Math.max(300, height)
   context.fillStyle = '#fff'; context.fillRect(0, 0, width, canvas.height)
-  context.font = '22px sans-serif'; context.fillStyle = '#172033'; context.textBaseline = 'top'
+  context.font = '22px sans-serif'; context.fillStyle = '#262624'; context.textBaseline = 'top'
   lines.forEach((line, index) => context.fillText(line, padding, padding + index * lineHeight))
   return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('PNG를 만들지 못했습니다.')), 'image/png'))
 }
