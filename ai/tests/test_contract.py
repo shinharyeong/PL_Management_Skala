@@ -40,6 +40,18 @@ def test_data_fills_a_table_block_that_keeps_its_rows_inside_table():
     assert len(a["rows"]) == 3 and a["rows"] == b["rows"] and a["header_rows"] == 1
 
 
+def test_data_moves_the_dates_written_in_the_template_to_the_chosen_base_month():
+    """양식에 '34.7월 로 적힌 날짜는 기준 월을 6월로 고르면 '34.6월 로 바뀐다. 원래 월을 알 수 없으면 그대로 둔다."""
+    _seed_report_db()
+    blocks = [{"id": "t1", "kind": "title", "text": "'34.7월 전사 실적 보고", "level": 1}, {"id": "p1", "kind": "paragraph", "text": "7월은 계획 대비 좋았습니다."}]
+    out = client.post("/v1/data", json={"base": {"year": 2034, "month": 6}, "blocks": blocks}).json()["blocks"]
+    assert out[0]["text"] == "'34.6월 전사 실적 보고" and "6월은" in out[1]["text"]
+    same = client.post("/v1/data", json={"base": {"year": 2034, "month": 7}, "blocks": blocks}).json()["blocks"]
+    assert same[0]["text"] == "'34.7월 전사 실적 보고"
+    unknown = client.post("/v1/data", json={"base": {"year": 2034, "month": 6}, "blocks": [{"id": "p1", "kind": "paragraph", "text": "7월은 좋았습니다."}]}).json()["blocks"]
+    assert "7월은" in unknown[0]["text"]
+
+
 def test_edit_returns_proposals_and_refuses_number_changes_and_queries(monkeypatch):
     _seed_report_db()
     c = _AiClient({"intent": "edit", "edits": [{"op": "remove_block", "target": {"id": "b3"}}]})

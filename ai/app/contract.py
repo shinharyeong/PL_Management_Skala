@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import logging
 from pathlib import PurePath
 
@@ -32,9 +33,22 @@ def _flat_table(block: dict) -> dict:
     return {**block, "rows": table.get("rows") or [], "header_rows": table.get("header_rows"), "header_spans": table.get("header_spans")}
 
 
+_ORIG_MONTH = re.compile(r"'(\d{2})\.(\d{1,2})월")
+
+
+def _orig_month(blocks: list[dict]) -> tuple[int, int] | None:
+    """틀이 만들어진 원래 기준 월(예: 제목의 '26.11월). 문장·제목에서 처음 보이는 '연.월 표기를 쓴다(데모와 같은 규칙). 없으면 None."""
+    for b in blocks:
+        m = _ORIG_MONTH.search(str(b.get("text") or ""))
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return None
+
+
 def data(base: dict, blocks: list[dict]) -> dict:
     from .pdf_structure import data_select
-    r = data_select.fill_report(base, [_flat_table(b) for b in blocks])
+    # 원래 월을 알려 주어야 선택한 기준 월로 날짜 표기('26.11월 등)가 바뀐다.
+    r = data_select.fill_report(base, [_flat_table(b) for b in blocks], _orig_month(blocks))
     status = _STATE.get(r.get("state") or "", "NONE") if r.get("version") else "NONE"
     return {"dataStatus": status, "blocks": r.get("blocks", [])}
 
