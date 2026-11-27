@@ -31,7 +31,8 @@ public class DecisionAssistantTools {
             Map.entry("pnl_waterfall", "손익 워터폴 조회"), Map.entry("approved_explanations", "승인 소명 조회"),
             Map.entry("submission_versions", "승인 제출 버전 조회"), Map.entry("submission_comparison", "제출 버전 비교"),
             Map.entry("scenario_preview", "시나리오 미리보기"), Map.entry("goal_preview", "저장하지 않는 목표 검토"), Map.entry("work_items", "검토·실행 상태 조회"),
-            Map.entry("review_request_draft", "조직 확인 요청 초안"), Map.entry("observation_detail", "조회 근거 상세 확인"));
+            Map.entry("review_request_draft", "조직 확인 요청 초안"), Map.entry("observation_detail", "조회 근거 상세 확인"),
+            Map.entry("monthly_pnl", "기준월 손익 조회"), Map.entry("report_item_breakdown", "조직별 손익 항목 상세"));
     private final HomePnlQueryService home;
     private final ArchiveQueryService archive;
     private final VersionComparisonService comparison;
@@ -67,7 +68,8 @@ public class DecisionAssistantTools {
             throw new IllegalArgumentException("허용 인자 형식이 아닙니다.");
         Set<String> allowed = switch (tool) {
             case "profit_drivers" -> Set.of("limit");
-            case "organization_pnl", "submission_versions" -> Set.of("organizationId");
+            case "organization_pnl", "submission_versions", "monthly_pnl" -> Set.of("organizationId");
+            case "report_item_breakdown" -> Set.of("organizationId", "reportItemId", "limit");
             case "approved_explanations" -> Set.of("organizationId", "limit");
             case "submission_comparison" -> Set.of("organizationId", "baseSubmissionId");
             case "scenario_preview" -> Set.of("candidateIds");
@@ -99,6 +101,10 @@ public class DecisionAssistantTools {
             args.put("targetProfitEok", DecisionScenarioCalculator.decimal(new BigDecimal(target.textValue())));
         }
         if (args.has("organizationId")) identifier(args.get("organizationId"), true);
+        if (tool.equals("report_item_breakdown")) {
+            if (args.has("reportItemId")) identifier(args.get("reportItemId"), true);
+            boundedInteger(args, "limit", 20, 1, 50);
+        }
         if (tool.equals("submission_versions") || tool.equals("submission_comparison")) identifier(args.get("organizationId"), true);
         if (tool.equals("submission_comparison")) identifier(args.get("baseSubmissionId"), true);
         if (tool.equals("profit_drivers") || tool.equals("approved_explanations")) {
@@ -137,10 +143,12 @@ public class DecisionAssistantTools {
         long master = Long.parseLong(run.snapshot.masterId()); int year = run.snapshot.year(); int month = run.snapshot.baseMonth();
         return switch (tool) {
             case "analysis_context" -> value(contextData(run), "고정 마스터와 선택 분석 revision의 저장 값", List.of("저장 후보의 가정은 개선 효과가 실현되었다는 뜻이 아닙니다."));
-            case "company_pnl" -> value(company(run), LIVE_COMPARISON, List.of("계획·전월 기준과 Gap 소명은 조회 시점 값이며 고정 마스터 발행 시점 자료와 다를 수 있습니다."));
+            case "company_pnl" -> value(company(run, "YEAR"), LIVE_COMPARISON, List.of("계획·전월 기준과 Gap 소명은 조회 시점 값이며 고정 마스터 발행 시점 자료와 다를 수 있습니다."));
             case "profit_drivers" -> value(home.opDrivers(run.actor, "YEAR", year, month, master, args.get("limit").intValue()), LIVE_COMPARISON,
                     List.of("계획 대비 영업이익 차이 순위이며 변동의 인과 원인이나 검증된 개선 가능액이 아닙니다."));
-            case "organization_pnl" -> value(divisions(run, org), LIVE_COMPARISON, List.of("total은 전체 조직 합계이며 선택 조직 합계가 아닙니다.", "조직별 계획 차이는 영업이익 기준입니다. 매출·비용의 조직별 계획 차이는 기존 조회가 제공하지 않아 추정하지 않습니다."));
+            case "organization_pnl" -> value(divisions(run, org, "YEAR"), LIVE_COMPARISON, List.of("total은 전체 조직 합계이며 선택 조직 합계가 아닙니다.", "조직별 계획 차이는 영업이익 기준입니다. 매출·비용의 조직별 계획 차이는 기존 조회가 제공하지 않아 추정하지 않습니다."));
+            case "monthly_pnl" -> monthly(run, org);
+            case "report_item_breakdown" -> reportItems(run, org, args);
             case "pnl_waterfall" -> value(home.waterfall(run.actor, "YEAR", year, month, master), "고정 마스터 원천의 연간 전망 구성", List.of());
             case "approved_explanations" -> explanations(run, org, args.get("limit").intValue());
             case "submission_versions" -> versions(run, org);
@@ -200,9 +208,9 @@ public class DecisionAssistantTools {
         return result;
     }
 
-    /** 목적: 기존 전사 손익 원문을 보존하면서 핵심 지표의 방향·유불리를 정밀 원값으로 요약한다. Args: run 고정 실행. Returns: 기존 전사 손익 응답과 정성 판정. Raises: 기존 조회/금액 형식 오류. Side Effects: DB 읽기만. */
-    private JsonNode company(DecisionAssistantGateway.Run run) {
-        var response = home.pnl(run.actor, "YEAR", run.snapshot.year(), run.snapshot.baseMonth(), Long.parseLong(run.snapshot.masterId()));
+    /** 목적: 기존 전사 손익 원문을 보존하면서 핵심 지표의 방향·유불리를 정밀 원값으로 요약한다. Args: run 고정 실행, period 서버가 선택한 YEAR 또는 MONTH. Returns: 기존 전사 손익 응답과 정성 판정. Raises: 기존 조회/금액 형식 오류. Side Effects: DB 읽기만. */
+    private JsonNode company(DecisionAssistantGateway.Run run, String period) {
+        var response = home.pnl(run.actor, period, run.snapshot.year(), run.snapshot.baseMonth(), Long.parseLong(run.snapshot.masterId()));
         ObjectNode result = (ObjectNode) json.safe(response);
         var metrics = response.kpis().stream().map(item -> comparisonMetric(item.key(), item.actual(), item.vsPlanAmount())).toList();
         result.set("summary", json.tree(Map.of("metrics", metrics, "detailRowCount", response.rows().size())));
@@ -226,9 +234,9 @@ public class DecisionAssistantTools {
         return metric;
     }
 
-    /** 목적: 기존 조직 손익 응답에서 고정 범위를 선택하고 영업이익 계획 차이의 순위·누락을 밝힌다. Args: run 실행, org 선택 조직 ID. Returns: 기존 columns/total과 정확한 OP 요약. Raises: 기존 조회/금액 오류. Side Effects: DB 읽기만. */
-    private JsonNode divisions(DecisionAssistantGateway.Run run, String org) {
-        var response = home.divisions(run.actor, "YEAR", run.snapshot.year(), run.snapshot.baseMonth(), Long.parseLong(run.snapshot.masterId()));
+    /** 목적: 기존 조직 손익 응답에서 고정 범위를 선택하고 영업이익 계획 차이의 순위·누락을 밝힌다. Args: run 실행, org 선택 조직 ID, period 서버가 선택한 YEAR 또는 MONTH. Returns: 기존 columns/total과 정확한 OP 요약. Raises: 기존 조회/금액 오류. Side Effects: DB 읽기만. */
+    private JsonNode divisions(DecisionAssistantGateway.Run run, String org, String period) {
+        var response = home.divisions(run.actor, period, run.snapshot.year(), run.snapshot.baseMonth(), Long.parseLong(run.snapshot.masterId()));
         ObjectNode result = json.project(response, "dataStatus", "total");
         var scope = run.snapshot.organizations().stream().filter(item -> org == null || item.id().equals(org)).toList();
         Set<String> allowed = new HashSet<>(); scope.forEach(item -> allowed.add(item.id()));
@@ -248,6 +256,41 @@ public class DecisionAssistantTools {
                 "rankedByOpPlanDifference", rankMetrics(ranked, false), "absoluteRankingBasis", "OP_DIFF_ABSOLUTE_DESC", "signedRankingBasis", "OP_DIFF_DESC",
                 "unavailableComparisons", List.of("REVENUE_VS_PLAN", "COST_VS_PLAN"))));
         return result;
+    }
+
+    /** 목적: 연간 전망과 구분한 고정 기준월의 실적·계획 비교를 기존 업무 서비스로 조회한다. Args: run 고정 실행, org 선택 조직. Returns: 월별 전사 지표와 선택 조직 지표·범위 경고. Raises: 기존 조회 오류. Side Effects: DB 읽기만; 다른 월·마스터로 범위를 확장하지 않는다. */
+    private ToolValue monthly(DecisionAssistantGateway.Run run, String org) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("period", "MONTH"); data.put("year", run.snapshot.year()); data.put("month", run.snapshot.baseMonth()); data.put("unit", "KRW");
+        data.put("companyScope", "ALL_MASTER_ORGANIZATIONS"); data.put("selectedOrganizationId", org);
+        data.put("company", company(run, "MONTH")); data.put("organizations", divisions(run, org, "MONTH"));
+        return value(data, "고정 마스터 기준월의 실적과 조회 시점의 확정 계획·전월 추정 비교",
+                List.of("연간 전망이 아니라 고정 기준월의 월간 실적입니다. 다른 월은 해당 기준의 마스터를 선택해야 합니다.",
+                        "company와 organizations.total은 전체 마스터 조직 합계이며 선택 조직 합계가 아닙니다. 조직 선택은 organizations.columns와 summary에만 적용됩니다.",
+                        "계획·전월 기준과 소명은 조회 시점 값입니다. 조직별 매출·비용 계획 차이는 기존 조회가 제공하지 않습니다."));
+    }
+
+    /** 목적: 고정 제출본의 조직·보고 항목별 기존 손익 근거를 한도 내에서 조회한다. Args: run 실행, org 선택 조직, args 항목 ID·상한. Returns: 연간 전망과 동일 제출본 계획의 비교 근거·전역 원천 제한. Raises: 기존 근거 조회 오류. Side Effects: DB 읽기만; 조사 캡처·원장 행 생성·계산식 변경 없음. */
+    private ToolValue reportItems(DecisionAssistantGateway.Run run, String org, JsonNode args) {
+        var saved = run.analysis == null ? null : research.find(run.analysis.id());
+        var evidence = saved == null ? research.loadEvidence(run.snapshot) : saved.evidence();
+        var source = evidence.stream().filter(item -> item.kind().equals("PNL")).toList();
+        Set<String> organizations = new HashSet<>(); run.snapshot.organizations().forEach(item -> organizations.add(item.id()));
+        String reportItemId = args.has("reportItemId") ? args.get("reportItemId").textValue() : null;
+        var selected = source.stream().filter(item -> organizations.contains(item.organizationId())
+                && (org == null || org.equals(item.organizationId()))
+                && (reportItemId == null || reportItemId.equals(item.facts().get("reportItemId")))).toList();
+        int limit = args.get("limit").intValue();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("period", "YEAR"); data.put("year", run.snapshot.year()); data.put("baseMonth", run.snapshot.baseMonth()); data.put("unit", "KRW");
+        data.put("comparison", "SAME_SUBMISSION_PLAN_VS_ANNUAL_OUTLOOK"); data.put("capturedAt", saved == null ? null : saved.capturedAt());
+        data.put("availableCount", selected.size()); data.put("sourceLimit", 100); data.put("sourceLimitMayApply", source.size() >= 100);
+        data.put("limit", limit); data.put("items", selected.stream().limit(limit).toList());
+        return value(data, saved == null ? "고정 제출본의 연간 전망과 동일 제출본 계획을 현재 조회" : "선택 분석에 최초 포착한 보고 항목별 근거",
+                List.of("조직과 보고 항목(report_item) 단위 집계이며 원천 계정(account_item)·전표별 상세가 아닙니다.",
+                        "계획은 동일 제출본의 PLAN입니다. HOME의 확정 연간 계획 비교와 다른 기준이므로 직접 혼합하지 않습니다. 계획이 불완전하면 차이는 null입니다.",
+                        "원천 손익 근거는 전체 조직에서 최대 100개를 읽은 뒤 조직·항목 필터를 적용합니다. availableCount는 확보한 근거 수이며 전체 계정 수가 아닙니다.",
+                        "차이와 이익 영향은 개선 가능액이나 인과 원인을 입증하지 않습니다."));
     }
 
     /** 목적: 계획 대비 개선이 큰 순서와 차이 절댓값이 큰 순서를 분리한다. Args: metrics 원본 조직 지표, absolute 절댓값 정렬 여부. Returns: 원본을 변경하지 않는 순위 목록. Raises: 금액 문자열 형식 오류. Side Effects: 없음. */

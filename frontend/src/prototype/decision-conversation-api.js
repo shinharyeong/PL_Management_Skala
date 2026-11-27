@@ -2,17 +2,19 @@ import { formatMoney } from '../lib/decimal-display.js'
 import { compare } from './exact-money.js'
 import { decimalText } from './decision-agent-api.js'
 const ACTIONS = { OPEN_DISCOVERY: { label: '근거 조사·제안 열기', tab: 'discovery' }, OPEN_SCENARIOS: { label: '시나리오 비교 열기', tab: 'scenarios' }, OPEN_WORKFLOW: { label: '조직 검토·실행 열기', tab: 'workflow' } }
-const HISTORY_TOOLS = new Set(['analysis_context', 'company_pnl', 'profit_drivers', 'organization_pnl', 'pnl_waterfall', 'approved_explanations', 'submission_versions', 'submission_comparison', 'scenario_preview', 'work_items', 'review_request_draft', 'goal_preview', 'observation_detail'])
+const HISTORY_TOOLS = new Set(['analysis_context', 'company_pnl', 'profit_drivers', 'organization_pnl', 'monthly_pnl', 'report_item_breakdown', 'pnl_waterfall', 'approved_explanations', 'submission_versions', 'submission_comparison', 'scenario_preview', 'work_items', 'review_request_draft', 'goal_preview', 'observation_detail'])
 const MONEY_FIELDS = {
   company_pnl: ['actual', 'plan', 'vsPlanAmount', 'vsPreviousAmount', 'op', 'revenue', 'cost', 'total'],
   profit_drivers: ['opDiff', 'actualOp', 'planOp', 'actual', 'plan', 'total'],
   organization_pnl: ['revenue', 'op', 'opDiff', 'vsPlanAmount', 'vsPreviousAmount', 'actual', 'plan', 'operatingProfit'],
+  monthly_pnl: ['actual', 'plan', 'vsPlanAmount', 'vsPreviousAmount', 'op', 'revenue', 'cost', 'total', 'opDiff'],
   pnl_waterfall: ['total', 'amount', 'value', 'start', 'end', 'base', 'current'],
   submission_comparison: ['baseAmount', 'targetAmount', 'currentAmount', 'previousAmount', 'diff', 'gapAmount'],
 }
 const LABELS = { name: '이름', label: '항목', organizationName: '조직', organizationId: '조직 ID', code: '코드', actual: '현재 전망', plan: '계획', diff: '차이', gap: '차이', rate: '비율', revenueWon: '매출', costWon: '비용', profitWon: '영업이익', baselineProfitWon: '기준 영업이익', targetProfitWon: '목표 영업이익', netEffectWon: '추가 이익', title: '제목', content: '내용', text: '근거 내용', note: '검토 내용', status: '상태', state: '업무 상태', category: '분류', id: 'ID', amount: '금액', value: '값', year: '연도', month: '월', baseMonth: '기준 월', submissionId: '제출 ID' }
 Object.assign(LABELS, { dataStatus: '자료 상태', kpis: '전사 손익 지표', rows: '손익 상세', items: '조회 내역', columns: '조직별 손익', total: '전체 합계', organizationCode: '조직 코드', opDiff: '영업이익 차이', opDiffRate: '영업이익 차이율 (%)', revenue: '매출', op: '영업이익', opContributionRate: '영업이익 기여도 (%)', opMarginRate: '영업이익률 (%)', opMargin: '영업이익률 (%)', vsPlanAmount: '계획 대비 차이', snapshot: '고정 기준', result: '계산 결과', message: '확인 요청 내용', sourceKind: '근거 유형', sourceId: '근거 ID', needsConfirmation: '사용자 확인 필요', analysisId: '분석 ID', expectedAnalysisRevision: '분석 버전' })
 Object.assign(LABELS, { key: '손익 항목', actualWon: '현재 연간 전망', planDifferenceWon: '계획 대비 차이', direction: '변동 방향', favorability: '손익 영향', missing: '비교 자료 누락', rank: '순위', summary: '비교 범위', scopeOrganizationCount: '기준 조직 수', returnedOrganizationCount: '조회 조직 수', targetProfitEok: '입력 목표', gapWon: '목표까지 부족액', surplusWon: '목표 초과 전망액', signedGapWon: '목표 − 현재 전망', forecastMeetsTarget: '연간 전망이 목표 이상', capturedAt: '근거 포착 시각', refId: '근거 ID' })
+Object.assign(LABELS, { forecastWon: '연간 전망', planWon: '같은 제출본의 계획', varianceWon: '전망 − 계획', profitImpactWon: '영업이익 영향', period: '조회 기간', sourceLimitMayApply: '원천 조회 상한 적용 가능' })
 
 /** 대화 기준의 변경을 식별한다.
  * Args: masterId 고정 기준, analysis 선택 분석. Returns: 대화 구분 키.
@@ -175,9 +177,46 @@ export function validateAssistantResponse(response, payload) {
  * @returns {string}
  */
 export function assistantStatusLabel(response) {
-  if (response?.status === 'LIMIT_REACHED') return '실행 한도 도달'
+  if (response?.status === 'LIMIT_REACHED') return '답변 처리 한도 도달'
   if (response?.mode === 'UNAVAILABLE') return '답변 생성 중단'
   return { COMPLETED: response?.brief ? '요청 항목 확인 완료' : '근거 조회 완료', NEEDS_INPUT: '추가 정보 필요', FAILED: '조회·답변 처리 실패' }[response?.status] || '상태 확인 필요'
+}
+
+/** 성공한 조회 수와 답변 완료 여부를 분리하고 중단 원인을 추측하지 않는다.
+ * Args: response 현재 실행의 Agent 응답. Returns: 조회 성과와 답변 상태 안내.
+ * Raises: 없음. Side Effects: 없음; 한도 도달을 질문 범위나 모델 장애로 해석하지 않는다.
+ * @param {object|null|undefined} response
+ * @returns {string}
+ */
+export function assistantExecutionSummary(response) {
+  const count = successfulObservations(response).length
+  const status = response?.mode === 'MODEL' && response?.status === 'COMPLETED' ? '답변 완료'
+    : response?.status === 'NEEDS_INPUT' ? '추가 확인 필요' : '답변 미완료'
+  return `조회 성공 ${count}건 · ${status}`
+}
+
+/** 실패·한도 응답의 안전한 서버 안내를 부분 분석과 별도로 유지한다.
+ * Args: response 서버 검증을 통과한 응답. Returns: 원문 안내 또는 null.
+ * Raises: 없음. Side Effects: 없음; 문자열에서 실패 유형을 추론하거나 재시도를 강요하지 않는다.
+ * @param {object|null|undefined} response
+ * @returns {string|null}
+ */
+export function assistantIncompleteReason(response) {
+  return ['LIMIT_REACHED', 'FAILED'].includes(response?.status) && typeof response.answer === 'string' && response.answer.trim()
+    ? response.answer : null
+}
+
+/** 개별 요구의 답변 수와 전체 실행의 미완료 상태를 함께 표시한다.
+ * Args: response 실제 실행 상태, brief 검증된 표시용 분석. Returns: 요구 충족 범위 안내.
+ * Raises: 없음. Side Effects: 없음; 모든 finding이 유효해도 중단된 실행을 완료로 바꾸지 않는다.
+ * @param {object} response
+ * @param {object} brief
+ * @returns {string}
+ */
+export function assistantCoverageLabel(response, brief) {
+  const coverage = `${brief.answeredCount} / ${brief.requirements.length}개`
+  return ['LIMIT_REACHED', 'FAILED'].includes(response?.status)
+    ? `부분 검증 ${coverage} · 전체 답변 미완료` : `요청 항목 ${coverage} 답변`
 }
 
 /** 인용 경로를 관찰의 자체 속성만 따라 읽는다.
@@ -216,10 +255,19 @@ export function answerCitations(response) {
       const origin = detailCitationOrigin(observation, citation.path, response.observations || [])
       const field = origin.field
       const displayQuote = value === null ? '조회값 없음 (null)' : numeric ? observationCell(field, value, origin.tool) : citation.quote
-      rows.push({ ...citation, displayQuote, label: observation.label, field: LABELS[field] || field, observation })
+      rows.push({ ...citation, displayQuote, label: observation.label, field: observationFieldLabel(field, origin.tool), observation })
     }
   }
   return rows
+}
+
+/** 조회 기간에 맞는 필드 제목을 사용해 월 실적을 연간 전망으로 표시하지 않는다.
+ * Args: field 원문 필드, tool 원천 도구 이름. Returns: 표시 제목.
+ * Raises: 없음. Side Effects: 없음.
+ */
+function observationFieldLabel(field, tool) {
+  if (tool === 'monthly_pnl' && ['actual', 'actualWon'].includes(field)) return '해당 월 실적'
+  return LABELS[field] || field
 }
 
 /** 상세 관찰에서 읽은 값은 원래 도구의 금액 필드 의미로만 표시한다.
@@ -366,6 +414,8 @@ export function observationTables(observation, order = 'SIGNED_DESC') {
   const tables = [], data = observation.data
   if (!data || typeof data !== 'object') return tables
   if (observation.tool === 'goal_preview') return goalPreviewTables(data)
+  if (observation.tool === 'monthly_pnl') return monthlyPnlTables(data, order)
+  if (observation.tool === 'report_item_breakdown') return reportItemTables(data)
   const ranked = order === 'ABS_DESC' ? data.summary?.rankedByAbsoluteOpPlanDifference : data.summary?.rankedByOpPlanDifference || data.summary?.rankedByAbsoluteOpPlanDifference
   if (observation.tool === 'organization_pnl' && Array.isArray(ranked)) tables.push(rowsTable('조직별 영업이익', ranked, observation.tool, 'planDifferenceWon', ['organizationName', 'actualWon', 'planDifferenceWon', 'direction', 'favorability', 'missing'], order))
   if (observation.tool === 'company_pnl' && Array.isArray(data.summary?.metrics)) tables.push(rowsTable('전사 손익의 계획 대비 차이', data.summary.metrics, observation.tool))
@@ -410,11 +460,42 @@ function rowsTable(label, values, tool, orderKey = null, preferred = [], order =
   for (const column of preferred) for (const row of visibleRows) if (Object.hasOwn(row, column) && !columns.includes(column)) columns.push(column)
   for (const row of visibleRows) for (const column of Object.keys(row)) if (!columns.includes(column) && columns.length < 8) columns.push(column)
   const headers = [], rows = []
-  for (const column of columns) headers.push(LABELS[column] || column)
+  for (const column of columns) headers.push(observationFieldLabel(column, tool))
   for (const row of visibleRows) { const cells = []; for (const column of columns) cells.push(observationCell(column, row?.[column], tool)); rows.push(cells) }
   const suffix = order === 'ABS_DESC' ? '계획 대비 차이 절댓값 큰 순' : '계획 초과액 큰 순'
   const orderNote = orderKey ? order === 'ABS_DESC' ? '영업이익 계획 차이의 절댓값이 큰 순입니다. 큰 계획 미달도 앞에 올 수 있으므로 +/− 부호와 손익 영향을 함께 확인하세요. 비교 자료가 없는 조직은 뒤에 표시합니다.' : '영업이익 전망 − 계획 금액을 큰 순으로 표시합니다. 계획 초과가 먼저, 계획 미달은 뒤에 표시하며 비교 자료가 없는 조직은 마지막에 둡니다.' : ''
   return { label: orderKey ? `${label} · ${suffix}` : label, total: values.length, orderNote, table: { columns: headers, rows } }
+}
+
+/** 월간 도구의 회사·조직 요약을 월 실적으로 표시하고 연간 표와 분리한다.
+ * Args: data monthly_pnl 응답, order 계획 차이 정렬. Returns: 최대 두 표.
+ * Raises: 없음. Side Effects: 원문·정밀 금액 변경 및 기간 합산 없음.
+ */
+function monthlyPnlTables(data, order) {
+  if (data.period !== 'MONTH' || data.unit !== 'KRW') return []
+  const tables = [], metrics = data.company?.summary?.metrics
+  const summary = data.organizations?.summary
+  const ranked = order === 'ABS_DESC' ? summary?.rankedByAbsoluteOpPlanDifference : summary?.rankedByOpPlanDifference || summary?.rankedByAbsoluteOpPlanDifference
+  if (Array.isArray(metrics)) tables.push(rowsTable('해당 월 전사 손익', metrics, 'monthly_pnl'))
+  if (Array.isArray(ranked)) tables.push(rowsTable('해당 월 조직별 영업이익', ranked, 'monthly_pnl', 'planDifferenceWon', ['organizationName', 'actualWon', 'planDifferenceWon', 'direction', 'favorability', 'missing'], order))
+  for (const table of tables) table.orderNote = `고정 기준월의 실적과 계획을 비교합니다. 연간 전망과는 별개입니다.${table.orderNote ? ` ${table.orderNote.replace('영업이익 전망', '영업이익 실적')}` : ''}`
+  return tables
+}
+
+/** 조직별 보고 항목의 동일 제출본 비교 금액과 원천 상한을 명시한다.
+ * Args: data report_item_breakdown 응답. Returns: 원문 정밀 금액을 보존한 표.
+ * Raises: 없음. Side Effects: 원문·순위 변경 및 개선 효과 계산 없음.
+ */
+function reportItemTables(data) {
+  if (data.period !== 'YEAR' || data.unit !== 'KRW' || !Array.isArray(data.items)) return []
+  const rows = []
+  for (const item of data.items) rows.push({ label: item.label, organizationId: item.organizationId,
+    forecastWon: item.facts?.forecastWon, planWon: item.facts?.planWon, varianceWon: item.facts?.varianceWon,
+    profitImpactWon: item.facts?.profitImpactWon, text: item.text })
+  const table = rowsTable('조직별 손익 항목 상세', rows, 'report_item_breakdown')
+  table.orderNote = '같은 승인 제출본 안의 계획과 연간 전망을 비교합니다. 별도 확정 계획 마스터 대비 차이와 같다고 볼 수 없으며, 영업이익 영향은 검증된 개선 가능액이 아닙니다.'
+  if (data.sourceLimitMayApply) table.orderNote += ' 원천 조회 상한이 적용될 수 있어 전체 항목을 뜻하지 않습니다.'
+  return [table]
 }
 
 /** 저장하지 않은 연간 목표 검토 결과를 현재 전망과 나란히 표시한다.

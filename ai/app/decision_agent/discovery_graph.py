@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 import json
+import logging
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -11,12 +12,13 @@ from langgraph.graph import END, START, StateGraph
 from ..config import Settings, get_settings
 from ..services import llm
 from ..services.call_log import CallLog
-from .discovery_core import (DISCOVERY_LIMITATIONS, default_references, fallback_goal, fallback_hypotheses,
+from .discovery_core import (DISCOVERY_LIMITATIONS, GoalValidationError, default_references, fallback_goal, fallback_hypotheses,
                              validate_discovery_context, validate_discovery_proposal, validate_goal,
                              validate_read_result, validate_references)
 from .discovery_models import DiscoveryRequest, GoalInterpretRequest
 from .discovery_tools import read_evidence
 
+logger = logging.getLogger(__name__)
 GOAL_RULES = (
     'goalProposal는 {"targetProfitWon": "원 단위 십진 문자열 또는 null", "targetYear": 정수 또는 null, '
     '"targetQuote": "목표 금액이 명시된 요청문 그대로의 부분 인용 또는 null", '
@@ -26,6 +28,7 @@ GOAL_RULES = (
     "금액은 요청에 명시된 목표만 단위 변환한다. 매출 목표와 영업이익 목표를 혼동하지 않는다. "
     "금액이 불명확하거나 충돌하면 null로 둔다. 연도가 명시되지 않았으면 선택 연도를 쓰고 yearQuote는 null로 둔다. "
     "보호 조건은 부정·예외·조건문을 읽고 명시적으로 보호를 요청한 경우에만 부분 인용과 함께 제안한다. "
+    "인용은 원문 그대로 복사하며 연결어·조사를 바꾸지 않는다. 한 문장이 여러 보호 범주를 함께 지칭하면 각 범주에 같은 전체 문장 인용을 사용한다. 인건비와 R&D가 함께 적힌 요청을 범주별 새 문장으로 재작성하지 않는다. "
     "uncertainties에는 숫자나 금액·확정 주장을 쓰지 말고 확인 질문만 쓴다. "
     "기존 선택된 보호 조건을 임의 해제하지 않는다. 모든 값은 사용자가 확인할 제안이다."
 )
@@ -348,8 +351,10 @@ def interpret_goal(payload: dict[str, Any], *, settings: Settings | None = None,
                 raise ValueError("목표 제안 응답 계약이 다릅니다.")
             goal = validate_goal(value["goalProposal"], request.prompt, request.year)
             mode = "MODEL"
-        except ValueError:
-            reason = "모델 목표의 원문·단위를 확인하지 못해 기본 추출로 대체했습니다."
+        except ValueError as error:
+            code = error.code if isinstance(error, GoalValidationError) else "GOAL_SCHEMA_OR_CONTRACT"
+            logger.warning("decision_goal validation_rejected code=%s", code)
+            reason = "모델 목표 제안의 검증을 완료하지 못해 기본 추출로 대체했습니다. 보호 조건은 직접 확인해 주세요."
     if reason:
         goal["uncertainties"] = list(dict.fromkeys([*goal["uncertainties"], reason]))[:12]
     return {"mode": mode, "goalProposal": goal}

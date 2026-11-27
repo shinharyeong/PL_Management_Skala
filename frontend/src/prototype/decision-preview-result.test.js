@@ -100,6 +100,32 @@ test('invalid narrative falls back to partial report while verified goal observa
   function containsExplanationFailure(value) { return value.includes('분석 설명의 근거 연결') }
 })
 
+/** 요약 복구 중단 후에도 검증된 설명·근거를 남기고 월간 조회를 연간 표로 섞지 않는다.
+ * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 실행만 검사한다.
+ */
+test('limited analysis retains validated findings and failure reason without promoting monthly values into annual metrics', function limitedBrief() {
+  const run = withBrief(execution([observation('goal', 'goal_preview', goalData()), observation('month', 'monthly_pnl', { period: 'MONTH', unit: 'KRW', organizations: { summary: { scopeOrganizationCount: 1, rankedByOpPlanDifference: [organization('monthly', '99')] } } })]))
+  run.response.status = 'LIMIT_REACHED'
+  run.response.answer = '시스템 안내: 최종 요약을 검증하지 못해 개별 설명만 남겼습니다.'
+  run.response.brief.summary = run.response.answer
+  run.response.brief.requirements = [run.response.brief.requirements[0]]
+  const result = buildPreviewResult(run, scope())
+  assert.equal(result.state, 'PARTIAL')
+  assert.equal(result.executionSummary, '조회 성공 2건 · 답변 미완료')
+  assert.equal(result.incompleteReason, run.response.answer)
+  assert.equal(result.brief.findings[0].text, '현재 전망은 입력 목표에 미달합니다.')
+  assert.equal(result.brief.findings[0].citations[0].observationId, 'goal')
+  assert.equal(result.brief.answeredCount, 1)
+  assert.equal(result.goal.gapWon, '8000000000')
+  assert.deepEqual(result.organizations, [])
+  assert.equal(result.organizationCount, null)
+  const stale = buildPreviewResult(run, { ...scope(), targetProfitEok: '1001' })
+  assert.equal(stale.state, 'STALE')
+  assert.equal(stale.brief, null)
+  assert.equal(stale.incompleteReason, null)
+  assert.equal(stale.executionSummary, null)
+})
+
 /** 미실행·진행·전송 오류는 과거 금액이나 영 건을 채우지 않는다.
  * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 없음.
  */

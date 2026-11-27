@@ -1,4 +1,5 @@
 <script setup>
+import {usePrototypeStore} from './live-store.js'
 import { onBeforeUnmount, ref, watch } from 'vue'
 import PButton from 'primevue/button'
 import PInputText from 'primevue/inputtext'
@@ -12,6 +13,7 @@ import { workDateText, canApproveWork, dueAtKst, workCreatePayload, workflowRequ
 const props = defineProps({ analysis: { type: Object, required: true }, api: { type: Function, required: true }, refreshAnalysis: { type: Function, required: true }, requestSource: Object, disabled: Boolean })
 const emit = defineEmits(['busy', 'items', 'loaded'])
 const items = ref([]), selected = ref(null), busy = ref(false), error = ref(''), notice = ref('')
+watch(notice, value => {if(value)usePrototypeStore().notify(value)})
 const createVisible = ref(false), source = ref(null), candidateId = ref(null), createForm = ref({ message: '', dueDate: '' })
 const actionVisible = ref(false), action = ref(''), actionForm = ref({ verdict: '', note: '', decisionMaker: '', decisionEvidenceRef: '', dueDate: '' })
 const reviewOptions = [{ label: '근거 검토 후 후보 편입', value: 'ACCEPT' }, { label: '보완 요청', value: 'REQUEST_CHANGES' }, { label: '반려', value: 'REJECT' }]

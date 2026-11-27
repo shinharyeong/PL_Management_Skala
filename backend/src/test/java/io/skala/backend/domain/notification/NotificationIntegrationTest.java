@@ -77,6 +77,30 @@ class NotificationIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void readAndUnreadListsHaveIndependentChronologicalPagination() throws Exception {
+        OffsetDateTime now=OffsetDateTime.now(ZoneOffset.UTC);
+        long older=insertNotification(plannerId,"REPLY","old:"+submissionId,monthlyRequest,null,"이전 회신",now.minusMinutes(3));
+        long newer=insertNotification(plannerId,"SUBMISSION","new:"+submissionId,monthlyRequest,submissionId,"최근 제출",now.minusMinutes(2));
+        insertNotification(plannerId,"REPLY","unread:"+submissionId,monthlyRequest,null,"안 읽은 회신",now);
+        markRead("{\"ids\":[\""+older+"\",\""+newer+"\"]}",UUID.randomUUID().toString()).andExpect(status().isOk());
+        JsonNode first=read(mvc.perform(auth(get("/api/v1/notifications").param("readOnly","true").param("limit","1"),planner)).andExpect(status().isOk()));
+        assertThat(first.at("/typeCounts/ALL").asInt()).isEqualTo(2);
+        assertThat(first.at("/groups/0/items/0/title").asText()).isEqualTo("최근 제출");
+        assertThat(first.at("/groups/0/items/0/read").asBoolean()).isTrue();
+        assertThat(first.at("/summary/unreadCount").asInt()).isEqualTo(1);
+        String cursor=first.get("nextCursor").asText();
+        mvc.perform(auth(get("/api/v1/notifications").param("readOnly","true").param("limit","1").param("cursor",cursor),planner))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.groups[0].items[0].title").value("이전 회신"));
+        mvc.perform(auth(get("/api/v1/notifications").param("unreadOnly","true"),planner))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.typeCounts.ALL").value(1))
+                .andExpect(jsonPath("$.groups[0].items[0].title").value("안 읽은 회신"));
+        mvc.perform(auth(get("/api/v1/notifications").param("unreadOnly","true").param("cursor",cursor),planner))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_CURSOR"));
+        mvc.perform(auth(get("/api/v1/notifications").param("readOnly","true").param("unreadOnly","true"),planner))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void plannerSeesGroupedNotificationsWithSummaryAndLinks() throws Exception {
         insertNotification(plannerId, "SUBMISSION", "submission:" + submissionId, monthlyRequest, submissionId, "10월 월간 시트 제출", OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(2));
         insertNotification(plannerId, "REPLY", "reply:t" + submissionId, monthlyRequest, null, "10월 매출 Gap 소명 회신 도착", OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(1));

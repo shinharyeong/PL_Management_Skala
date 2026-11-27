@@ -23,8 +23,13 @@ FIELD_LABELS = {
     "opDiff": "영업이익 계획 대비 차이", "direction": "업무 API의 증감 판정", "favorability": "업무 API의 손익 유불리 판정",
     "forecastMeetsTarget": "전망 기준 목표 충족 여부 (실적 달성 아님)", "name": "조직·항목 이름",
     "rankedByOpPlanDifference": "영업이익 차이 내림차순", "rankedByAbsoluteOpPlanDifference": "영업이익 차이 절댓값순",
+    "forecastWon": "보고 항목 연간 전망", "planWon": "동일 제출본 계획", "varianceWon": "전망과 동일 제출본 계획 차이",
+    "profitImpactWon": "계획 차이의 이익 영향 (개선 가능액 아님)", "period": "조회 기간 구분",
+    "availableCount": "현재 원천 범위의 필터 결과 수", "sourceLimitMayApply": "원천 조회 상한 적용 가능성",
+    "reportItemId": "보고 항목 ID (원장 계정 ID 아님)",
 }
-KEY_ORDER = ("comparisonSummary", "summary", "rankedByOpPlanDifference", "metrics", "kpis", "items", "columns",
+KEY_ORDER = ("period", "comparison", "companyScope", "selectedOrganizationId", "availableCount", "sourceLimit", "sourceLimitMayApply",
+             "comparisonSummary", "summary", "rankedByOpPlanDifference", "metrics", "kpis", "items", "columns",
              "baselineProfitWon", "targetProfitWon", "gapWon", "surplusWon", "signedGapWon", "forecastMeetsTarget",
              "organization", "name", "key", "actualWon", "actual", "planDifferenceWon", "vsPlanAmount", "opDiff",
              "direction", "favorability", "rank", "missing", "id")
@@ -45,6 +50,12 @@ def projected_data(observation: dict[str, Any]) -> dict[str, Any] | list[Any] | 
         return data
     if observation["tool"] == "observation_detail":
         return {"value": data.get("value")}
+    if observation["tool"] == "monthly_pnl":
+        result = {key: data[key] for key in ("period", "year", "month", "unit", "companyScope", "selectedOrganizationId") if key in data}
+        for key, tool in (("company", "company_pnl"), ("organizations", "organization_pnl")):
+            if key in data:
+                result[key] = projected_data({"tool": tool, "data": data[key]})
+        return result
     if observation["tool"] == "company_pnl":
         if not any(key in data for key in ("summary", "comparisonSummary", "kpis", "opMargin")):
             return {key: value for key, value in data.items() if key != "rows"}

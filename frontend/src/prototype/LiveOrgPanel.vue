@@ -1,5 +1,6 @@
 <script setup>
 import copy from './copy-text.js'
+import {confirmBusinessAction} from './business-confirm.js'
 import {uploadGuidance} from './upload-guidance.js'
 import {computed,ref,watch,onBeforeUnmount} from 'vue'
 import {usePrototypeStore} from './live-store.js'
@@ -138,7 +139,10 @@ async function confirm(){await store.run(async()=>{const id=submission.value?.id
  * Args: 없음. Returns: Promise<void>. Raises: 오류는 store.run이 표시한다.
  * Side Effects: 제출 POST·요청함 갱신 후 이력 화면으로 이동한다.
  */
-async function submit(){await store.run(async()=>{const g=generation;await store.api(`/api/v1/submissions/${submission.value.id}/submit`,{method:'POST',body:{replyMessage:reply.value,expectedStateToken:preview.value.stateToken}});if(g!==generation)return;preview.value=null;await store.loadInbox();if(g===generation)emit('navigate','org-history')})}
+async function submit(){await store.run(async()=>{const g=generation;
+ await confirmBusinessAction({title:'제출본을 보낼까요?',confirmLabel:'제출하기',message:'현재 파일과 작성한 소명을 경영기획팀에 제출합니다.',details:[{label:'파일',value:preview.value?.file?.name||'—'},{label:'버전',value:preview.value?.expectedLabel||'—'},{label:'회신 메시지',value:reply.value||'없음'}]})
+ if(g!==generation)return;
+ await store.api(`/api/v1/submissions/${submission.value.id}/submit`,{method:'POST',body:{replyMessage:reply.value,expectedStateToken:preview.value.stateToken}});if(g!==generation)return;preview.value=null;store.notify('제출본을 경영기획팀에 보냈습니다.');await store.loadInbox();if(g===generation)emit('navigate','org-history')})}
 /** 서버 제출 양식을 다운로드한다.
  * Args: 없음. Returns: Promise<void>. Raises: 오류는 store.run이 표시한다.
  * Side Effects: 파일 조회 후 사용자 다운로드를 시작한다.

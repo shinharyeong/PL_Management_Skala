@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import PButton from 'primevue/button'
 import PInputText from 'primevue/inputtext'
@@ -14,6 +14,7 @@ import { formatMoney } from '../lib/decimal-display.js'
 import { workDateText, replyCandidateDraft, workReplyPayload, workflowRequest, workStateLabel, workStateSeverity } from './decision-workflow-api.js'
 const store = usePrototypeStore(), router = useRouter(), controller = new AbortController()
 const items = ref([]), selected = ref(null), busy = ref(false), error = ref(''), notice = ref(''), followups = ref([])
+watch(notice, value => {if(value)store.notify(value)})
 const reply = ref(null), progress = ref({ status: 'IN_PROGRESS', note: '', evidenceRef: '', followupMasterId: null }), savedInput = ref('')
 const confirmVisible = ref(false), confirmOperation = ref('')
 const feasibilityOptions = [{ label: '개선 가능 · 금액과 조건 회신', value: 'FEASIBLE' }, { label: '개선 어려움 · 사유 회신', value: 'NOT_FEASIBLE' }]

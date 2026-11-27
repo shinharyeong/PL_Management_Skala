@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from .assistant_core import FinishValidationError, pointer_scalar, validate_finish
 from .assistant_models import AnalysisPlan, GroundedFinish, ProseRepair
 from .assistant_presentation import citation_catalog
-from .discovery_core import _NUMERIC_CLAIM
+from .discovery_core import numeric_claim_kind
 
 _ASSERTED = re.compile(
     r"보장(?:합니다|됩니다|했습니다)|(?:반드시|무조건)\s*(?:달성|실현|성공|절감|확보)|"
@@ -124,8 +124,9 @@ def validate_prose(text: str | None, citations: list[dict[str, str]], observatio
     checked = text
     for name in sorted(names, key=len, reverse=True):
         checked = checked.replace(name, "해당 조직")
-    if any(unicodedata.category(character).startswith("N") for character in checked) or _NUMERIC_CLAIM.search(checked):
-        raise FinishValidationError("BRIEF_NUMERIC", location)
+    reason = numeric_claim_kind(checked)
+    if reason:
+        raise FinishValidationError("BRIEF_NUMERIC", location, [reason])
     if _ASSERTED.search(checked):
         raise FinishValidationError("BRIEF_ASSERTED", location)
 
@@ -221,6 +222,7 @@ def resolve_brief(value: Any, observations: list[dict[str, Any]], plan: list[dic
     source_tools = {item["id"]: item["tool"] for item in observations if item["status"] == "SUCCESS"}
     findings, citations, finding_ids, citation_keys = [], [], set(), set()
     numeric_fields: list[str] = []
+    numeric_reasons: list[str] = []
 
     def check_prose(text: str | None, selected: list[dict[str, str]], field_name: str) -> None:
         """숫자 오류 위치만 모으고 다른 설명 검증 실패는 즉시 전파한다.
@@ -235,6 +237,7 @@ def resolve_brief(value: Any, observations: list[dict[str, Any]], plan: list[dic
             if error.code != "BRIEF_NUMERIC":
                 raise
             numeric_fields.append(field_name)
+            numeric_reasons.extend(error.reason_codes)
 
     for finding_index, finding in enumerate(proposal.findings):
         if not finding.id.strip() or finding.id in finding_ids:
@@ -284,7 +287,7 @@ def resolve_brief(value: Any, observations: list[dict[str, Any]], plan: list[dic
     if len(proposal.nextActions) != len(set(proposal.nextActions)):
         raise FinishValidationError("ACTION_DUPLICATE")
     if numeric_fields:
-        raise FinishValidationError("BRIEF_NUMERIC", numeric_fields)
+        raise FinishValidationError("BRIEF_NUMERIC", numeric_fields, numeric_reasons)
     completed = bool(findings) and all(item["status"] == "ANSWERED" for item in requirements)
     brief = {"summary": proposal.summary, "requirements": requirements, "findings": findings}
     return {"summary": proposal.summary, "citations": citations, "nextActions": proposal.nextActions,

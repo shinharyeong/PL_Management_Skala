@@ -14,13 +14,32 @@
 
 LangGraph는 자연어 조회의 해석·검사·실행·재시도 순서를 관리합니다. LangChain은 각 단계에서 사용하는 공통 모델 호출 인터페이스입니다. 둘은 같은 일을 두 번 수행하지 않습니다. 실제 SDK 전송은 `services/llm.py` 한 곳이며, 최신 백엔드 계약과 PDF·편집·핵심 문장 기능이 이를 공유합니다. 별도 Responses 호출을 만들던 폐기된 보고 작성 경로는 삭제했습니다.
 
+GPT-6 모델은 이 공통 진입점에서 `services/responses_adapter.py`로 Responses 전송을 사용합니다.
+함수 호출 ID·도구 응답·암호화된 추론 상태를 실행 메모리에서 연결하며 `store=false`입니다.
+추론 원문은 답변·로그에 넣지 않습니다. 이전 모델의 Chat Completions 경로는 유지합니다.
+GPT-5·o 계열은 기존 `max_completion_tokens`·`AI_REASONING_EFFORT`를 전송하고
+`temperature`를 보내지 않습니다. 일반 모델은 기존 `max_tokens`·`temperature`를 사용합니다.
+
 ## 설정과 사용량
 
 설정 우선순위는 `ai/.env` → 셸 환경변수 → 기본값입니다. 실제 비밀값은 저장소나 로그에 남기지 않습니다.
 
+2026-11-27 검증 실행과 `.env.example`은 `OPENAI_MODEL=gpt-6-luna`,
+`OPENAI_REASONING_EFFORT=low`를 사용합니다. 배포 환경에도 두 값을 명시해야 하며,
+설정이 없는 기존 실행의 기본 모델은 호환성을 위해 아래와 같이 유지합니다.
+Luna의 출력 상한·사용량에는 추론 토큰이 포함됩니다. JSON이 문법상 유효해도 제공자가 출력 한도로
+미완료 처리한 결과는 `ModelOutputLimitError`로 거부합니다.
+추론 설정은 모델 계열별로 분리되어 있습니다. `OPENAI_REASONING_EFFORT`는 GPT-6 Responses에,
+`AI_REASONING_EFFORT`는 GPT-5·o 계열 Chat Completions에만 적용됩니다. 서로의 별칭이나
+대체값이 아니며, 텍스트·VLM 호출마다 실제 선택한 모델을 기준으로 적용합니다.
+기존 `AI_REASONING_EFFORT=none` 설정을 유지해도 Luna의 기본 추론 `low`를 덮어쓰지 않습니다.
+추론 수준의 지원 여부는 선택한 제공자 모델에 따릅니다.
+
 | 설정 | 기본값 | 의미 |
 |---|---|---|
 | `OPENAI_MODEL` | `gpt-4o-mini` | 공통 텍스트 모델 |
+| `OPENAI_REASONING_EFFORT` | `low` | GPT-6 Responses 추론 수준 |
+| `AI_REASONING_EFFORT` | `none` | GPT-5·o 계열 Chat Completions의 기존 추론 수준 |
 | `AI_TIMEOUT_SECONDS` / `AI_MAX_RETRIES` | `30` / `0` | 호출 제한 시간·SDK 재시도 |
 | `AI_DAILY_CALL_LIMIT` | `30` | 한국 날짜 기준 프로세스 내 성공·실패 호출 수 상한 |
 | `AI_DB_SCHEMA` | `report` | 백엔드 보고서용 뷰 스키마 |
@@ -36,5 +55,6 @@ LangGraph는 자연어 조회의 해석·검사·실행·재시도 순서를 관
 - [통합 API·운영 경계](docs/integration.md)
 - [#62 변경 함수·호출 관계·검증 범위](docs/development/ai-issue-contract.md)
 - [기존 데모 기록](README_AI_REPORT.md)
+- [기획팀 업무 범위와 남은 Agent 도구](../docs/development/agent-capability-gaps.md)
 
 외부 패키지·실제 DB·모델 호출 없이 회귀 검증하려면 저장소 루트에서 `python3 -B ai/tests/test_stateless_runtime.py`를 실행합니다. 전체 pytest는 외부 패키지와 PostgreSQL이 필요하며 기존 fixture가 임시 서버·파일을 만들 수 있으므로 생성이 승인된 환경에서만 실행합니다.

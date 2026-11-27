@@ -30,7 +30,7 @@ test('HOME-06 keeps every cost category and child breakdown in server order',()=
  assert.deepEqual(bars[1].breakdown,input[1].breakdown)
  assert.equal(bars[2].start,130000000000)
  assert.equal(bars[2].end,bars[3].end)
- assert.match(waterfallStepDescription(bars[1]),/마케팅비용 · 차감 · 200억원 · 광고비 200억원/)
+ assert.match(waterfallStepDescription(bars[1]),/마케팅비용 · 차감 · 200\.00억원 · 광고비 200\.00억원/)
  assert.equal(input[1].amount,'20000000000')
 })
 test('HOME-06 does not cap the number of repeated COST steps',()=>{
