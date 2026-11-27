@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import logging
 from pathlib import PurePath
 
@@ -24,9 +25,30 @@ _EDIT_STATUS = {"edit": "EDIT", "clarify": "CLARIFY", "unknown": "CLARIFY", "ref
 NOT_AN_EDIT = "자료 편집 요청만 처리합니다. 데이터 조회는 자연어 질의를 이용해 주세요."
 
 
+def _flat_table(block: dict) -> dict:
+    """PDF 분석이 준 표는 table{rows, header_rows, header_spans} 안에 있다. 채우기는 블록 바로 아래의 rows·header_rows·header_spans 를 읽으므로 펼쳐 준다(이미 펼친 블록은 그대로)."""
+    table = block.get("table")
+    if block.get("kind") != "table" or not isinstance(table, dict) or "rows" in block:
+        return block
+    return {**block, "rows": table.get("rows") or [], "header_rows": table.get("header_rows"), "header_spans": table.get("header_spans")}
+
+
+_ORIG_MONTH = re.compile(r"'(\d{2})\.(\d{1,2})월")
+
+
+def _orig_month(blocks: list[dict]) -> tuple[int, int] | None:
+    """틀이 만들어진 원래 기준 월(예: 제목의 '26.11월). 문장·제목에서 처음 보이는 '연.월 표기를 쓴다(데모와 같은 규칙). 없으면 None."""
+    for b in blocks:
+        m = _ORIG_MONTH.search(str(b.get("text") or ""))
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return None
+
+
 def data(base: dict, blocks: list[dict]) -> dict:
     from .pdf_structure import data_select
-    r = data_select.fill_report(base, blocks)
+    # 원래 월을 알려 주어야 선택한 기준 월로 날짜 표기('26.11월 등)가 바뀐다.
+    r = data_select.fill_report(base, [_flat_table(b) for b in blocks], _orig_month(blocks))
     status = _STATE.get(r.get("state") or "", "NONE") if r.get("version") else "NONE"
     return {"dataStatus": status, "blocks": r.get("blocks", [])}
 
@@ -53,8 +75,10 @@ def edit(definition: dict, instruction: str) -> dict:
     blocks = [{**b, "label": b.get("label") or b.get("title") or b.get("text") or b.get("kind")} for b in definition.get("blocks", [])]
     base = _base_of(definition) or {}
     r = chat_edit.interpret(instruction, base, blocks)
+    if r["status"] == "answer":                            # 데이터를 묻는 말은 쌓인 데이터로 답한다(글 + 표). 보고서는 바꾸지 않는다
+        return {"status": "ANSWER", "message": r.get("message"), "proposals": [], "table": r.get("table")}
     status = _EDIT_STATUS.get(r["status"])
-    if status is None:                                     # 조회 답변(answer·not_found 등)은 편집이 아니다
+    if status is None:                                     # 그 밖의 상태는 편집도 답변도 아니다
         return {"status": "REFUSED", "message": NOT_AN_EDIT, "proposals": []}
     notes = r.get("notes") or []
     proposals = []

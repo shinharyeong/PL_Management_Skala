@@ -57,3 +57,17 @@ def test_errors_and_bad_json_are_raised_unchanged(monkeypatch):
     monkeypatch.setattr(openai_client, "make_client", lambda s: bad)
     with pytest.raises(json.JSONDecodeError):
         llm.ask_json(get_settings(), "s", "u", max_tokens=5)
+
+
+def test_reasoning_models_use_max_completion_tokens_and_no_temperature(monkeypatch):
+    """gpt-6-luna 같은 추론 모델은 max_tokens·temperature 를 받지 않는다(받으면 400). 일반 모델은 그대로 둔다."""
+    assert llm.is_reasoning_model("gpt-6-luna") and llm.is_reasoning_model("gpt-5.4-mini") and llm.is_reasoning_model("o3")
+    assert not llm.is_reasoning_model("gpt-4o-mini") and not llm.is_reasoning_model("gpt-4.1") and not llm.is_reasoning_model("gpt-x")
+
+    c = _Client({"ok": 1})
+    monkeypatch.setattr(openai_client, "make_client", lambda s: c)
+    r = llm.ask_json(get_settings(), "시스템", "질문", max_tokens=77, temperature=0.2, model="gpt-6-luna")
+    assert r.data == {"ok": 1}
+    call = c.calls[0]
+    assert call["model"] == "gpt-6-luna" and call["max_completion_tokens"] == 77 and call["reasoning_effort"] == "none"
+    assert "max_tokens" not in call and "temperature" not in call and call["response_format"] == {"type": "json_object"}

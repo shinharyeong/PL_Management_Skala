@@ -26,6 +26,32 @@ def test_data_fills_blocks_with_view_values_and_status():
     assert client.post("/v1/data", json={"base": {"year": 2034, "month": 7}, "blocks": [{"kind": "title"}]}).status_code == 422
 
 
+def test_data_fills_a_table_block_that_keeps_its_rows_inside_table():
+    """PDF 분석 정의의 표(table 안에 rows)와 펼친 표(rows 가 블록 바로 아래)는 같은 결과를 채운다."""
+    _seed_report_db()
+    rows = [[{"type": "text", "text": "(단위: 억원)"}, {"type": "text", "text": "'34.7월"}, {"type": "text", "text": "계획"}],
+            [{"type": "text", "text": "매출"}, {"type": "number"}, {"type": "number"}],
+            [{"type": "text", "text": "영업이익"}, {"type": "number"}, {"type": "number"}]]
+    nested = {"id": "t1", "kind": "table", "table": {"columns": 3, "header_rows": 1, "rows": rows}}
+    flat = {"id": "t1", "kind": "table", "rows": rows, "header_rows": 1}
+    base = {"year": 2034, "month": 7}
+    a = client.post("/v1/data", json={"base": base, "blocks": [nested]}).json()["blocks"][0]
+    b = client.post("/v1/data", json={"base": base, "blocks": [flat]}).json()["blocks"][0]
+    assert len(a["rows"]) == 3 and a["rows"] == b["rows"] and a["header_rows"] == 1
+
+
+def test_data_moves_the_dates_written_in_the_template_to_the_chosen_base_month():
+    """양식에 '34.7월 로 적힌 날짜는 기준 월을 6월로 고르면 '34.6월 로 바뀐다. 원래 월을 알 수 없으면 그대로 둔다."""
+    _seed_report_db()
+    blocks = [{"id": "t1", "kind": "title", "text": "'34.7월 전사 실적 보고", "level": 1}, {"id": "p1", "kind": "paragraph", "text": "7월은 계획 대비 좋았습니다."}]
+    out = client.post("/v1/data", json={"base": {"year": 2034, "month": 6}, "blocks": blocks}).json()["blocks"]
+    assert out[0]["text"] == "'34.6월 전사 실적 보고" and "6월은" in out[1]["text"]
+    same = client.post("/v1/data", json={"base": {"year": 2034, "month": 7}, "blocks": blocks}).json()["blocks"]
+    assert same[0]["text"] == "'34.7월 전사 실적 보고"
+    unknown = client.post("/v1/data", json={"base": {"year": 2034, "month": 6}, "blocks": [{"id": "p1", "kind": "paragraph", "text": "7월은 좋았습니다."}]}).json()["blocks"]
+    assert "7월은" in unknown[0]["text"]
+
+
 def test_edit_returns_proposals_and_refuses_number_changes_and_queries(monkeypatch):
     _seed_report_db()
     c = _AiClient({"intent": "edit", "edits": [{"op": "remove_block", "target": {"id": "b3"}}]})
@@ -37,8 +63,23 @@ def test_edit_returns_proposals_and_refuses_number_changes_and_queries(monkeypat
     assert r["status"] == "REFUSED" and r["proposals"] == []
     c2 = _AiClient({"intent": "query", "query": {"type": "value", "metric": "영업이익", "month": 7}})
     monkeypatch.setattr(openai_client, "make_client", lambda s: c2)
-    r = client.post("/v1/edit", json={"definition": DEF, "instruction": "7월 전사 영업이익"}).json()                # 조회는 편집이 아님
-    assert r["status"] == "REFUSED" and r["message"] == contract.NOT_AN_EDIT
+    r = client.post("/v1/edit", json={"definition": DEF, "instruction": "7월 전사 영업이익"}).json()                # 조회는 쌓인 데이터로 답한다(보고서는 바꾸지 않음)
+    assert r["status"] == "ANSWER" and r["proposals"] == [] and r["message"] and r["message"] != contract.NOT_AN_EDIT
+
+
+def test_edit_chat_answers_org_plan_gap_question_with_a_table(monkeypatch):
+    """"계획 대비 차이가 큰 조직"은 실적 순위가 아니라 (실적 − 계획) 차이가 큰 순의 표로 답한다."""
+    _seed_report_db()
+    c = _AiClient({"intent": "query", "query": {"type": "org_plan_gap", "metric": "영업이익", "month": 7}})
+    monkeypatch.setattr(openai_client, "make_client", lambda s: c)
+    r = client.post("/v1/edit", json={"definition": DEF, "instruction": "계획 대비 영업이익 차이가 큰 조직을 알려줘"}).json()
+    assert r["status"] == "ANSWER" and r["proposals"] == []
+    if r.get("table"):
+        assert r["table"]["headers"][-1] == "계획 대비 차이(억원)" and len(r["table"]["headers"]) == 5
+        gaps = [float(row[-1].replace("△", "-").replace("+", "").replace(",", "")) for row in r["table"]["rows"]]
+        assert [abs(g) for g in gaps] == sorted((abs(g) for g in gaps), reverse=True)
+    else:
+        assert "데이터 없음" in r["message"]
 
 
 def test_pdf_job_accepts_then_reports_a_draft_template(monkeypatch):

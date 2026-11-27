@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import ReportDataTable from './ReportDataTable.vue'
 import ReportChart from './ReportChart.vue'
 import { reportCell, reportRows } from '../prototype/report-api.js'
@@ -16,13 +16,14 @@ const props = defineProps({
   busy: { type: Boolean, default: false },
   canUndo: { type: Boolean, default: false },
   editResult: { type: Object, default: null },
+  preview: { type: Array, default: () => [] },
   saved: { type: Object, default: null },
   dirty: { type: Boolean, default: false },
 })
 const emit = defineEmits(['back', 'fill', 'undo', 'png', 'print', 'save', 'xlsx', 'reorder', 'remove', 'add', 'edit', 'accept', 'dismiss', 'edited'])
 
 const selected = ref(null), editing = ref(null), highlight = ref(true)
-const dragId = ref(null), dropMark = ref(null), docEl = ref(null), message = ref(''), sent = ref([])
+const dragId = ref(null), dropMark = ref(null), docEl = ref(null), message = ref('')
 const addKind = ref('metric_table'), addMetric = ref('영업이익')
 const kinds = [{ label: '손익 표', value: 'metric_table' }, { label: '조직별 차트', value: 'chart' }, { label: '숫자 카드', value: 'numbercard' }, { label: '문장', value: 'paragraph' }]
 const hints = ['영업이익 차트를 추가해 줘', '맨 앞에 제목 문장을 넣어 줘']
@@ -74,10 +75,28 @@ function resizeStart(event, block) {
   target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up)
 }
 
+/* 대화 기록: 내가 보낸 말과 AI 답(글·표·차트 미리보기·적용 버튼)을 순서대로 쌓는다. */
+const thread = ref([]), threadBox = ref(null)
+const lastPending = computed(() => { const last = [...thread.value].reverse().find(entry => entry.role === 'ai'); return last?.pending ? last : null })
+watch(() => props.editResult, value => {
+  if (!value) return
+  thread.value.push({ role: 'ai', status: value.status, message: value.message, table: value.table || null, preview: props.preview.map(p => ({ block: p.block, result: p.result })), pending: value.status === 'EDIT' && !!value.proposals?.length, proposals: value.proposals || [] })
+})
+watch(() => thread.value.length, async () => { await nextTick(); if (threadBox.value) threadBox.value.scrollTop = threadBox.value.scrollHeight })
+function applyPending() { const entry = lastPending.value; if (entry) { entry.pending = false; entry.applied = true } emit('accept') }
+function cancelPending() { const entry = lastPending.value; if (entry) { entry.pending = false; entry.cancelled = true } emit('dismiss') }
+/* 블록이 새로 생기면(AI 편집안 적용) 그 블록을 고르고 화면에 보이게 한다. */
+watch(() => props.definition.blocks.map(block => block.id), async (now, before) => {
+  const added = now.find(id => !before.includes(id))
+  if (!added || now.length <= before.length) return
+  selected.value = added
+  await nextTick()
+  docEl.value?.querySelector(`[data-bid="${added}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+})
 function send(text) {
   const value = String(text ?? message.value).trim()
   if (!value || props.busy) return
-  sent.value = [...sent.value, value]; message.value = ''
+  thread.value.push({ role: 'me', text: value }); message.value = ''
   emit('edit', value)
 }
 </script>
@@ -117,7 +136,7 @@ function send(text) {
           <span>· 블록을 끌어 순서 바꾸기, 모서리를 끌어 크기 조절, 글자 블록은 더블클릭으로 직접 고치기</span></div>
         <div ref="docEl" class="rs-doc report-preview" :class="{ 'hl-off': !highlight }">
           <div v-if="!definition.blocks.length" class="rs-empty5" style="width:100%">블록이 없습니다. 아래에서 항목을 추가하세요.</div>
-          <article v-for="block in definition.blocks" :key="block.id" class="rs-rb" :class="[{ sel: selected === block.id, dragging: dragId === block.id, side: layoutWidth(block) < 100 }, markClass(block)]" :style="boxCss(block)"
+          <article v-for="block in definition.blocks" :key="block.id" :data-bid="block.id" class="rs-rb" :class="[{ sel: selected === block.id, dragging: dragId === block.id, side: layoutWidth(block) < 100 }, markClass(block)]" :style="boxCss(block)"
             @click.stop="pick(block)" @dblclick.stop="startEdit(block)" @dragover.prevent="dragOver($event, block)" @drop.prevent="drop" @dragend="dragId = null; dropMark = null">
             <span class="hd" draggable="true" title="끌어서 순서 바꾸기" aria-hidden="true" @dragstart="dragStart($event, block)">⋮⋮</span>
             <span class="bt"><button type="button" :disabled="busy" :aria-label="`${block.id} 빼기`" title="빼기" @click.stop="emit('remove', block.id)">✕</button></span>
@@ -150,16 +169,28 @@ function send(text) {
       <aside class="rs-panel rs-ai" aria-label="AI 편집 대화">
         <b>AI에게 요청</b>
         <div class="rs-chips"><button v-for="h in hints" :key="h" type="button" :disabled="busy" @click="send(h)">{{ h }}</button></div>
-        <div class="rs-aimsgs" aria-live="polite">
-          <div v-for="(text, i) in sent" :key="i" class="rs-aibox me">{{ text }}</div>
-          <div v-if="editResult" class="rs-aibox">
-            <div>{{ editResult.message }}</div>
-            <ul v-if="editResult.proposals?.length" style="margin:6px 0 0;padding-left:18px"><li v-for="(p, i) in editResult.proposals" :key="i">{{ p.description }}</li></ul>
-            <div class="rs-acts" style="margin-top:8px">
-              <button v-if="editResult.status === 'EDIT' && editResult.proposals?.length" type="button" class="rs-btn" style="height:32px" :disabled="busy" @click="emit('accept')">이 편집안 적용</button>
-              <button type="button" class="rs-btn ghost" style="height:32px" :disabled="busy" @click="emit('dismiss')">닫기</button>
+        <div ref="threadBox" class="rs-aimsgs" aria-live="polite">
+          <div v-if="!thread.length" class="rs-cap">데이터를 묻거나(예: “10월 영업비용이 가장 큰 항목 5개”) 차트를 추가해 달라고(예: “조직별 영업이익 막대그래프 추가”) 해 보세요.</div>
+          <template v-for="(entry, i) in thread" :key="i">
+            <div v-if="entry.role === 'me'" class="rs-aibox me">{{ entry.text }}</div>
+            <div v-else class="rs-aibox">
+              <div>{{ entry.message }}</div>
+              <div v-if="entry.table?.rows?.length" class="rs-scroll" style="margin-top:8px"><table class="rs-mini">
+                <thead><tr><th v-for="(h, hi) in entry.table.headers" :key="hi">{{ h?.text ?? h }}</th></tr></thead>
+                <tbody><tr v-for="(row, ri) in entry.table.rows" :key="ri"><td v-for="(cell, ci) in row" :key="ci">{{ cell?.text ?? cell }}</td></tr></tbody></table></div>
+              <div v-for="p in entry.preview" :key="p.block.id" style="margin-top:8px">
+                <ReportChart v-if="p.block.kind === 'chart' && Array.isArray(p.result?.rows)" :block="{ ...p.block, ...p.result }" />
+                <ReportDataTable v-else-if="p.result && reportRows(p.result).length" :data="p.result" />
+              </div>
+              <ul v-if="entry.proposals?.length" style="margin:6px 0 0;padding-left:18px"><li v-for="(p, pi) in entry.proposals" :key="pi">{{ p.description }}</li></ul>
+              <div v-if="entry.applied" class="rs-cap" style="margin-top:6px">보고서에 적용했습니다. 왼쪽 문서에서 확인하세요(“되돌리기”로 취소).</div>
+              <div v-else-if="entry.cancelled" class="rs-cap" style="margin-top:6px">적용하지 않았습니다.</div>
+              <div v-if="entry.pending && entry === lastPending" class="rs-acts" style="margin-top:8px">
+                <button type="button" class="rs-btn" style="height:32px" :disabled="busy" @click="applyPending">보고서에 적용</button>
+                <button type="button" class="rs-btn ghost" style="height:32px" :disabled="busy" @click="cancelPending">취소</button>
+              </div>
             </div>
-          </div>
+          </template>
         </div>
         <form class="rs-aiin" @submit.prevent="send()"><input v-model="message" maxlength="1000" placeholder="구성을 바꿀 요청을 입력" aria-label="AI 편집 요청" :disabled="busy" /><button type="submit" aria-label="보내기" :disabled="busy || !message.trim()">↑</button></form>
       </aside>
