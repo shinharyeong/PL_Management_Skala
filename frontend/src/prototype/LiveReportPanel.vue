@@ -22,7 +22,7 @@ const step = ref(0), busy = ref(false), error = ref(''), notice = ref('')
 const definition = ref(null), draftName = ref('새 경영 보고서'), templates = ref([]), cursor = ref(null), metrics = ref([])
 const saved = ref(null), savedContent = ref(''), job = ref(null), pageImages = ref([])
 const periods = ref(null), base = ref(seoulPeriod())
-const categories = ref([]), explanations = ref(null)
+const categories = ref([]), explanations = ref(null), editPreview = ref([])
 /** 3단계에서 고른 금액 단위 중 가장 많이 쓴 단위(없으면 억원). 4단계 소명 금액을 이 단위로 보여 준다. */
 const reportUnit = computed(() => {
   const count = {}
@@ -170,7 +170,7 @@ async function pollJob() {
  * Args: 없음. Returns: 없음. Raises: 없음.
  * Side Effects: 화면의 계산 결과·제안 초기화.
  */
-function invalidate() { results.value = null; editResult.value = null }
+function invalidate() { results.value = null; editResult.value = null; editPreview.value = [] }
 
 /** 확인이 필요한 추출 블록을 사용자가 확인했음을 반영한다.
  * Args: block 확인할 블록. Returns: 없음. Raises: 없음.
@@ -337,7 +337,17 @@ async function requestEdit() {
   editSource.value = JSON.stringify(definition.value)
   const value = reportDefinition(definition.value)
   value.baseRule = { mode: 'fixed', ...base.value }
-  editResult.value = await reportRequest(api, 'edit', { definition: value, instruction: instruction.value.trim() })
+  const reply = await reportRequest(api, 'edit', { definition: value, instruction: instruction.value.trim() })
+  editPreview.value = []
+  if (reply.status === 'EDIT' && reply.proposals?.some(p => p.op === 'add_block')) {   // 추가될 차트·표를 채팅 안에서 미리 보여 준다(값은 코드가 계산한 데이터)
+    const ids = new Set(value.blocks.map(block => block.id))
+    const added = applyReportProposals(value, reply.proposals).blocks.filter(block => !ids.has(block.id))
+    if (added.length) {
+      const data = await reportRequest(api, 'data', { base: { ...base.value }, blocks: added })
+      editPreview.value = added.map(block => ({ block, result: data.blocks?.find(item => item.id === block.id) || null }))
+    }
+  }
+  editResult.value = reply
 }
 
 /** 확인한 AI 편집안을 적용하고 데이터 미리보기를 다시 만든다.
@@ -466,7 +476,7 @@ function goto(next) {
             @classify="(item, id) => run(() => classify(item, id))" @load="run(loadExplanations)" />
         </template>
 
-        <ReportStudio v-else :definition="definition" :results="results" :base="base" :busy="busy" :canUndo="!!undo" :editResult="editResult" :saved="saved" :dirty="!!dirty"
+        <ReportStudio v-else :definition="definition" :results="results" :base="base" :busy="busy" :canUndo="!!undo" :editResult="editResult" :preview="editPreview" :saved="saved" :dirty="!!dirty"
           @back="goto(3)" @fill="run(fill)" @undo="undoEdit" @png="run(exportPng)" @print="run(printReport)" @save="run(saveTemplate)" @xlsx="run(exportExcel)"
           @reorder="definition.blocks = $event" @edited="invalidate" @remove="changeBlock($event, 'remove')" @add="addedKind = $event.kind; addedMetric = $event.metric; addBlock()"
           @edit="instruction = $event; run(requestEdit)" @accept="run(acceptEdit)" @dismiss="editResult = null" />

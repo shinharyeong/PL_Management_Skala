@@ -2,6 +2,7 @@ package io.skala.backend.domain.decisionagent.service;
 
 import static io.skala.backend.domain.decisionagent.dto.DecisionAgentDtos.*;
 import static io.skala.backend.domain.decisionagent.dto.DecisionAssistantDtos.*;
+import static io.skala.backend.domain.decisionagent.dto.DecisionResearchDtos.*;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -140,6 +141,73 @@ class DecisionAssistantTest {
         assertThat(data.at("/summary/missingOrganizationIds/0").textValue()).isEqualTo("4");
         assertThat(data.toString()).doesNotContain("OUTSIDE");
         assertThat(call("organization_pnl", Map.of("organizationId", "2")).data().get("columns")).hasSize(1);
+    }
+
+    /** 목적: 월간 도구가 연간 서비스를 혼용하지 않고 고정 기준월·전체 합계와 조직 범위를 구분한다. Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: mock 조회·메모리 원장만. */
+    @Test
+    void readsFixedMonthlyActualsWithoutChangingAnnualReportScope() {
+        when(home.pnl(actor, "MONTH", 2026, 11, 3L)).thenReturn(new HomePnlResponse("CONFIRMED",
+                List.of(new HomePnlResponse.Kpi("OP", "70", null, "-5")), List.of(), null));
+        when(home.divisions(actor, "MONTH", 2026, 11, 3L)).thenReturn(new HomeDivisionsResponse("CONFIRMED", List.of(
+                new HomeDivisionsResponse.Column(new OrganizationRef("1", "A", "A사업부"), "100", "70", null, null, "-5"),
+                new HomeDivisionsResponse.Column(new OrganizationRef("99", "OUTSIDE", "범위 밖"), "50", "20", null, null, "2")),
+                new HomeDivisionsResponse.Total("150", "90", null, "-3")));
+        Observation observation = call("monthly_pnl", Map.of("organizationId", "1"));
+        var data = observation.data();
+        assertThat(observation.status()).isEqualTo("SUCCESS");
+        assertThat(data.path("period").textValue()).isEqualTo("MONTH");
+        assertThat(data.path("year").intValue()).isEqualTo(2026); assertThat(data.path("month").intValue()).isEqualTo(11);
+        assertThat(data.at("/company/kpis/0/actual").textValue()).isEqualTo("70");
+        assertThat(data.path("companyScope").textValue()).isEqualTo("ALL_MASTER_ORGANIZATIONS");
+        assertThat(data.at("/organizations/columns")).hasSize(1);
+        assertThat(data.at("/organizations/total/op").textValue()).isEqualTo("90");
+        assertThat(data.at("/organizations/summary/rankedByOpPlanDifference/0/planDifferenceWon").textValue()).isEqualTo("-5");
+        assertThat(data.toString()).doesNotContain("OUTSIDE");
+        verify(home, never()).pnl(actor, "YEAR", 2026, 11, 3L); verify(home, never()).divisions(actor, "YEAR", 2026, 11, 3L);
+        assertThat(call("monthly_pnl", Map.of("organizationId", "99")).status()).isEqualTo("ERROR");
+        for (String key : List.of("month", "year", "masterId", "period"))
+            assertThatThrownBy(() -> tools.normalize("monthly_pnl", json.tree(Map.of(key, "1")))).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /** 목적: 항목 상세가 고정 조직·보고 항목만 공개하고 전역 상한·결측 계획·서로 다른 계획 기준을 보존한다. Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: mock 조회·메모리 원장만. */
+    @Test
+    void filtersReportItemEvidenceWithoutClaimingCompleteAccountCoverage() {
+        List<Evidence> evidence = new ArrayList<>();
+        for (int index = 0; index < 100; index++) {
+            Map<String, Object> facts = new LinkedHashMap<>(); facts.put("reportItemId", String.valueOf(index + 1));
+            facts.put("kind", "COST"); facts.put("forecastWon", "70.123456"); facts.put("planWon", null);
+            facts.put("varianceWon", null); facts.put("profitImpactWon", null); facts.put("sourceSubmissionIds", List.of("20"));
+            facts.put("comparison", "SAME_SUBMISSION_PLAN_VS_ANNUAL_OUTLOOK");
+            evidence.add(new Evidence("pnl-" + index, "PNL", index == 0 ? "99" : "1", "합성 항목", "계획 비교는 미확인입니다.", facts));
+        }
+        evidence.add(new Evidence("proof-1", "APPROVED_EXPLANATION", "1", "승인 소명", "별도 도구 자료", Map.of()));
+        when(research.loadEvidence(snapshot())).thenReturn(evidence);
+        var data = call("report_item_breakdown", Map.of("organizationId", "1", "limit", 2)).data();
+        assertThat(data.path("comparison").textValue()).isEqualTo("SAME_SUBMISSION_PLAN_VS_ANNUAL_OUTLOOK");
+        assertThat(data.path("availableCount").intValue()).isEqualTo(99);
+        assertThat(data.path("sourceLimit").intValue()).isEqualTo(100); assertThat(data.path("sourceLimitMayApply").booleanValue()).isTrue();
+        assertThat(data.path("items")).hasSize(2); assertThat(data.at("/items/0/facts/planWon").isNull()).isTrue();
+        assertThat(data.at("/items/0/facts/forecastWon").textValue()).isEqualTo("70.123456");
+        assertThat(data.toString()).doesNotContain("APPROVED_EXPLANATION", "pnl-0");
+        var filtered = call("report_item_breakdown", Map.of("reportItemId", "7")).data();
+        assertThat(filtered.path("items")).hasSize(1); assertThat(filtered.at("/items/0/facts/reportItemId").textValue()).isEqualTo("7");
+        assertThat(call("report_item_breakdown", Map.of("organizationId", "99")).status()).isEqualTo("ERROR");
+        verify(research, never()).capture(any()); verify(analyses, never()).create(anyLong(), any());
+        for (Object limit : List.of(0, 51, "2", 1.5))
+            assertThatThrownBy(() -> tools.normalize("report_item_breakdown", json.tree(Map.of("limit", limit)))).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> tools.normalize("report_item_breakdown", json.tree(Map.of("reportItemId", "../1")))).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /** 목적: 저장 분석의 최초 항목 근거가 있으면 현재 자료를 섞거나 조사 저장을 새로 수행하지 않는다. Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: mock 조회·메모리 원장만. */
+    @Test
+    void reusesCapturedReportItemEvidenceWithoutNewResearchWrite() {
+        selectAnalysis();
+        var evidence = new Evidence("pnl-1-7", "PNL", "1", "합성 항목", "저장한 근거", Map.of("reportItemId", "7", "forecastWon", "80"));
+        when(research.find("5")).thenReturn(new Research("5", 2, now, List.of(evidence), null));
+        var data = call("report_item_breakdown", Map.of()).data();
+        assertThat(data.at("/items/0/text").textValue()).isEqualTo("저장한 근거");
+        assertThat(data.path("capturedAt").isNull()).isFalse(); assertThat(data.path("sourceLimitMayApply").booleanValue()).isFalse();
+        verify(research, never()).loadEvidence(any()); verify(research, never()).capture(any());
     }
 
     /** 목적: 저장 분석 없이 억원 목표를 정확한 원으로 바꾸고 전망 초과액을 실적 달성과 구분한다. Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: mock 조회와 메모리 원장만. */
@@ -354,6 +422,54 @@ class DecisionAssistantTest {
                 "전사 조직별 손익은 선택 기준을 따릅니다.", "이 조건을 바탕으로 근거를 확인해 주세요.", "회사 조직의 손익을 확인해 주세요.")) {
             Response result = validator.validate(proposed("-15000000000").put("answer", answer), gateway.require(token));
             assertThat(result.answer()).as(answer).isEqualTo(answer);
+        }
+    }
+
+    /** 목적: 조사·의존 명사를 금액으로 오인하지 않으면서 구·신규 답변에서 실제 한글 금액을 차단한다. Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 메모리 원장·mock 조회만. */
+    @Test
+    void distinguishesKoreanParticlesFromAmountsInLegacyAndBriefResponses() {
+        token = gateway.grant(actor, snapshot(), null, "손익을 확인해 줘"); call("company_pnl", Map.of());
+        for (String description : List.of("현재 전망과 목표의 차이만 확인했습니다.", "전사만 조회했습니다.",
+                "주어진 변수만 확인했습니다.", "확인된 자료에서 알 수만 있습니다.", "이만 정리하겠습니다.")) {
+            assertThat(validator.validate(proposed("-15000000000").put("answer", description), gateway.require(token)).answer()).isEqualTo(description);
+            ObjectNode brief = proposedBrief(); brief.put("answer", description);
+            ((ObjectNode) brief.get("brief")).put("summary", description);
+            ((ObjectNode) brief.at("/brief/findings/0")).put("text", description);
+            assertThat(validator.validate(brief, gateway.require(token)).brief().summary()).isEqualTo(description);
+        }
+        for (String description : List.of("이만 원이 필요합니다.", "수만 원 규모입니다.", "삼십만 원이 필요합니다.",
+                "수십만 규모입니다.", "비용이삼십억증가", "이 조 원 규모입니다.", "영업이익은 35억입니다.", "비율은 ½입니다.")) {
+            assertThatThrownBy(() -> validator.validate(proposed("-15000000000").put("answer", description), gateway.require(token)))
+                    .as(description).isInstanceOf(IllegalArgumentException.class);
+            ObjectNode brief = proposedBrief(); brief.put("answer", description);
+            ((ObjectNode) brief.get("brief")).put("summary", description);
+            assertThatThrownBy(() -> validator.validate(brief, gateway.require(token))).as(description).isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    /** 목적: 제한·실패 종료에서도 검증된 설명과 미해결 요구를 보존하되 실제 원장·근거 조건을 완화하지 않는다. Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 메모리 원장·mock 조회만. */
+    @Test
+    void preservesGroundedPartialBriefWithoutMarkingUnresolvedRequirementsComplete() {
+        token = gateway.grant(actor, snapshot(), null, "손익을 확인해 줘"); call("company_pnl", Map.of());
+        for (String status : List.of("LIMIT_REACHED", "FAILED")) {
+            ObjectNode proposed = proposedBrief(); proposed.put("status", status);
+            String notice = "시스템 안내: 최종 요약의 표현 검증을 마치지 못해, 검증을 통과한 개별 설명만 부분 결과로 표시합니다.";
+            proposed.put("answer", notice); ((ObjectNode) proposed.get("brief")).put("summary", notice);
+            Response answeredPartial = validator.validate(proposed, gateway.require(token));
+            assertThat(answeredPartial.status()).isEqualTo(status);
+            assertThat(answeredPartial.brief().requirements().getFirst().status()).isEqualTo("ANSWERED");
+            var requirement = (ObjectNode) proposed.at("/brief/requirements/0");
+            requirement.put("status", "NEEDS_INPUT").put("missingInformation", "설명 검토가 완료되지 않았습니다.")
+                    .put("followUpQuestion", "현재 조회 자료에서 우선 확인할 항목을 알려 주세요.");
+            Response partial = validator.validate(proposed, gateway.require(token));
+            assertThat(partial.status()).isEqualTo(status);
+            assertThat(partial.brief().findings()).hasSize(1);
+            assertThat(partial.brief().requirements().getFirst().status()).isEqualTo("NEEDS_INPUT");
+            assertThat(partial.observations()).containsExactlyElementsOf(gateway.require(token).observations);
+            proposed.put("status", "COMPLETED");
+            assertThatThrownBy(() -> validator.validate(proposed, gateway.require(token))).isInstanceOf(IllegalArgumentException.class);
+            proposed.put("status", status); proposed.putArray("observations");
+            assertThatThrownBy(() -> validator.validate(proposed, gateway.require(token))).isInstanceOf(IllegalArgumentException.class);
         }
     }
 

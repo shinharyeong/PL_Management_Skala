@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { analysisBrief, answerActions, answerCitations, askAssistant, assistantPayload, assistantStatusLabel, canStartGoalPreview, citationValue, conversationHistory, conversationKey, goalPreviewQuestion, observationCell, observationExplanations, observationForExecution, observationTables, reviewDraftSource, successfulObservations, validateAssistantResponse } from './decision-conversation-api.js'
+import { analysisBrief, answerActions, answerCitations, askAssistant, assistantCoverageLabel, assistantExecutionSummary, assistantIncompleteReason, assistantPayload, assistantStatusLabel, canStartGoalPreview, citationValue, conversationHistory, conversationKey, goalPreviewQuestion, observationCell, observationExplanations, observationForExecution, observationTables, reviewDraftSource, successfulObservations, validateAssistantResponse } from './decision-conversation-api.js'
 
 /** 같은 UNAVAILABLE라도 실행 한도와 응답 중단을 구분하고 원인 안내·실제 관찰을 보존한다.
  * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 메모리 응답만 검사한다.
@@ -8,8 +8,8 @@ import { analysisBrief, answerActions, answerCitations, askAssistant, assistantP
 test('failure labels distinguish execution limits without replacing the server cause or successful evidence', function failureStatusLabels() {
   const payload = assistantPayload('101', null, '계획 차이 확인')
   const cases = [
-    { mode: 'UNAVAILABLE', status: 'LIMIT_REACHED', answer: '모델의 일일 호출 한도에 도달했습니다.', label: '실행 한도 도달' },
-    { mode: 'MODEL', status: 'LIMIT_REACHED', answer: '실행 시간이 소진되었습니다.', label: '실행 한도 도달' },
+    { mode: 'UNAVAILABLE', status: 'LIMIT_REACHED', answer: '모델의 일일 호출 한도에 도달했습니다.', label: '답변 처리 한도 도달' },
+    { mode: 'MODEL', status: 'LIMIT_REACHED', answer: '실행 시간이 소진되었습니다.', label: '답변 처리 한도 도달' },
     { mode: 'UNAVAILABLE', status: 'FAILED', answer: '모델 응답 대기 시간이 초과되었습니다.', label: '답변 생성 중단' },
     { mode: 'UNAVAILABLE', status: 'FAILED', answer: '모델이 설정되지 않았습니다.', label: '답변 생성 중단' },
     { mode: 'MODEL', status: 'FAILED', answer: '업무 자료 조회를 완료하지 못했습니다.', label: '조회·답변 처리 실패' },
@@ -25,6 +25,28 @@ test('failure labels distinguish execution limits without replacing the server c
   assert.equal(assistantStatusLabel({ mode: 'MODEL', status: 'COMPLETED', brief: {} }), '요청 항목 확인 완료')
   assert.equal(assistantStatusLabel({ mode: 'MODEL', status: 'COMPLETED' }), '근거 조회 완료')
   assert.equal(assistantStatusLabel({ mode: 'MODEL', status: 'NEEDS_INPUT' }), '추가 정보 필요')
+})
+
+/** 조회 성공과 부분 분석을 보존하되 원인을 추측하거나 전체 완료로 표시하지 않는다.
+ * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 응답만 메모리에서 검사한다.
+ */
+test('partial analysis keeps its server reason and distinguishes lookup success from answer completion', function partialAnalysisStatus() {
+  const response = groundedResponse()
+  response.status = 'LIMIT_REACHED'
+  response.answer = '시스템 안내: 최종 요약의 표현 검증을 마치지 못했습니다.'
+  response.brief.requirements = [response.brief.requirements[0]]
+  const brief = analysisBrief(response)
+  assert.equal(brief.answeredCount, 1)
+  assert.equal(assistantCoverageLabel(response, brief), '부분 검증 1 / 1개 · 전체 답변 미완료')
+  assert.equal(assistantExecutionSummary(response), '조회 성공 1건 · 답변 미완료')
+  assert.equal(assistantIncompleteReason(response), response.answer)
+  assert.equal(assistantStatusLabel(response), '답변 처리 한도 도달')
+  const unavailable = { ...response, mode: 'UNAVAILABLE', status: 'FAILED', observations: [], brief: null, answer: '모델 서비스를 사용할 수 없습니다.' }
+  assert.equal(assistantExecutionSummary(unavailable), '조회 성공 0건 · 답변 미완료')
+  assert.equal(assistantIncompleteReason(unavailable), unavailable.answer)
+  assert.equal(assistantIncompleteReason({ ...response, status: 'COMPLETED' }), null)
+  assert.equal(assistantExecutionSummary({ ...response, status: 'COMPLETED' }), '조회 성공 1건 · 답변 완료')
+  assert.equal(assistantExecutionSummary({ ...response, status: 'NEEDS_INPUT' }), '조회 성공 1건 · 추가 확인 필요')
 })
 
 /** 실제 근거 연결과 미해결 요구 항목을 가진 합성 응답을 만든다.
@@ -242,6 +264,40 @@ test('compact company and organization summaries retain server meaning and missi
   const org = observationTables({ tool: 'organization_pnl', data: { summary: { rankedByOpPlanDifference: [row] }, columns: [], total: {} } })
   assert.deepEqual(org[0].table.rows[0].slice(0, 6), ['A', '5억 원', '+1억 원', '증가', '유리', '아니요'])
   assert.ok(!org[0].table.columns.includes('순위'))
+})
+
+/** 월간 실적은 별도 기간 제목과 인용 단위로 표시하며 연간 전망으로 오인하지 않는다.
+ * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 관찰만 검사한다.
+ */
+test('monthly tool renders precise monthly values and citations with explicit period', function monthlyTables() {
+  const metric = { key: 'OP', actualWon: '100000000.123456', planDifferenceWon: '-20000000', direction: 'DECREASE', favorability: 'UNFAVORABLE', missing: false }
+  const observation = { id: 'month', tool: 'monthly_pnl', label: '월간 손익', status: 'SUCCESS', data: { period: 'MONTH', unit: 'KRW', company: { summary: { metrics: [metric] } }, organizations: { summary: { rankedByOpPlanDifference: [{ ...metric, organization: { name: '합성 조직' } }] } } } }
+  const before = JSON.stringify(observation), tables = observationTables(observation)
+  assert.equal(tables.length, 2)
+  assert.match(tables[0].label, /해당 월/)
+  assert.ok(tables[0].table.columns.includes('해당 월 실적'))
+  assert.ok(!tables[0].table.columns.includes('현재 연간 전망'))
+  assert.ok(tables[0].table.rows[0].includes('1.00000000123456억 원'))
+  assert.match(tables[1].orderNote, /영업이익 실적 − 계획/)
+  const citations = answerCitations({ observations: [observation], citations: [{ observationId: 'month', path: '/data/company/summary/metrics/0/actualWon', quote: metric.actualWon }] })
+  assert.equal(citations[0].field, '해당 월 실적')
+  assert.equal(citations[0].displayQuote, '1.00000000123456억 원')
+  assert.deepEqual(observationTables({ ...observation, data: { ...observation.data, period: 'YEAR' } }), [])
+  assert.equal(JSON.stringify(observation), before)
+})
+
+/** 상세 항목의 계획 기준·원천 상한과 정밀 금액을 표시하며 개선 가능액으로 부르지 않는다.
+ * Args: 없음. Returns: 없음. Raises: 검증 실패. Side Effects: 합성 관찰만 검사한다.
+ */
+test('report item breakdown displays exact amounts with its same submission plan limitation', function itemBreakdownTables() {
+  const data = { period: 'YEAR', unit: 'KRW', sourceLimitMayApply: true, items: [{ label: '합성 비용', organizationId: 'synthetic', text: '동일 제출본의 비용 비교', facts: { forecastWon: '9007199254740993.123456', planWon: '9007199254740993.123455', varianceWon: '0.000001', profitImpactWon: '-0.000001' } }] }
+  const before = JSON.stringify(data), table = observationTables({ tool: 'report_item_breakdown', data })[0]
+  assert.ok(table.table.rows[0].includes('90,071,992.54740993123456억 원'))
+  assert.ok(table.table.rows[0].includes('-0.00000000000001억 원'))
+  assert.ok(table.table.columns.includes('같은 제출본의 계획'))
+  assert.match(table.orderNote, /별도 확정 계획 마스터 대비 차이와 같다고 볼 수 없/)
+  assert.match(table.orderNote, /조회 상한/)
+  assert.equal(JSON.stringify(data), before)
 })
 
 /** 소명 본문과 목표 전망 비교가 숫자 창작·저장·달성 판단 없이 표시되는지 확인한다.

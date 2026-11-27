@@ -16,7 +16,6 @@ const dragId = ref(null), overBin = ref(null)
 const items = computed(() => props.explanations?.items || [])
 const loose = computed(() => items.value.filter(item => !item.categoryId))
 const inBin = id => items.value.filter(item => item.categoryId === id)
-const nameOf = id => props.categories.find(category => category.id === id)?.name || ''
 const money = value => eok(value, { sign: true, unit: props.unit })
 const tone = value => (Number(value) >= 0 ? 'rs-pos' : 'rs-neg')
 
@@ -43,10 +42,6 @@ function drop(categoryId) {
           @dragstart="start($event, item)" @dragend="dragId = null; overBin = null">
           <div class="r"><b>{{ item.organization?.name }} · {{ item.item }}</b><span :class="tone(item.gapAmount)" :title="`${item.gapAmount}원`">{{ money(item.gapAmount) }}</span></div>
           <div class="s">{{ item.answer }}</div>
-          <button v-if="item.suggestedCategoryId" type="button" class="dj" :disabled="busy" @click="emit('classify', item, item.suggestedCategoryId)">제안 분류 · {{ nameOf(item.suggestedCategoryId) }} 적용</button>
-          <div class="rs-row" style="margin-top:6px"><label :for="`rs-cat-${item.explanationId}`" class="rs-cap">사유 유형</label>
-            <select :id="`rs-cat-${item.explanationId}`" class="rs-input" style="width:auto;height:30px" :value="''" :disabled="busy" @change="$event.target.value && emit('classify', item, $event.target.value)">
-              <option value="">선택</option><option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option></select></div>
         </div>
         <div v-if="!loose.length" class="rs-hint">{{ items.length ? '모든 소명을 분류했습니다.' : '분류할 승인 소명이 없습니다.' }}</div>
         <template v-if="explanations.reviewing?.length">

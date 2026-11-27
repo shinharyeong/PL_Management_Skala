@@ -37,7 +37,7 @@ Spring capability에 호출 사용자·고정 snapshot·선택 analysis와 실�
 모든 반환은 최대 256KiB, 과다 자료는 명시적으로 제한/오류 처리하고 자동 파일로 저장하지 않는다.
 관찰 원장은 누적 192KiB 예산에서 오류 응답 여유를 확보하며 초과 자료는 작은 ERROR 관찰로 바꾼다.
 같은 호출의 오류도 캐시·실제 호출 예산에 포함한다. 선택 인자는 생략하고 null을 보내지 않는다.
-기본 limit은 profit_drivers=5, approved_explanations=10이며 candidateIds는 정렬·중복 거부한다.
+기본 limit은 profit_drivers=5, approved_explanations=10, report_item_breakdown=20이며 candidateIds는 정렬·중복 거부한다.
 금액·비율은 소수 JSON number 대신 정밀 문자열로 내보내고 파일·URL·stateToken을 제거한다.
 
 매 콜백과 최종 반환 전에 실제 사용자의 active·PLANNER 및 분석 소유권·revision을 재확인한다.
@@ -57,6 +57,8 @@ Tool 실행만 read-only 트랜잭션이며 AI HTTP 대기 동안 DB 연결·트
 | company_pnl | {} | HomePnlQueryService.pnl YEAR + 고정 master |
 | profit_drivers | {limit?:1..10} | HomePnlQueryService.opDrivers, 계획 대비 OP 차이이며 인과 원인이 아님 |
 | organization_pnl | {organizationId?:string} | HomePnlQueryService.divisions, 고정 조직만 서버 필터 |
+| monthly_pnl | {organizationId?:string} | 고정 기준월만 HomePnlQueryService.pnl/divisions MONTH로 조회. company와 organizations.total은 전사이며 organizations.columns/summary만 조직 필터. 연간 전망과 구분 |
+| report_item_breakdown | {organizationId?:string,reportItemId?:string,limit?:1..50} | 기존 저장 Research 또는 ResearchStore.loadEvidence의 PNL만 조직·보고 항목 필터. 동일 제출본 PLAN과 연간 전망 비교이며 확정 연간 계획·원천 계정 행과 구분 |
 | pnl_waterfall | {} | HomePnlQueryService.waterfall |
 | approved_explanations | {organizationId?:string,limit?:1..20} | 기존 고정 Research가 있으면 사용, 없으면 기존 ResearchStore의 읽기만 분리해 재사용. 최초 관찰 시점 명시 |
 | submission_versions | {organizationId:string} | ArchiveQueryService.versions, APPROVED·asOf 이전으로 필터, 파일/URL 제외 |
@@ -68,6 +70,29 @@ Tool 실행만 read-only 트랜잭션이며 AI HTTP 대기 동안 DB 연결·트
 | review_request_draft | {sourceKind:candidate 또는 hypothesis,sourceId:string} | 저장된 후보/가설만 확인하고 요청 작성 화면에 넘길 초안, 저장·발송 없음 |
 
 analysis가 필요한 도구에 analysis가 없으면 ERROR 및 분석 생성/선택 필요 안내.
+
+`monthly_pnl`은 `period=MONTH`, `year`, `month`, `unit=KRW`, `companyScope=ALL_MASTER_ORGANIZATIONS`,
+`selectedOrganizationId`, `company`, `organizations`를 반환한다. 연월은 고정 마스터에서 가져오며
+임의 월 변경 인자를 받지 않는다. 월간 값으로 기존 연간 목표·전망 표를 덮어쓰지 않는다.
+`report_item_breakdown`은 `comparison=SAME_SUBMISSION_PLAN_VS_ANNUAL_OUTLOOK`, `availableCount`,
+`sourceLimit=100`, `sourceLimitMayApply`, `limit`, `items`를 반환한다. 기존 전역 손익 원천 상한을
+적용한 뒤 조직·항목 필터를 적용하므로 `availableCount`는 확보한 자료 수일 뿐 전체 계정 수가 아니다.
+원본 계정(account_item)·전표가 아닌 조직×보고 항목(report_item) 집계이며, PLAN이 불완전하면 차이를
+영으로 대체하지 않는다. 원천 금액과 상태는 변경하지 않고 조사 capture/save도 호출하지 않는다.
+
+### 경영기획 업무에서 아직 연결하지 않은 범위
+
+현재 도구는 업무 도구 14개와 현재 관찰을 더 읽는 `observation_detail` 1개다. 조회 결과가 있다는 이유로
+소명 회수·승인·보고서 발행까지 완료했다고 표현하지 않는다.
+
+| 업무 | 현재 지원과 남은 연결 |
+| --- | --- |
+| 기준월 실적과 연간 전망 검토 | `monthly_pnl`과 기존 YEAR 도구로 구분한다. 여러 월의 추세·서로 다른 마스터 간 시계열 조회는 별도 기준 선택 계약이 필요하다. |
+| 조직별 손익 항목 조사 | `report_item_breakdown`으로 보고 항목 집계를 읽는다. 원천 계정·전표 행이나 Excel 셀 상세는 연결하지 않았다. 기존 `ReviewEvidenceService.evidence/versions`를 연결하려면 고정 제출본 소속·조회한 reviewItemId 범위와 파일·상태 토큰 제거가 필요하다. |
+| 소명 사유와 처리 이력 확인 | 승인 소명과 현재 관찰 상세만 제공한다. 기존 `ReviewItemQueryService.detail`의 모든 회차·미회신·첨부·재요청 상태는 전용 도구로 연결하지 않았다. 전역 소명 상한 때문에 전체 회수 현황을 추정하지 않는다. |
+| 월마감 현황·조직별 할 일 | 기존 `HomeQueryService.status/todos` API는 있으나 Agent 도구에 연결하지 않았다. 확정 마스터 분석과 현재 진행 요청의 기준을 구분해야 한다. |
+| 보고서 파일 생성 | 화면의 근거 보고서를 표시한다. 기존 보고서 틀·지표 데이터·Excel 내보내기 API는 Agent 도구에 연결하지 않았다. 해당 API의 기간·지표 기준을 고정 마스터와 대조하는 계약이 먼저 필요하다. |
+| 소명 요청·과제 배정·승인·실행 추적 갱신 | 기존 업무 API는 있으나 Agent는 조회와 요청 초안만 만든다. 상태 변경은 사람 확인·권한·revision·감사 이력과 연결해야 하며 현재 운영 DB 읽기 전용 범위에서 실행하지 않는다. |
 조회 전 fixed master 원천과 snapshot 수치 일치 확인. 현재 전망과 조회시점 비교값을 구분한다.
 승인·변경·임의 SQL·URL 접근·임의 후보 금액 입력 도구는 없다.
 

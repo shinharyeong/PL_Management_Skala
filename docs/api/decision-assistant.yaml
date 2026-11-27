@@ -140,6 +140,8 @@ components:
         - {$ref: '#/components/schemas/NoArgumentToolRequest'}
         - {$ref: '#/components/schemas/ProfitDriversRequest'}
         - {$ref: '#/components/schemas/OrganizationPnlRequest'}
+        - {$ref: '#/components/schemas/MonthlyPnlRequest'}
+        - {$ref: '#/components/schemas/ReportItemBreakdownRequest'}
         - {$ref: '#/components/schemas/ExplanationRequest'}
         - {$ref: '#/components/schemas/VersionsRequest'}
         - {$ref: '#/components/schemas/ComparisonRequest'}
@@ -177,6 +179,30 @@ components:
           additionalProperties: false
           properties:
             organizationId: {$ref: '#/components/schemas/Id'}
+    MonthlyPnlRequest:
+      type: object
+      additionalProperties: false
+      required: [tool, arguments]
+      properties:
+        tool: {const: monthly_pnl}
+        arguments:
+          type: object
+          additionalProperties: false
+          properties:
+            organizationId: {$ref: '#/components/schemas/Id'}
+    ReportItemBreakdownRequest:
+      type: object
+      additionalProperties: false
+      required: [tool, arguments]
+      properties:
+        tool: {const: report_item_breakdown}
+        arguments:
+          type: object
+          additionalProperties: false
+          properties:
+            organizationId: {$ref: '#/components/schemas/Id'}
+            reportItemId: {$ref: '#/components/schemas/Id'}
+            limit: {type: integer, minimum: 1, maximum: 50, default: 20}
     ExplanationRequest:
       type: object
       additionalProperties: false
@@ -310,7 +336,8 @@ components:
             analysis_context=ContextData, approved_explanations=ExplanationsData, submission_versions=VersionsData,
             submission_comparison=ComparisonData, scenario_preview=decision-agent.Result,
             work_items=WorkItemsData, review_request_draft=RequestDraftData, goal_preview=GoalPreviewData,
-            observation_detail=ObservationDetailData.
+            observation_detail=ObservationDetailData, monthly_pnl=MonthlyPnlData,
+            report_item_breakdown=ReportItemBreakdownData.
           type: [object, 'null']
           additionalProperties: true
         warnings: {type: array, items: {type: string}}
@@ -421,6 +448,45 @@ components:
         forecastMeetsTarget: {type: boolean, description: 현재 전망이 목표 이상인지. 실제 목표 달성을 의미하지 않는다.}
         saved: {const: false}
         basis: {const: FIXED_ANNUAL_OUTLOOK}
+    MonthlyPnlData:
+      type: object
+      additionalProperties: false
+      required: [period, year, month, unit, companyScope, selectedOrganizationId, company, organizations]
+      properties:
+        period: {const: MONTH}
+        year: {type: integer, description: 고정 마스터의 연도}
+        month: {type: integer, description: 고정 마스터의 기준월. 모델 인자로 변경하지 않는다.}
+        unit: {const: KRW}
+        companyScope: {const: ALL_MASTER_ORGANIZATIONS}
+        selectedOrganizationId: {type: [string, 'null']}
+        company:
+          type: object
+          additionalProperties: true
+          description: MONTH로 조회한 기존 HomePnlResponse와 summary.metrics. 선택 조직과 무관한 전사 값이며 actual은 해당 월 실적이다.
+        organizations:
+          type: object
+          additionalProperties: true
+          description: MONTH로 조회한 기존 HomeDivisionsResponse와 OP 차이 순위. columns와 summary만 조직 필터 적용. total은 전사 합계다.
+    ReportItemBreakdownData:
+      type: object
+      additionalProperties: false
+      required: [period, year, baseMonth, unit, comparison, capturedAt, availableCount, sourceLimit, sourceLimitMayApply, limit, items]
+      properties:
+        period: {const: YEAR}
+        year: {type: integer}
+        baseMonth: {type: integer}
+        unit: {const: KRW}
+        comparison: {const: SAME_SUBMISSION_PLAN_VS_ANNUAL_OUTLOOK}
+        capturedAt: {type: [string, 'null'], format: date-time, description: 저장 근거의 포착 시점. 현재 읽기는 Observation.basis.capturedAt을 사용한다.}
+        availableCount: {type: integer, description: 전역 원천 상한 적용 후 조직·항목 필터에 맞는 확보 자료 수. 전체 계정 수가 아니다.}
+        sourceLimit: {const: 100}
+        sourceLimitMayApply: {type: boolean, description: 확보한 PNL 원천이 상한에 도달했는지. false도 전체 계정 완전성을 보장하지 않는다.}
+        limit: {type: integer, minimum: 1, maximum: 50}
+        items:
+          type: array
+          maxItems: 50
+          description: 조직×report_item 집계 근거. 원천 account_item·전표 행이 아니다. facts의 forecastWon/planWon/varianceWon/profitImpactWon은 원 단위 정밀 문자열이며 불완전한 PLAN 비교는 null이다. HOME 확정 연간 계획과 다른 동일 제출본 PLAN 기준이다.
+          items: {$ref: './decision-workflow.yaml#/components/schemas/Evidence'}
     ContextData:
       type: object
       required: [snapshot, analysis]

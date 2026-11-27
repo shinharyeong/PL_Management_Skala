@@ -24,6 +24,32 @@ docstring/JSDoc을 기준으로 한다.
 | `config.get_settings` | 요청별 재정의가 없으면 `_daily_call_limit`을 호출하여 매 요청에 현재 한도 반영. 프로세스 재시작 없이 만료일 경과를 반영하며 기존 사용량은 초기화하지 않음 |
 | `test_config_daily_limit` | 한국 시간 날짜 경계·명시적 복구값·만료일 없는 기존 설정·잘못된 날짜의 다섯 회귀. 파일·DB·실제 모델 호출 없음 |
 
+## Luna 공통 모델 전송과 답변 복구
+
+| 정의 | 입력·출력·호출 관계·예외와 부작용 |
+| --- | --- |
+| `responses_adapter.input_content/response_input` | LangChain 텍스트·이미지·함수·ToolMessage → Responses 입력. 정확한 call_id와 암호화된 reasoning 항목만 현재 메모리에서 재전달. 원본 불변, 지원하지 않는 역할/블록은 ValueError |
+| `responses_adapter.response_tools` | 등록된 function schema → 평탄한 Responses 함수 정의. 명시적 strict 유지, 생략이면 false로 선택 인자 의미 보존. 내장 도구 거부 |
+| `responses_adapter.response_message` | SDK Response → 공개 텍스트·native 함수·잘못된 인자·사용량·종료 이유를 가진 AIMessage. 평문 추론 폐기. 제공자 실패·거절·미등록 출력 거부. 출력 한도는 length로 보존 |
+| `responses_adapter.generate_response` | 공식 SDK·현재 메시지·설정 → Responses 한 번. store=false, 암호화 추론 포함, reasoning effort, 추론 포함 max_output_tokens. Tool 또는 JSON 형식 지정. DB·파일 접근 없음 |
+| `llm._SdkChatModel._generate/ask_tools` | GPT-6은 Responses, 이전 모델은 기존 Chat Completions 전송. plan/finish/repair 하나만 허용된 단계는 required, 업무 조회 선택은 auto. 같은 공식 SDK factory와 사용량 계약 유지 |
+| `llm.is_reasoning_model/chat_model` | 실제 모델 이름 → GPT-5·GPT-6·o 숫자 계열 판별 및 공통 LangChain 모델 구성. GPT-6은 Responses·OPENAI_REASONING_EFFORT, GPT-5·o는 Chat Completions·AI_REASONING_EFFORT와 max_completion_tokens를 사용. 생성 시 외부 호출 없음. 제공자 지원 여부를 보증하지 않음 |
+| `test_llm.test_reasoning_models_use_max_completion_tokens_and_no_temperature/test_reasoning_tool_calls_keep_legacy_effort_and_native_schema` | 합성 SDK → GPT-5·o의 기존 JSON/도구 호출·추론 설정·토큰 상한 및 GPT-6 설정과의 분리 검사. 잘못된 인자는 AssertionError. 모델·DB·파일 접근 없음 |
+| `llm.ModelOutputLimitError.__init__/ask_json` | 완료 JSON → JsonReply. length이면 유효 JSON이어도 원문 없는 전용 오류와 사용량 보존. 외부 모델 한 번, 파일·원문 로그 없음 |
+| `ResponsesAdapterTests/OutputItem/response` | 합성 SDK 항목·함수 왕복·이미지·JSON·암호화 추론·길이 종료·거절·미등록 도구·제어 함수 선택 회귀. 실제 모델·DB·파일 없음 |
+| `discovery_core.numeric_claim_kind/_NUMERIC_CLAIM` | 설명 → 원문 없는 수치 분류 또는 None. 차이만·전사만 등 일반 조사 허용, 명백한 한글 금액·유니코드 수치·비율 거부. 의미의 진실성을 보증하지 않음 |
+| `assistant_core.FinishValidationError.__init__/assistant_brief.validate_prose` | 검증 실패 → 고정 코드·허용 필드 위치·수치 종류만 전달. 원문·금액을 진단 로그에 넣지 않음. 정확한 근거 인용과 숫자 포함 조직명 검사 유지 |
+| `assistant_graph.verified_summary_partial/terminal` | 요약만 수치 검증 실패한 마지막 제안 → 전체 재검증에 통과한 개별 설명을 시스템 안내와 LIMIT_REACHED로 반환. 다른 오류/잘린 출력에는 적용하지 않음. 원본 불변·완료로 승격하지 않음 |
+| `MonthlyPnlArguments/ReportItemArguments/ARGUMENT_MODELS/TOOL_DESCRIPTIONS` | 월간 조직 선택·보고 항목/조직/상한 → allowlist 인자. master·기간·사용자는 서버 고정, 의미·한도를 모델에 안내 |
+| `assistant_presentation.projected_data/FIELD_LABELS/KEY_ORDER` | 새 도구 관찰 → 기간·단위·비교 기준·상한을 보존한 모델 문맥·인용. 공개 원장은 원문을 유지 |
+| `test_assistant_numeric_boundaries/test_assistant_read_extensions` | 정상 한국어/명백한 금액, 안전한 오류 종류, 요약만 실패한 부분 brief, 새 도구 범위·실제 경로·모델 선택 회귀. 외부 접근·파일 생성 없음 |
+| `assistant_core.tool_schemas` | 실제 요청·계획·인용 → 단계별 함수 schema. 짧은 질문은 requestQuote를 원문 enum으로 한정하고 긴 질문은 기존 부분 인용 계약 유지. 마지막 호출은 finish_answer만 제공 |
+| `assistant_graph.agent_node/tools_node` | 남은 호출 수 → 최종 호출의 종료 전용 schema·state, 추가 업무 조회의 FINALIZATION_ONLY 거부. 미해결 요구도 유지. 기존 예산 확장·계획 자동 생성 없음 |
+| `test_assistant_planning_budget` | 원문 인용 enum·긴 질문 계약·마지막 종료 전용·조회 차단 및 요구 보존 회귀. 실제 모델·DB·파일 없음 |
+| `discovery_core.GoalValidationError.__init__/ambiguous_protection_request/validate_goal` | 목표 원문·모델 인용 → 단위·연도·보호 제안 검증. 명시적 감축 금지와 취소·조건부·축소 허용을 구분, 기존 확정·보장 주장 차단 유지. 실패는 원문 없는 고정 코드 |
+| `discovery_graph.interpret_goal/GOAL_RULES` | 목표 제안 → 원문 인용 검증·MODEL 또는 명시적 TEMPLATE 대체. 여러 보호 범주는 같은 원문 문장을 인용하도록 안내. 검증 실패는 코드만 기록하며 보호 조건 직접 확인 안내 |
+| `test_decision_goal_validation.goal_fixture/GoalValidationTests` | 합성 목표 대역 → 명시적 감축 금지·조건/취소/역방향 배제·명사형 확정 주장 거부·원문 없는 오류 코드 7개 회귀. 모델·DB·파일 접근 없음 |
+
 - [프론트 검토·제출·이력](frontend-issue-contract.md)
 - [AI 저장 경계·보고서 조회](../../ai/docs/development/ai-issue-contract.md)
 - [기존 파서 함수](../../parser/docs/development/function-reference.md)
@@ -427,7 +453,7 @@ OrgImprovementPanel 회신 → planner 근거 검토 → 분석 재조회 → �
 | `sdk_tool_calls` | SDK assistant 응답 → 정상 dict 인자와 invalid_tool_calls 분리. JSON 오류를 실행 가능한 호출로 바꾸지 않음 |
 | `_SdkChatModel._llm_type/bind_tools` | 모델 종류 / 허용 function schema → native tool Runnable. 도구 선택·병렬 호출 옵션만 바인딩하며 네트워크 호출 없음 |
 | `_SdkChatModel._generate` | 메시지·native 도구 옵션 → 동일 OpenAI SDK make_client 경로 한 번 → AIMessage·tool_calls·사용량·허용된 provider finish_reason 메타데이터. 모르는 종료 값은 제외하며 원문을 로그에 남기지 않음. 일반 ask_json의 response_format·이미지 전달 계약 보존 |
-| `services/llm.ask_tools` | settings·대화·허용 schema → native AIMessage. json_mode 없이 tool_choice=auto·parallel_tool_calls=false를 전송하며 도구 자체는 실행하지 않음 |
+| `services/llm.ask_tools` | settings·대화·허용 schema → native AIMessage. json_mode 없이 일반 조회는 tool_choice=auto, plan/finish/repair 단일 제어 함수는 required·parallel_tool_calls=false를 전송하며 도구 자체는 실행하지 않음 |
 | `api/contract.read_assistant_request` | 내부 인증된 Request → 기존 256KiB 제한 reader·AssistantRequest. history는 user/assistant 텍스트만, 오류 413/422 |
 | `decision_agent_assistant` | 검증 DTO → threadpool run_assistant → 공개 대화 응답. 고정 context 오류 422 |
 | `decision_agent/assistant_models.py` | 고정 context·최대 여덟 history·열세 읽기 도구 인자·관찰·AnalysisPlan·GroundedFinding·RequirementResolution·GroundedFinish DTO. 요구 항목 최대 6개·설명 최대 8개·설명별 인용 ID 1~4개. FinishAnswer·FinishSelection은 기존 검증·호환 경로에 유지. 모델 인자에서 master·사용자·SQL·URL·새 후보 금액을 받지 않음 |
@@ -510,7 +536,7 @@ OrgImprovementPanel 회신 → planner 근거 검토 → 분석 재조회 → �
 ## 대화형 Agent — Spring 조회 도구와 관찰 검증
 
 정의 경로는 `backend/src/main/java/io/skala/backend/domain/decisionagent/` 기준이다.
-공개·내부 DTO와 13 Tool의 인자·결과는 [decision-assistant.yaml](../api/decision-assistant.yaml),
+공개·내부 DTO와 15 Tool의 인자·결과는 [decision-assistant.yaml](../api/decision-assistant.yaml),
 실행 경계는 [대화형 도구 계약](agent-tool-contract.md)을 따른다. 신규 집계 SQL을 만들지 않고
 Home·Archive·버전 비교·정밀 계산·기존 Research 읽기·Workflow 조회 서비스를 재사용한다.
 
@@ -527,8 +553,10 @@ Home·Archive·버전 비교·정밀 계산·기존 Research 읽기·Workflow �
 | `DecisionAssistantTools.execute` | 고정 Run·도구·정규 인자 → 기존 서비스 결과. readOnly 트랜잭션 안에서 원천 금액·고정 조직을 검증하며 새 SQL·쓰기 API 없음. 비교 방향·순위는 기존 차이 원값으로 계산하고 목표 비교는 기존 계산기를 재사용 |
 | `DecisionAssistantTools.observationDetail/boundedInteger` | 이번 실행의 SUCCESS 관찰 ID·/data 아래 pointer·offset/limit → sourceObservationId/path/offset/nextOffset/total/value. offset 0~10000·limit 1~10 검사; 배열 행·객체 속성·문자열 일부만 반환하고 scalar는 offset 0만 허용. 다른 실행·ERROR·detail 재귀·금지 경로 거부. 새 DB·URL·파일 조회 없음 |
 | `contextData` | Run → snapshot, 선택 분석의 id/title/revision/목표/보호 조건/후보/result만 공개. 분석 미선택이면 analysis=null |
-| `company/comparisonMetric` | 기존 전사 손익 원문·KPI → 원문 보존과 summary.metrics/detailRowCount. 원값 부호로 증가/감소/동일, COST의 증가=불리·감소=유리를 판정하며 결측은 영으로 대체하지 않음 |
-| `divisions/rankMetrics` | Run·선택 organizationId → 고정 조직 columns와 OP 계획 차이 요약. 부호 있는 차이 내림차순과 절댓값 내림차순을 별도 순위로 반환하고 누락은 후순위. 조직별 매출·비용 계획 비교 미제공을 명시. total은 전사 합계, 계획 비교는 조회 시점 기준 |
+| `company/comparisonMetric` | 고정 Run·서버 선택 YEAR/MONTH 및 기존 전사 손익 원문·KPI → 원문 보존과 summary.metrics/detailRowCount. 원값 부호로 증가/감소/동일, COST의 증가=불리·감소=유리를 판정하며 결측은 영으로 대체하지 않음 |
+| `divisions/rankMetrics` | Run·선택 organizationId·서버 선택 YEAR/MONTH → 고정 조직 columns와 OP 계획 차이 요약. 부호 있는 차이 내림차순과 절댓값 내림차순을 별도 순위로 반환하고 누락은 후순위. 조직별 매출·비용 계획 비교 미제공을 명시. total은 전사 합계, 계획 비교는 조회 시점 기준 |
+| `monthly` | Run·선택 조직 → 고정 기준월의 Home.pnl/divisions MONTH 조회와 명시 period/year/month/unit. company 및 organizations.total은 전체 마스터 합계, 조직 필터는 columns/summary에만 적용. 연간 전망과 혼합하지 않으며 DB 읽기만 수행 |
+| `reportItems` | Run·조직·reportItemId·limit → 저장 Research 또는 기존 loadEvidence의 PNL을 고정 조직 범위와 항목으로 필터. 전역 100개 원천 상한·availableCount·sourceLimitMayApply와 동일 제출본 PLAN 기준 명시. 최대 50개, 원천 계정·전표 행 아님. capture/save·업무 쓰기 없음 |
 | `goalPreview` | execute에서 targetYear와 고정 Snapshot 연도가 일치한 양수 억 원 목표 → 정확한 원 환산 후 기존 계산기에서 현재 전망·목표·부족액·초과 전망액·부호 차이 반환. 연도 불일치는 원천 재조회·계산 전에 ERROR 관찰로 차단하고 기준 선택·목표 연도 확인을 요청. 자연어의 연도 해석 정확성까지 보장하지 않음. forecastMeetsTarget는 전망 비교이며 실적 달성 아님. saved=false, DB 저장·신규 후보 없음 |
 | `explanations` | Run·선택 조직·limit → 기존 저장 Research 근거 또는 ResearchStore.loadEvidence의 읽기 결과. 수락 소명만 필터하고 포착 시점·추출 상한을 표시. capture/save 호출 없음 |
 | `versions` | Run·조직 → ArchiveQueryService.versions의 기준월 APPROVED·snapshot.asOf 이전 history. 파일/URL·현재 최신 finalLabel 제외 |
@@ -540,7 +568,7 @@ Home·Archive·버전 비교·정밀 계산·기존 Research 읽기·Workflow �
 | `DecisionAssistantJson` 생성자·`safe/tree/size/canonical/project/clean` | 공용 mapper 사본 → BigDecimal 문자열 직렬화·결정적 캐시 키·허용 필드 투영·UTF-8 크기. 파일/URL/로컬 경로/stateToken/capability 제거. 공용 ObjectMapper 설정이나 파일 변경 없음 |
 | `DecisionAssistantResponseValidator.validate` | AI JSON·실제 Run → 필드/기준/관찰/호출 전체 일치 및 최대 32개 scalar 인용 검증. 숫자 문자열의 부호·전 자릿수, bool/null 정확 표현·RFC6901 escape 대조. brief가 있으면 별도 BriefValidator로 원문 인용·현재 질문·최상위 answer·상태를 함께 검사하고 없으면 기존 정성 답변 계약 유지 |
 | `DecisionAssistantBriefValidator` 생성자·`validate` | 정밀 mapper / brief·검증된 인용·성공 원장·현재 질문·answer·status → 타입이 있는 Brief. finding/requirement ID·현재 질문 부분 인용·설명 인용과 최상위 인용의 동일 합집합·불확실성·미해결 정보·완료 상태 검사. 형식·근거 연결 오류 IllegalArgumentException, 쓰기 없음 |
-| `DecisionAssistantBriefValidator.prose` | 설명·검증 인용·성공 원장 → 근거 밖 금액/비율·보장·업무 실행 주장 검사. 정확히 인용한 이름의 숫자만 예외. 해석의 진위를 자동 보증하지 않음 |
+| `DecisionAssistantBriefValidator.prose` | 설명·검증 인용·성공 원장 → 직접 쓴 금액/비율·보장·업무 실행 주장 검사. 차이만·전사만·알 수만·이만 정리 같은 일반어는 허용하되 명백한 수사(십/백/천 포함)·통화 단위는 유지. 구 응답 NUMERIC도 동일 규칙. 정확히 인용한 이름의 숫자만 예외. 해석의 진위를 자동 보증하지 않음 |
 | `DecisionAssistantBriefValidator.businessCitation` | 인용·성공 관찰 → 업무 내용 근거 여부. 상세 조회는 /data/value 또는 그 하위 값만 인정하며 원천 ID·offset·total 등 메타데이터만 인용한 finding을 거부. 상태·DB 변경 없음 |
 | `DecisionAssistantBriefValidator.text/optionalText/identifier/array/fields` | JSON 값·길이/건수 상한·필수 여부 → 계약에 맞는 문자열·배열 또는 예외. 임의 필드·빈 문자열·초과 길이 거부, nullable 명세 유지. 원문 변경·DB 부작용 없음 |
 | `unavailable/exactFields/text/array` | 검증 실패 → 실제 원장만 보존한 UNAVAILABLE/FAILED / 엄격한 객체·문자열·배열 검사. 서버 한계 문구만 공개하고 모델이 추가한 원장·한계 주장을 재사용하지 않음 |
@@ -557,6 +585,12 @@ Home·Archive·버전 비교·정밀 계산·기존 Research 읽기·Workflow �
 조직·소유권·revision·역할 철회, 저장 후보 계산, 수동 요청 초안, 만료·동시 capability·실행/바이트 상한,
 선행 승인 버전 목록, 가짜 관찰·호출·숫자 인용, 일반 조직 표현 오탐과 실제 금액 차단,
 URL 제거·정밀 문자열, HTTP JSON 시간대 왕복을 검증한다.
+`distinguishesKoreanParticlesFromAmountsInLegacyAndBriefResponses`는 일반 조사와 실제 한글 금액을
+구·신규 응답에서 구분하고, `preservesGroundedPartialBriefWithoutMarkingUnresolvedRequirementsComplete`는
+LIMIT_REACHED/FAILED의 유효 설명·미해결 요구를 보존하면서 원장 변조와 거짓 완료를 거부한다.
+`readsFixedMonthlyActualsWithoutChangingAnnualReportScope`는 월간 서비스 선택·범위·기간 인자 차단을,
+`filtersReportItemEvidenceWithoutClaimingCompleteAccountCoverage`는 전역 상한·조직·항목·결측 계획을,
+`reusesCapturedReportItemEvidenceWithoutNewResearchWrite`는 저장 근거 재사용과 쓰기 미호출을 검증한다.
 `rejectsMissingOrInvalidTargetYearBeforeCalculation`과
 `rejectsMismatchedTargetYearBeforeBaselineReadOrCalculation`은 연도 누락·형식·범위·기준 불일치에서
 ERROR 관찰을 남기되 원천 조회·계산기를 호출하지 않는지 확인한다.
@@ -586,9 +620,11 @@ ERROR 관찰을 남기되 원천 조회·계산기를 호출하지 않는지 확
 | `observationExplanations` | 승인 소명 관찰 → 최대 20개 원문 본문·근거 ID·검토 시각 카드. 요약·문장 추가·저장 없음 |
 | `assistantPayload` | 고정 기준·선택 분석·질문·이력 → 공개 assistant 요청 DTO. 필수 기준·질문 길이·분석 master 불일치 Error |
 | `validateAssistantResponse` | 응답·원 요청 → mode/status 및 master·analysis·revision 일치 검사. 기준 불일치는 Error. 같은 기준에서 brief만 잘못되면 원문 관찰 보존·brief=null·FAILED와 고정 분석 실패 안내/한계를 담은 사본 반환. 잘못된 모델 answer는 숨기며 성공 관찰 없는 경우 자료 확보를 주장하지 않음 |
-| `assistantStatusLabel` | 실제 mode/status/brief → 한도 우선 상태 문구. UNAVAILABLE·LIMIT_REACHED는 실행 한도, UNAVAILABLE·FAILED는 답변 생성 중단으로 표시하며 모델 미설정·시간 초과·검증 실패를 임의로 추정하지 않음. 구체 원인은 서버의 안전한 answer를 유지하고 원문 관찰·응답은 변경하지 않음 |
+| `assistantStatusLabel` | 실제 mode/status/brief → 한도 우선 상태 문구. LIMIT_REACHED는 조회 횟수가 아닌 답변 처리 한도, UNAVAILABLE·FAILED는 답변 생성 중단으로 표시하며 모델 미설정·시간 초과·검증 실패를 임의로 추정하지 않음. 구체 원인은 서버의 안전한 answer를 유지하고 원문 관찰·응답은 변경하지 않음 |
+| `assistantExecutionSummary/assistantIncompleteReason/assistantCoverageLabel` | 같은 기준의 성공 조회 수와 실행 상태 → 조회 성과·답변 완료를 분리한 문구 / 실패·한도 응답의 안전한 answer / 검증된 요구 수. 모든 개별 요구가 답변돼도 중단 실행은 전체 미완료로 표시하며 문자열로 원인을 추측하거나 질문 축소를 강요하지 않음 |
 | `citationValue/answerCitations` | 관찰·RFC6901 경로·quote → 자체 스칼라 및 검증 인용. prototype·객체 경로 거부, 숫자는 부호 포함 전체 문자열 일치, 일반 텍스트만 부분 인용, null 보존. 금액 표시만 억원으로 변환 |
 | `detailCitationOrigin` | 상세 읽기 관찰·인용 경로·현재 성공 관찰 → 원천 도구·원래 필드의 표시 의미. /data/value 인용도 원천 원 단위 금액 서식을 유지하고 출처 자체는 실제 상세 관찰에 연결. 조회·원문 변경 없음 |
+| `observationFieldLabel` | 필드·원천 도구 → 표시 제목. monthly_pnl의 actual/actualWon은 해당 월 실적으로 표시해 연간 전망과 구분. 상세 관찰 인용도 원천 도구 의미 유지 |
 | `analysisBrief` | 응답·선택 현재 질문 → 근거·요구 항목·상태를 검증하고 표시 라벨/정밀 인용/미해결 목록/answeredCount를 추가한 사본 또는 null. 요구/설명 한도·ID·현재 부분 인용·실제 finding 참조·해석의 uncertainty·미해결 질문 검사. 형식 오류 Error, 재계산·저장 없음 |
 | `briefText/citationIdentity/unansweredRequirement` | brief 문자열/인용/요구 항목 → 문자열 유효 여부·인용 조합 키·미해결 여부. analysisBrief의 형식·중복·상태 검사를 보조하며 원문 응답 변경이나 부작용 없음 |
 | `findingKindLabel/requirementStatusLabel` | 계약 kind/status → 확인된 사실·근거 해석·검토 가설 / 답변됨·추가 확인·현재 범위 밖 라벨. 새로운 판단·쓰기 없음 |
@@ -597,6 +633,7 @@ ERROR 관찰을 남기되 원천 조회·계산기를 호출하지 않는지 확
 | `observationCell` | 필드·원문·도구 → 정밀 억원·한국어 상태 표시. 원 단위는 Won 접미사 및 기존 HOME 도구 필드 계약으로 식별. OP 차이 부호와 서버의 방향·유불리를 보존. 원본 변경 없음 |
 | `observationTables/displayRow/isScalar/scalarRow` | 관찰·정렬 방식 → 기존 ReportDataTable 표시용 복사. 서버 비교 요약 우선, 중첩 조직 이름·코드, 최대 4표·20행·8열. 기본 부호 차이 내림차순, 생략 한도와 접힌 원문 위치 표시 |
 | `rowsTable/byDifference` | 행·필드·정렬 기준 → 정확한 십진 문자열의 부호/절댓값 내림차순과 누락 후순위 표. 원본 수치 재계산 없음 |
+| `monthlyPnlTables/reportItemTables` | 월간 회사·조직 요약 / 보고 항목의 중첩 facts → 정밀 금액 표. 월 실적은 연간 전망과 분리하고, 상세 항목은 동일 제출본 계획 비교·원천 상한·개선 가능액 아님을 명시. 원문·금액 변경 없음 |
 | `goalPreviewTables` | 저장 없는 목표 관찰 → 목표·현재 전망·부족액·초과액 표. saved=false와 전망 비교의 의미 표시, 목표 저장·계산 없음 |
 | `askAssistant` | 인증 api·payload·AbortSignal → 공개 POST assistant·응답 기준 검증. HTTP/계약 오류 전달, 읽기·초안 Tool만 실행 |
 | `DecisionConversationPanel.currentMaster/scopeKey/basisLabel` | 부모 분석·기준 → 고정 master·분리 키·기준 이름. 계산·저장 없음 |
@@ -624,7 +661,7 @@ ERROR 관찰을 남기되 원천 조회·계산기를 호출하지 않는지 확
 | `DecisionPreviewReport.directionClass/planDirection/openSource` | 서버의 손익 영향·증감 방향 → 색상·한국어 판단 / 출처 클릭 이벤트. 승인·저장·새 조회 없음 |
 | `DecisionPreviewReport.organizationEmptyText` | 실제 조회 조직 수·표시 상태 → 미조회와 조회 결과 0건을 구분한 안내 |
 | `DecisionPreviewReport.organizationCaption` | 조직 조회 출처·현재 표시 행 → 전체 조직 손익과 차이 상위 조회의 범위·정렬 안내. profit_drivers만 있으면 연간 전망 미조회·조회된 조직 안의 차이 순서임을 표시하며 전체 순위나 조직 수를 추정하지 않음 |
-| `decision-preview-result.buildPreviewResult/emptyResult` | 현재 범위·실행 → 같은 기준의 SUCCESS 관찰·검증 brief·실행 status를 담은 단일 보고서 DTO 또는 금액/brief 없는 상태. EMPTY·LOADING·READY·PARTIAL·STALE·ERROR 구분. 성공 관찰 없이도 유효한 NEEDS_INPUT brief는 질문이 있는 PARTIAL. API·DB 호출 없음 |
+| `decision-preview-result.buildPreviewResult/emptyResult` | 현재 범위·실행 → 같은 기준의 SUCCESS 관찰·검증 brief·실행 status·조회 성과·안전한 중단 원인을 담은 단일 보고서 DTO 또는 금액/brief 없는 상태. EMPTY·LOADING·READY·PARTIAL·STALE·ERROR 구분. 성공 관찰 없이도 유효한 NEEDS_INPUT brief는 질문이 있는 PARTIAL. 월간/보고항목 도구는 출처·brief만 연결하며 연간 목표/조직 표에 합산하지 않음. 기준 변경 시 이전 중단 안내도 숨김. API·DB 호출 없음 |
 | `matchesScope/matchesForm/normalizedGoal` | 마스터·분석 revision·연도·정규화한 폼 목표 → 현재 입력과 실행의 일치 여부. 대화에서 실제 조회한 목표를 폼 값으로 덮지 않음 |
 | `observedGoal` | saved=false·KRW·같은 연월·정밀 금액의 성공 관찰 → 원문 목표 비교. 금액 누락은 null, 부족액·초과액 재계산 없음 |
 | `observedOrganizations/byPlanDifference` | 성공한 조직 요약 → 정밀 십진 비교로 정렬한 상위 5개·전체 기준 조직 수. 원본 불변, 누락은 후순위 |
@@ -647,10 +684,14 @@ HelperSet에서 반복 부모 key=0과 조건부 그룹의 충돌로 본문 열�
 ReportDataTable의 명시적 헤더 그룹 키가 중복을 없애는지 확인한다. 기존 병합 셀 SSR 검증도 유지한다.
 `decision-preview-result.test.js`는 기준·목표 변경, 정밀 정렬, 미조회와 0건, 부분 실패·조회 시각,
 빈 근거의 확인 질문, 잘못된 분석 설명을 숨겨도 성공 수치·출처가 유지되는지 검증한다.
+요약 검증 중단 시 개별 설명·안전한 중단 원인을 PARTIAL로 보존하고, 월간 관찰이 연간 전망 표에
+섞이지 않는지도 검사한다. 월간 표·인용의 기간 명칭과 보고 항목별 동일 제출본 계획·원천 상한 안내,
+전체 답변 미완료 표시는 합성 응답으로 검증한다.
 `DecisionPreviewReport.test.js`는 SSR에서 실제 요약·사실/해석/가설·불확실성·미해결 질문·각 출처,
 HTML 이스케이프와 기준 변경·조회 중 이전 숫자/출처/brief 숨김을 확인한다. 대화 회귀는 존재하지 않는
 근거·finding 참조·불확실성 누락·미해결 COMPLETED 거부, 번호로 가설을 참조하는 후속 문맥,
-반복되는 관찰 ID의 실행별 분리도 검사한다. 현재 전체 프론트 검증은 157건과 빌드 통과다.
+반복되는 관찰 ID의 실행별 분리도 검사한다. 2026-11-27 develop `cdbf5e7` 통합 후 전체 프론트 검증은 224건과 빌드 통과다.
+이 결과는 실제 모델 응답 품질이나 업무 DB의 최신 데이터 검증을 대신하지 않는다.
 합성 브라우저 확인 및 이전 실제 DB·모델 왕복 기록은 현재 brief 계약의 실제 모델 검증과 구분한다.
 
 ## 로컬 화면 확인용 임시 실행 도구

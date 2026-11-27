@@ -77,7 +77,11 @@ class Settings:
     require_internal_token: bool = False        # AI_REQUIRE_INTERNAL_TOKEN. true(운영)면 REPORT_AI_TOKEN 이 없을 때 계약 API 거부·결과 보고 안 함
     key_source: str = "none"
     openai_model: str = "gpt-4o-mini"
+    # GPT-6 Responses 전용. 기존 Chat Completions의 AI_REASONING_EFFORT와 독립적으로 적용한다.
+    openai_reasoning_effort: str = "low"
     vlm_model: str = ""                          # 그림 읽기(VLM) 전용 모델. 비우면 openai_model
+    # GPT-5·o 계열 Chat Completions의 기존 설정. 값 지원 여부는 선택한 제공자 모델이 결정한다.
+    ai_reasoning_effort: str = "none"
     ai_temperature: float = 0.2
     ai_max_output_tokens: int = 500
     ai_timeout_seconds: float = 30.0
@@ -142,7 +146,9 @@ def get_settings() -> Settings:
         backend_url=_read("AI_BACKEND_URL")[0],
         require_internal_token=str(_read("AI_REQUIRE_INTERNAL_TOKEN", "false")[0]).strip().lower() in ("1", "true", "yes", "on"),
         openai_model=_read("OPENAI_MODEL", "gpt-4o-mini")[0],
+        openai_reasoning_effort=_read("OPENAI_REASONING_EFFORT", "low")[0],
         vlm_model=_read("AI_VLM_MODEL", "")[0],
+        ai_reasoning_effort=str(_read("AI_REASONING_EFFORT", "none")[0]).strip() or "none",
         ai_temperature=float(_read("AI_TEMPERATURE", "0.2")[0]),
         ai_max_output_tokens=int(_read("AI_MAX_OUTPUT_TOKENS", "500")[0]),
         ai_timeout_seconds=float(_read("AI_TIMEOUT_SECONDS", "30")[0]),

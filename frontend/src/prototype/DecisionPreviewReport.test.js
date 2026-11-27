@@ -124,3 +124,21 @@ test('stale and loading report states suppress old goal values and source action
     assert.match(html, state === 'STALE' ? /기준이 바뀌어 다시 비교가 필요합니다/ : /현재 전망과 목표를 확인하고 있습니다/)
   }
 })
+
+/** 중단된 분석의 유효 문장은 남기고 미완료 안내와 서버 원인을 가리지 않는다.
+ * Args: 없음. Returns: Promise<void>. Raises: 검증 실패. Side Effects: 합성 DTO의 메모리 SSR만 수행한다.
+ */
+test('partial narrative is shown with incomplete status and the server reason rather than generic retry advice', async function partialNarrative() {
+  const brief = reportBrief(), reason = '시스템 안내: 모델 응답의 요약 검증을 완료하지 못했습니다.'
+  const html = await renderReport(reportData({ state: 'PARTIAL', status: 'LIMIT_REACHED', brief,
+    executionSummary: '조회 성공 2건 · 답변 미완료', incompleteReason: reason, sources: [{ id: 'obs-1', label: '합성 조회 근거' }] }))
+  assert.ok(html.includes(brief.summary))
+  assert.ok(html.includes(brief.findings[0].text))
+  assert.ok(html.includes(reason))
+  assert.match(html, /조회 성공 2건 · 답변 미완료/)
+  assert.ok(!html.includes('질문 범위를 좁혀'))
+  assert.ok(!html.includes('요청 항목 확인 완료'))
+  const stale = await renderReport(reportData({ state: 'STALE', brief, executionSummary: '조회 성공 2건 · 답변 미완료', incompleteReason: reason }))
+  assert.ok(!stale.includes(reason))
+  assert.ok(!stale.includes(brief.findings[0].text))
+})

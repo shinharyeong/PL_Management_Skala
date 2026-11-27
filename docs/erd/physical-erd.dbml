@@ -1,12 +1,10 @@
 // 경영팀을 부탁해 · 물리 ERD (PostgreSQL)
-// 2026-11-23 기준: PRD · 와이어프레임(경영기획팀·조직 담당자 v3·AI 보고서 v1) · 인프라 문서를 반영한 설계안.
-//   [PRD] submission.reply_message·approved_seq, review_item.rejected, gap_threshold.comparison(3종), parsing_job NEEDS_REVIEW 제거,
-//         보고서 틀·지표 사전·소명 분류표·소명 분류 테이블 추가 (보고서 결과물은 DB에 저장하지 않음)
-//   [아키텍처] stored_object 바이트 → S3 키 메타데이터, pdf_job 추가, notification_read → notification
-//   [팀 결정] annual_plan.contingency_amount 삭제
-//   [운영] parsing_job.created_at, 기준 데이터 created_at·updated_at(account_item은 created_at만),
-//         review_item.created_at·updated_at, annual_plan.created_at, report_template.updated_at
-//   바뀐 컬럼·테이블에는 note에 근거를 적었다(dbdiagram에서 마우스를 올리면 보임).
+// 2026-11-27 기준: backend/src/main/resources/db/migration의 V1~V20261127_1300 최종 정의.
+//   최신 develop의 조직별 요청·월간 비교 정책·직접 승인과 Agent 분석·조사·개선 요청 테이블을 포함한다.
+//   소스 코드의 스키마 정의이며, 각 환경의 실제 적용 여부는 Flyway 이력으로 별도 확인한다.
+//   flyway_schema_history(도구 관리), 보고서용 뷰, 마이그레이션 임시 테이블은 ERD 테이블에서 제외한다.
+//   부분 유일 인덱스 조건·트리거 동작은 note에 적었다. 실행 가능한 DDL의 기준은 원본 migration이다.
+//   physical-erd.svg는 이전 그림이며 이 DBML 변경을 아직 반영하지 않았다.
 // dbdiagram.io 왼쪽 편집창에 전부 붙여 넣으면 된다.
 
 Table "organization" {
@@ -96,6 +94,10 @@ Table "request_target" {
   "confirmed_plan_submission_id" bigint
   "excluded" boolean [not null, default: false]
   "selected" boolean [not null, default: true]
+  "dispatch_requested_at" timestamptz
+  "dispatch_due_at" timestamptz
+  "dispatch_message" text
+  "dispatch_requested_by" bigint [note: 'V20261124_2300: 원래 요청과 분리한 조직별 추가 요청 담당자']
 
   Indexes {
     (request_id, organization_id) [pk, name: "request_target_pkey"]
@@ -135,6 +137,8 @@ Table "submission" {
   "previous_submission_id" bigint
   "reply_message" text [note: '추가: 조직 담당자 회신 메시지 (FR-YEAR-003, FR-MONTH-003)']
   "approved_seq" integer [note: '추가: 같은 요청·조직 안의 승인 순번. 버전 표시 ver{월}.{NN} (FR-MONTH-010, FR-ARCH-002). APPROVED일 때만 값']
+  "review_baseline_submission_id" bigint [note: 'V20261127_1200: 월간 비교에서 사용한 기준 제출 버전']
+  "review_policy_version" varchar(80) [note: 'V20261127_1200: 제출별 비교 정책 버전. 월간 기존 제출 전환 값은 monthly-comparison/2.0']
 
   Checks {
     `(((status = 'DRAFT') AND (seq IS NULL)) OR ((status <> 'DRAFT') AND (seq IS NOT NULL) AND (seq > 0)))` [name: 'submission_check']
@@ -375,7 +379,7 @@ Table "master_source" {
 
 Table "gap_threshold" {
   "id" bigint [not null, increment]
-  "comparison" "varchar(30) · ACTUAL_VS_PLAN / ESTIMATE_VS_PREVIOUS / ESTIMATE_VS_PLAN" [not null, note: '변경: scenario(ACTUAL/ESTIMATE) → 비교 3종 (FR-MONTH-005 비교 필터)']
+  "comparison" "varchar(30) · ACTUAL_VS_PLAN / ACTUAL_VS_PREVIOUS / ESTIMATE_VS_PREVIOUS / ESTIMATE_VS_PLAN" [not null, note: 'V20261127_1200: 실적과 이전 기준 비교를 포함한 4종']
   "percent" numeric(30,6) [not null]
   "amount" numeric(30,6) [not null]
   "applied_by" bigint [not null]
@@ -387,7 +391,7 @@ Table "gap_threshold" {
     `(percent_enabled OR amount_enabled)` [name: 'ck_gap_threshold_enabled']
     `(amount >= 0)` [name: 'gap_threshold_amount_check']
     `(percent >= 0)` [name: 'gap_threshold_percent_check']
-    `comparison IN ('ACTUAL_VS_PLAN', 'ESTIMATE_VS_PREVIOUS', 'ESTIMATE_VS_PLAN')` [name: 'gap_threshold_comparison_check']
+    `comparison IN ('ACTUAL_VS_PLAN', 'ACTUAL_VS_PREVIOUS', 'ESTIMATE_VS_PREVIOUS', 'ESTIMATE_VS_PLAN')` [name: 'gap_threshold_comparison_check']
   }
 
   Indexes {
@@ -412,7 +416,7 @@ Table "review_item" {
   "current_round" integer [not null]
   "active" boolean [not null, default: true]
   "review_policy_version" varchar(80) [not null, default: 'legacy/1.0']
-  "workflow_state" "varchar(30) · NEEDS_REVIEW / SELECTED / REQUESTED / EXCLUDED" [not null, default: 'NEEDS_REVIEW']
+  "workflow_state" "varchar(30) · NEEDS_REVIEW / SELECTED / REQUESTED / APPROVED / EXCLUDED" [not null, default: 'NEEDS_REVIEW', note: 'V20261127_1300: 직접 승인 APPROVED 추가. 기존 EXCLUDED 행을 APPROVED로 전환하지만 CHECK에는 EXCLUDED를 유지']
   "workflow_note" varchar(4000)
   "rejected" boolean [not null, default: false, note: '추가: 재제출 요청 때 경영기획팀이 고른 반려 항목 (FR-HIST-004, 조직 화면 6·5-5)']
   "created_at" timestamptz [not null, default: `now()`, note: '추가: 생성 시각']
@@ -423,7 +427,7 @@ Table "review_item" {
     `(current_round > 0)` [name: 'review_item_current_round_check']
     `((month >= 1) AND (month <= 12))` [name: 'review_item_month_check']
     `scenario IN ('PLAN', 'ACTUAL', 'ESTIMATE')` [name: 'review_item_scenario_check']
-    `workflow_state IN ('NEEDS_REVIEW', 'SELECTED', 'REQUESTED', 'EXCLUDED')` [name: 'review_item_workflow_state_check']
+    `workflow_state IN ('NEEDS_REVIEW', 'SELECTED', 'REQUESTED', 'APPROVED', 'EXCLUDED')` [name: 'review_item_workflow_state_check']
   }
 
   Indexes {
@@ -501,7 +505,7 @@ Table "gap_threshold_guard" {
 Table "review_workflow_event" {
   "id" bigint [not null, increment]
   "review_item_id" bigint [not null]
-  "action" "varchar(30) · SELECT / EXCLUDE / REQUEST_EXPLANATION" [not null]
+  "action" "varchar(30) · SELECT / EXCLUDE / APPROVE / REQUEST_EXPLANATION" [not null, note: 'V20261127_1300: 직접 승인 이벤트 추가. 과거 EXCLUDE 이벤트는 보존']
   "explanation_round" integer [not null]
   "note" varchar(4000)
   "due_at" timestamptz
@@ -509,7 +513,7 @@ Table "review_workflow_event" {
   "acted_at" timestamptz [not null]
 
   Checks {
-    `action IN ('SELECT', 'EXCLUDE', 'REQUEST_EXPLANATION')` [name: 'review_workflow_event_action_check']
+    `action IN ('SELECT', 'EXCLUDE', 'APPROVE', 'REQUEST_EXPLANATION')` [name: 'review_workflow_event_action_check']
   }
 
   Indexes {
@@ -699,6 +703,112 @@ Table "explanation_classification" {
   Note: '추가: 소명별 분류 결과. 같은 조직·항목 소명을 지난달 분류로 미리 채우는 데 씀 (FR-RPT-007)'
 }
 
+Table "ui_copy_override" {
+  "copy_key" varchar(200) [not null]
+  "copy_value" text [not null]
+  "revision" bigint [not null, default: 1]
+  "updated_by" bigint [not null]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Checks {
+    `revision > 0` [name: 'ui_copy_override_revision_check']
+    `length(copy_value) BETWEEN 1 AND 10000` [name: 'ui_copy_override_copy_value_check']
+  }
+
+  Indexes {
+    copy_key [pk, name: "ui_copy_override_pkey"]
+  }
+
+  Note: 'V20261125_1800: 컨테이너 파일과 분리한 공유 화면 문구. 업무 손익 수치는 저장하지 않음'
+}
+
+Table "monthly_review_policy_archive" {
+  "submission_id" bigint [not null]
+  "previous_review" jsonb [not null, note: '월간 비교 정책 전환 직전의 review_item과 gap_comparison 행을 items/gaps 배열로 보존']
+  "migrated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    submission_id [pk, name: "monthly_review_policy_archive_pkey"]
+  }
+
+  Note: 'V20261127_1200: 기존 월간 검토 파생 데이터 재계산 전 감사·복구용 기록. 원본 재무 값과 소명은 별도 테이블에 유지'
+}
+
+Table "decision_agent_analysis" {
+  "id" bigint [not null, increment]
+  "owner_id" bigint [not null]
+  "master_id" bigint [not null]
+  "revision" integer [not null]
+  "title" varchar(200) [not null]
+  "snapshot" jsonb [not null, note: '생성 시 고정한 마스터·제출 버전·기준일·조직별 집계 근거']
+  "state" jsonb [not null, note: '목표·제약·개선 후보·계산 결과·설명을 포함한 최신 분석 상태. 전체 revision 이력을 별도 행으로 보존하지 않음']
+  "created_at" timestamptz [not null]
+  "updated_at" timestamptz [not null]
+
+  Checks {
+    `revision > 0` [name: 'decision_agent_analysis_revision_check']
+    `snapshot->>'masterId'=master_id::text` [name: 'decision_agent_snapshot_master_check']
+    `state->'snapshot'=snapshot` [name: 'decision_agent_state_snapshot_check']
+    `(state->>'revision')::integer=revision` [name: 'decision_agent_state_revision_check']
+  }
+
+  Indexes {
+    id [pk, name: "decision_agent_analysis_pkey"]
+    (owner_id, updated_at [desc], id [desc]) [type: btree, name: "ix_decision_agent_analysis_owner"]
+  }
+
+  Note: 'V20261126_0900. BEFORE UPDATE 트리거 decision_agent_baseline_immutable → guard_decision_agent_baseline(): owner_id·master_id·snapshot·created_at 변경을 차단한다. JSON CHECK는 지정 키 값의 일치를 검사하며 JSON 전체 스키마나 키 존재를 강제하지 않음'
+}
+
+Table "decision_agent_research" {
+  "analysis_id" bigint [not null]
+  "captured_at" timestamptz [not null]
+  "evidence" jsonb [not null, note: '분석 기준 원천에서 최초 조회한 근거 묶음']
+  "revision" integer [not null]
+  "discovery" jsonb [note: '근거에서 발견한 최신 개선 가설·출처. 최초 근거와 분리해 갱신']
+
+  Checks {
+    `revision > 0` [name: 'decision_agent_research_revision_check']
+  }
+
+  Indexes {
+    analysis_id [pk, name: "decision_agent_research_pkey"]
+  }
+
+  Note: 'V20261126_1000: 분석당 최대 한 개 조사. BEFORE UPDATE 트리거 decision_agent_evidence_immutable → guard_decision_agent_evidence(): analysis_id·captured_at·evidence 변경을 차단한다'
+}
+
+Table "decision_work_item" {
+  "id" bigint [not null, increment]
+  "analysis_id" bigint [not null]
+  "owner_id" bigint [not null]
+  "organization_id" bigint [not null]
+  "candidate_id" varchar(100) [not null, note: '분석 JSON 안의 개선 후보 식별자. 별도 후보 테이블 FK가 아님']
+  "hypothesis_id" varchar(100) [note: '조사 JSON 안의 개선 가설 식별자. 별도 가설 테이블 FK가 아님']
+  "revision" integer [not null]
+  "state_code" "varchar(30) · DRAFT / REQUESTED / REPLIED / CHANGES_REQUESTED / ACCEPTED / REJECTED / APPROVED / DECLINED / IN_PROGRESS / COMPLETED / CANCELLED" [not null]
+  "body" jsonb [not null, note: '요청 원본·회신·검토·외부 결정 기록·실행 진행·누적 이벤트. APPROVED는 외부 결정을 기획팀이 기록한 상태']
+  "created_at" timestamptz [not null]
+  "updated_at" timestamptz [not null]
+
+  Checks {
+    `revision > 0` [name: 'decision_work_item_revision_check']
+    `state_code IN ('DRAFT','REQUESTED','REPLIED','CHANGES_REQUESTED','ACCEPTED','REJECTED','APPROVED','DECLINED','IN_PROGRESS','COMPLETED','CANCELLED')` [name: 'decision_work_item_state_code_check']
+    `body->>'id'=id::text AND body->>'analysisId'=analysis_id::text AND body->>'ownerId'=owner_id::text AND body->>'organizationId'=organization_id::text AND body->>'candidateId'=candidate_id` [name: 'decision_work_item_identity_check']
+    `(body->>'revision')::integer=revision AND body->>'state'=state_code` [name: 'decision_work_item_version_check']
+  }
+
+  Indexes {
+    id [pk, name: "decision_work_item_pkey"]
+    (owner_id, updated_at [desc], id [desc]) [type: btree, name: "ix_decision_work_item_owner"]
+    (organization_id, updated_at [desc], id [desc]) [type: btree, name: "ix_decision_work_item_org"]
+    (analysis_id, candidate_id) [unique, name: "ux_decision_work_item_active_candidate", note: '부분 유일 인덱스: state_code NOT IN (REJECTED, DECLINED, COMPLETED, CANCELLED)인 행만']
+    (analysis_id, hypothesis_id) [unique, name: "ux_decision_work_item_active_hypothesis", note: '부분 유일 인덱스: hypothesis_id IS NOT NULL AND state_code NOT IN (REJECTED, DECLINED, COMPLETED, CANCELLED)인 행만']
+  }
+
+  Note: 'V20261126_1100: 기존 제출·소명 요청과 분리한 개선 요청함. BEFORE UPDATE 트리거 decision_work_item_immutable → guard_decision_work_item(): 소유자·분석·조직·후보·가설·생성 시각 및 body의 요청 원본을 고정하고 revision +1과 기존 이벤트를 보존한 한 건 추가를 검사한다. JSON 키 존재·전체 형식 검증은 이 CHECK만으로 보장하지 않음'
+}
+
 Ref "app_user_organization_id_fkey":"organization"."id" < "app_user"."organization_id"
 
 Ref "annual_plan_confirmed_by_fkey":"app_user"."id" < "annual_plan"."confirmed_by"
@@ -846,3 +956,23 @@ Ref "explanation_classification_review_explanation_id_fkey":"review_explanation"
 Ref "explanation_classification_category_id_fkey":"explanation_category"."id" < "explanation_classification"."category_id"
 
 Ref "explanation_classification_classified_by_fkey":"app_user"."id" < "explanation_classification"."classified_by"
+
+Ref "request_target_dispatch_requested_by_fkey":"app_user"."id" < "request_target"."dispatch_requested_by"
+
+Ref "submission_review_baseline_submission_id_fkey":"submission"."id" < "submission"."review_baseline_submission_id"
+
+Ref "ui_copy_override_updated_by_fkey":"app_user"."id" < "ui_copy_override"."updated_by"
+
+Ref "monthly_review_policy_archive_submission_id_fkey":"submission"."id" - "monthly_review_policy_archive"."submission_id"
+
+Ref "decision_agent_analysis_owner_id_fkey":"app_user"."id" < "decision_agent_analysis"."owner_id"
+
+Ref "decision_agent_analysis_master_id_fkey":"master_version"."id" < "decision_agent_analysis"."master_id"
+
+Ref "decision_agent_research_analysis_id_fkey":"decision_agent_analysis"."id" - "decision_agent_research"."analysis_id"
+
+Ref "decision_work_item_analysis_id_fkey":"decision_agent_analysis"."id" < "decision_work_item"."analysis_id"
+
+Ref "decision_work_item_owner_id_fkey":"app_user"."id" < "decision_work_item"."owner_id"
+
+Ref "decision_work_item_organization_id_fkey":"organization"."id" < "decision_work_item"."organization_id"

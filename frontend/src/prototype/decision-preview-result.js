@@ -1,4 +1,4 @@
-import { analysisBrief, successfulObservations } from './decision-conversation-api.js'
+import { analysisBrief, assistantExecutionSummary, assistantIncompleteReason, successfulObservations } from './decision-conversation-api.js'
 import { decimalText } from './decision-agent-api.js'
 import { compare } from './exact-money.js'
 
@@ -37,6 +37,8 @@ export function buildPreviewResult(execution, scope = {}) {
   result.context = { ...response.context }
   result.brief = brief
   result.status = response.status
+  result.executionSummary = assistantExecutionSummary(response)
+  result.incompleteReason = assistantIncompleteReason(response)
   result.warnings = warningTexts(response.limitations)
   let planDifferences = null
   for (const observation of observations) {
@@ -71,7 +73,7 @@ export function buildPreviewResult(execution, scope = {}) {
  */
 function emptyResult(state, message) {
   return { state, context: null, capturedAt: null, goal: null, organizations: [], organizationCount: null, organizationSource: null,
-    explanationCount: null, warnings: [], message, sources: [], brief: null, status: null }
+    explanationCount: null, warnings: [], message, sources: [], brief: null, status: null, executionSummary: null, incompleteReason: null }
 }
 
 /** 요청 또는 응답의 마스터·분석·revision이 현재 범위와 정확히 같은지 검사한다.
