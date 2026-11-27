@@ -78,6 +78,7 @@ class Settings:
     key_source: str = "none"
     openai_model: str = "gpt-4o-mini"
     vlm_model: str = ""                          # 그림 읽기(VLM) 전용 모델. 비우면 openai_model
+    ai_reasoning_effort: str = "none"           # 추론 모델(gpt-5·gpt-6·o 계열) 전용 추론 강도(AI_REASONING_EFFORT). none 이면 도구 호출·JSON 이 빠르고 토큰 상한이 예측 가능
     ai_temperature: float = 0.2
     ai_max_output_tokens: int = 500
     ai_timeout_seconds: float = 30.0
@@ -143,6 +144,7 @@ def get_settings() -> Settings:
         require_internal_token=str(_read("AI_REQUIRE_INTERNAL_TOKEN", "false")[0]).strip().lower() in ("1", "true", "yes", "on"),
         openai_model=_read("OPENAI_MODEL", "gpt-4o-mini")[0],
         vlm_model=_read("AI_VLM_MODEL", "")[0],
+        ai_reasoning_effort=str(_read("AI_REASONING_EFFORT", "none")[0]).strip() or "none",
         ai_temperature=float(_read("AI_TEMPERATURE", "0.2")[0]),
         ai_max_output_tokens=int(_read("AI_MAX_OUTPUT_TOKENS", "500")[0]),
         ai_timeout_seconds=float(_read("AI_TIMEOUT_SECONDS", "30")[0]),

@@ -154,6 +154,9 @@ function send(text) {
           <div v-for="(text, i) in sent" :key="i" class="rs-aibox me">{{ text }}</div>
           <div v-if="editResult" class="rs-aibox">
             <div>{{ editResult.message }}</div>
+            <div v-if="editResult.table?.rows?.length" class="rs-scroll" style="margin-top:8px"><table class="rs-mini">
+              <thead><tr><th v-for="(h, i) in editResult.table.headers" :key="i">{{ h?.text ?? h }}</th></tr></thead>
+              <tbody><tr v-for="(row, ri) in editResult.table.rows" :key="ri"><td v-for="(cell, ci) in row" :key="ci">{{ cell?.text ?? cell }}</td></tr></tbody></table></div>
             <ul v-if="editResult.proposals?.length" style="margin:6px 0 0;padding-left:18px"><li v-for="(p, i) in editResult.proposals" :key="i">{{ p.description }}</li></ul>
             <div class="rs-acts" style="margin-top:8px">
               <button v-if="editResult.status === 'EDIT' && editResult.proposals?.length" type="button" class="rs-btn" style="height:32px" :disabled="busy" @click="emit('accept')">이 편집안 적용</button>

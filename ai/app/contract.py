@@ -75,8 +75,10 @@ def edit(definition: dict, instruction: str) -> dict:
     blocks = [{**b, "label": b.get("label") or b.get("title") or b.get("text") or b.get("kind")} for b in definition.get("blocks", [])]
     base = _base_of(definition) or {}
     r = chat_edit.interpret(instruction, base, blocks)
+    if r["status"] == "answer":                            # 데이터를 묻는 말은 쌓인 데이터로 답한다(글 + 표). 보고서는 바꾸지 않는다
+        return {"status": "ANSWER", "message": r.get("message"), "proposals": [], "table": r.get("table")}
     status = _EDIT_STATUS.get(r["status"])
-    if status is None:                                     # 조회 답변(answer·not_found 등)은 편집이 아니다
+    if status is None:                                     # 그 밖의 상태는 편집도 답변도 아니다
         return {"status": "REFUSED", "message": NOT_AN_EDIT, "proposals": []}
     notes = r.get("notes") or []
     proposals = []

@@ -830,6 +830,28 @@ def q_org_rank(base, metric, order, limit):
         con.close()
 
 
+def q_org_plan_gap(base, metric, limit):
+    """조직별 계획 대비 차이(실적 − 계획)를 차이의 절댓값이 큰 순으로 보여 준다. 값은 모두 코드가 보고서용 뷰에서 계산한다."""
+    info = months()
+    ver = _best_version(info, base["year"], base["month"])
+    con = _con()
+    try:
+        col = METRIC_COL[metric]
+        rs = con.execute(f"SELECT org_name, SUM(CASE WHEN scenario='ACTUAL' THEN {col} ELSE 0 END) a, SUM(CASE WHEN scenario='PLAN' THEN {col} ELSE 0 END) p "
+                         "FROM v_op WHERE version=? AND year=? AND month=? GROUP BY org_code, org_name", (ver, base["year"], base["month"])).fetchall()
+        rs = [r for r in rs if r["p"]]
+        if not rs:
+            return {"text": f"{base['year']}년 {base['month']}월 조직별 {metric} 계획: 데이터 없음."}
+        rs = sorted(rs, key=lambda r: (-abs(r["a"] - r["p"]), r["org_name"]))
+        if limit:
+            rs = rs[:int(limit)]
+        return {"text": f"{base['year']}년 {base['month']}월 조직별 {metric} 계획 대비 차이(실적 − 계획, 억원)가 큰 순입니다.",
+                "table": _tbl(["순위", "조직", f"{metric} 계획(억원)", f"{metric} 실적(억원)", "계획 대비 차이(억원)"],
+                              [[str(i), r["org_name"], eok(r["p"]), eok(r["a"]), eok(r["a"] - r["p"], diff=True)] for i, r in enumerate(rs, 1)])}
+    finally:
+        con.close()
+
+
 def q_gap_orgs(base):
     """백엔드 Gap 대상 조직과 보고 항목을 표시한다.
 
@@ -1289,6 +1311,8 @@ def query_exec(q: dict, base: dict) -> dict:
         return q_value(b, metric, q.get("org"), q.get("compare"))
     if t == "org_rank":
         return q_org_rank(b, metric, "asc" if q.get("order") == "asc" else "desc", q.get("limit"))
+    if t == "org_plan_gap":
+        return q_org_plan_gap(b, metric, q.get("limit"))
     if t == "gap_orgs":
         return q_gap_orgs(b)
     if t == "org_explanation" and q.get("org"):

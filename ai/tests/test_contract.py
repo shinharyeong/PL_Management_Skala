@@ -63,8 +63,23 @@ def test_edit_returns_proposals_and_refuses_number_changes_and_queries(monkeypat
     assert r["status"] == "REFUSED" and r["proposals"] == []
     c2 = _AiClient({"intent": "query", "query": {"type": "value", "metric": "영업이익", "month": 7}})
     monkeypatch.setattr(openai_client, "make_client", lambda s: c2)
-    r = client.post("/v1/edit", json={"definition": DEF, "instruction": "7월 전사 영업이익"}).json()                # 조회는 편집이 아님
-    assert r["status"] == "REFUSED" and r["message"] == contract.NOT_AN_EDIT
+    r = client.post("/v1/edit", json={"definition": DEF, "instruction": "7월 전사 영업이익"}).json()                # 조회는 쌓인 데이터로 답한다(보고서는 바꾸지 않음)
+    assert r["status"] == "ANSWER" and r["proposals"] == [] and r["message"] and r["message"] != contract.NOT_AN_EDIT
+
+
+def test_edit_chat_answers_org_plan_gap_question_with_a_table(monkeypatch):
+    """"계획 대비 차이가 큰 조직"은 실적 순위가 아니라 (실적 − 계획) 차이가 큰 순의 표로 답한다."""
+    _seed_report_db()
+    c = _AiClient({"intent": "query", "query": {"type": "org_plan_gap", "metric": "영업이익", "month": 7}})
+    monkeypatch.setattr(openai_client, "make_client", lambda s: c)
+    r = client.post("/v1/edit", json={"definition": DEF, "instruction": "계획 대비 영업이익 차이가 큰 조직을 알려줘"}).json()
+    assert r["status"] == "ANSWER" and r["proposals"] == []
+    if r.get("table"):
+        assert r["table"]["headers"][-1] == "계획 대비 차이(억원)" and len(r["table"]["headers"]) == 5
+        gaps = [float(row[-1].replace("△", "-").replace("+", "").replace(",", "")) for row in r["table"]["rows"]]
+        assert [abs(g) for g in gaps] == sorted((abs(g) for g in gaps), reverse=True)
+    else:
+        assert "데이터 없음" in r["message"]
 
 
 def test_pdf_job_accepts_then_reports_a_draft_template(monkeypatch):

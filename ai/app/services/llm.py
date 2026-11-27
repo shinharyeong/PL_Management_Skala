@@ -9,6 +9,7 @@ PDF VLM·자연어 SQL·보고 편집·핵심 문장이 같은 인터페이스�
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from collections.abc import Sequence
 from typing import Any
@@ -134,7 +135,10 @@ class _SdkChatModel(BaseChatModel):
         Side Effects:
             openai_client.make_client로 SDK 요청 한 번을 수행한다. 원문 로그·파일을 만들지 않는다.
         """
-        args = {"model": self.model_name, "temperature": self.temperature, "max_tokens": self.max_tokens}
+        if is_reasoning_model(self.model_name):   # gpt-6-luna 같은 추론 모델: max_tokens·temperature 를 받지 않고, 도구 호출은 추론 강도 none 이어야 한다
+            args = {"model": self.model_name, "max_completion_tokens": self.max_tokens, "reasoning_effort": self.settings.ai_reasoning_effort}
+        else:
+            args = {"model": self.model_name, "temperature": self.temperature, "max_tokens": self.max_tokens}
         if self.json_mode and not kwargs.get("tools"):
             args["response_format"] = {"type": "json_object"}
         for key in ("tools", "tool_choice", "parallel_tool_calls"):
@@ -153,6 +157,14 @@ class _SdkChatModel(BaseChatModel):
                             usage_metadata={"input_tokens": tin, "output_tokens": tout, "total_tokens": tin + tout},
                             response_metadata=metadata)
         return ChatResult(generations=[ChatGeneration(message=message)])
+
+
+_REASONING_MODEL = re.compile(r"^(gpt-5|gpt-6|o\d)")
+
+
+def is_reasoning_model(name: str) -> bool:
+    """chat.completions 에서 max_tokens·temperature 대신 max_completion_tokens·reasoning_effort 를 쓰는 추론 모델 이름인지."""
+    return bool(_REASONING_MODEL.match(str(name or "")))
 
 
 def chat_model(settings: Settings, *, max_tokens: int, temperature: float | None = None, model: str | None = None,
