@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal, localcontext
 import re
+import unicodedata
 from typing import Any
 
 from .discovery_models import (DiscoveryHypothesis, EvidenceReadResponse, GoalProposal,
@@ -21,12 +22,79 @@ _MONEY = re.compile(r"(?<![\d.,+−A-Za-z-])(?P<number>(?:\d{1,3}(?:,\d{3})+|\d+
 _MULTIPLIERS = {"원": 1, "만원": 10_000, "백만원": 1_000_000, "천만원": 10_000_000,
                 "억": 100_000_000, "억원": 100_000_000, "조": 1_000_000_000_000, "조원": 1_000_000_000_000}
 _AMBIGUOUS = re.compile(r"취소|철회|말고|아니라|하지\s*않아도|하지\s*말|제외해|제외하")
-# 단위 뒤의 일반 어휘를 금액으로 보지 않되 원·조사·금액 변동 표현은 계속 검사한다.
+# 명백한 수사 구조는 붙여 쓴 금액도 검사하고 모호한 단순 수사는 어절·통화 표지를 요구한다.
 _NUMERIC_CLAIM = re.compile(
-    r"[\d０-９%]|퍼센트|절반|두\s*배|세\s*배|[수일이삼사오육칠팔구십백천]+\s*(?:억|조|만)"
-    r"(?=$|[^가-힣]|원|[은는이가을를의에와과도]|으로|보다|부터|까지|입니다|이며|이고|인데|증가|감소|절감|달성|확보|필요|부족|초과|미달|수준|규모|가량|정도)"
-    r"(?:\s*원)?|\b(?:million|billion|percent)\b", re.I)
+    r"[\d０-９%]|퍼센트|절반|두\s*배|세\s*배|"
+    r"(?:[수일이삼사오육칠팔구십백천]*[십백천][수일이삼사오육칠팔구십백천]*\s*(?:억|조|만)(?:\s*원)?|"
+    r"(?<![가-힣])[수일이삼사오육칠팔구]+\s*(?:(?:억|조)(?:\s*원)?|만\s*원))"
+    r"(?=$|[^가-힣]|[은는이가을를의에와과도]|으로|보다|부터|까지|입니다|이며|이고|인데|증가|감소|절감|달성|확보|필요|부족|초과|미달|수준|규모|가량|정도)"
+    r"|\b(?:million|billion|percent)\b", re.I)
 _ASSERTED_OUTCOME = re.compile(r"확정|보장|반드시|(?:승인|달성|실현|검증|확보)\s*완료|(?:달성|확보|실현|절감)(?:됩니다|합니다)")
+_REDUCTION_PROHIBITION = re.compile(
+    r"(?:(?:감축|축소|삭감)(?:을|를)?\s*하지|줄이지)\s*"
+    r"(?:마(?:세요|라|십시오)?|말(?:아(?:줘|주세요|라)?|라|것))(?=$|[\s.!?])"
+)
+GOAL_VALIDATION_MESSAGES = {
+    "UNCERTAINTY_CLAIM": "확인 질문에 새로운 숫자나 달성 확정을 추가할 수 없습니다.",
+    "TARGET_QUOTE": "목표 금액을 뒷받침하는 단일한 요청문 인용이 없습니다.",
+    "TARGET_VALUE": "목표 원 단위 금액이 요청문 인용과 다릅니다.",
+    "TARGET_RANGE": "목표 금액 범위가 지원되지 않습니다.",
+    "YEAR_QUOTE": "목표 연도를 뒷받침하는 원문이나 선택값이 없습니다.",
+    "PROTECTED_QUOTE": "보호 조건 인용이 요청문에 없습니다.",
+    "GOAL_CONTRACT": "목표 제안의 계약을 확인하지 못했습니다.",
+}
+
+
+class GoalValidationError(ValueError):
+    """모델 목표 검증의 원인을 원문 없는 고정 코드로 구분한다."""
+
+    def __init__(self, code: str) -> None:
+        """알려진 검증 코드와 고정 안내만 보관한다.
+
+        Args: code 등록된 목표 검증 오류 종류.
+        Returns: 없음. Raises: 없음.
+        Side Effects: 없음. 모델 인용·금액·응답 원문은 보관하거나 출력하지 않는다.
+        """
+        self.code = code if code in GOAL_VALIDATION_MESSAGES else "GOAL_CONTRACT"
+        super().__init__(GOAL_VALIDATION_MESSAGES[self.code])
+
+
+def ambiguous_protection_request(prompt: str) -> bool:
+    """명백한 감축 금지 명령과 취소·예외·조건부 요청을 구분한다.
+
+    Args: prompt 전체 사용자 요청 원문.
+    Returns: 보호 조건을 자동 제안하기 어려운 취소·예외·조건 표현이 있으면 True.
+    Raises: 없음.
+    Side Effects: 없음. 원문을 수정하지 않으며 금지 명령의 구간만 메모리에서 대조한다.
+    """
+    if re.search(r"만약|경우|가능하면|조건부|다만|단\s*[,，:]", prompt):
+        return True
+    prohibitions = [match.span() for match in _REDUCTION_PROHIBITION.finditer(prompt)]
+    return any(not any(start <= match.start() and match.end() <= end for start, end in prohibitions)
+               for match in _AMBIGUOUS.finditer(prompt))
+
+
+def numeric_claim_kind(text: str) -> str | None:
+    """설명에서 금지된 수치의 종류만 반환하며 정상 조사와 모호한 어절을 금액으로 단정하지 않는다.
+
+    Args: text 검증할 설명 문장.
+    Returns: 고정된 수치 분류 코드 또는 수치가 검출되지 않으면 None.
+    Raises: 없음.
+    Side Effects: 없음. 일치한 원문·수치·위치를 기록하거나 반환하지 않는다. 의미적 진실성 검증은 아니다.
+    """
+    if any(unicodedata.category(character).startswith("N") for character in text):
+        return "NUMERIC_CHARACTER"
+    match = _NUMERIC_CLAIM.search(text)
+    if match is None:
+        return None
+    matched = match.group().lower()
+    if matched in {"%", "퍼센트", "percent"}:
+        return "PERCENT_EXPRESSION"
+    if matched == "절반" or re.fullmatch(r"[두세]\s*배", matched):
+        return "RATIO_EXPRESSION"
+    if matched in {"million", "billion"}:
+        return "SCALE_EXPRESSION"
+    return "KOREAN_AMOUNT"
 
 
 def money_values(text: str) -> list[str]:
@@ -98,36 +166,37 @@ def validate_goal(value: Any, prompt: str, year: int, protected: list[str] | Non
     Returns:
         원문 대조를 통과한 목표 제안. 적용 전 사용자 확인은 항상 필요하다.
     Raises:
-        ValueError 또는 ValidationError: 숫자·연도 인용이 없거나 원문과 다른 경우.
+        GoalValidationError: 숫자·연도·보호 인용이 원문과 다르거나 미검증 주장이 있는 경우.
+        ValidationError: 목표 제안의 타입·필드 계약이 다른 경우.
     Side Effects:
         없음.
     """
     goal = ModelGoalProposal.model_validate(value)
     uncertainties = list(goal.uncertainties)
-    if any(_NUMERIC_CLAIM.search(text) or _ASSERTED_OUTCOME.search(text) for text in uncertainties):
-        raise ValueError("확인 질문에 새로운 숫자나 달성 확정을 추가할 수 없습니다.")
+    if any(numeric_claim_kind(text) or _ASSERTED_OUTCOME.search(text) for text in uncertainties):
+        raise GoalValidationError("UNCERTAINTY_CLAIM")
     if goal.targetProfitWon is not None:
         quote = goal.targetQuote
         if not quote or quote not in prompt or len(set(money_values(quote))) != 1:
-            raise ValueError("목표 금액을 뒷받침하는 단일한 요청문 인용이 없습니다.")
+            raise GoalValidationError("TARGET_QUOTE")
         if Decimal(goal.targetProfitWon) != Decimal(money_values(quote)[0]):
-            raise ValueError("목표 원 단위 금액이 요청문 인용과 다릅니다.")
+            raise GoalValidationError("TARGET_VALUE")
         if not re.fullmatch(r"\d{1,24}(?:\.\d{1,6})?", goal.targetProfitWon) or Decimal(goal.targetProfitWon) <= 0:
-            raise ValueError("목표 금액 범위가 지원되지 않습니다.")
+            raise GoalValidationError("TARGET_RANGE")
     if goal.targetYear is not None:
         quote = goal.yearQuote
         explicit = bool(quote and quote in prompt and str(goal.targetYear) in re.findall(r"\b(20\d{2})\s*년", quote))
         selected = goal.targetYear == year and (quote is None or quote in prompt)
         if not explicit and not selected:
-            raise ValueError("목표 연도를 뒷받침하는 원문이나 선택값이 없습니다.")
+            raise GoalValidationError("YEAR_QUOTE")
     categories = list(dict.fromkeys(protected or []))
     for item in goal.protectedQuotes:
         if item.quote not in prompt:
-            raise ValueError("보호 조건 인용이 요청문에 없습니다.")
+            raise GoalValidationError("PROTECTED_QUOTE")
         indicator = r"인력|인원|인건비|고용" if item.category == "HEADCOUNT" else r"R\s*&\s*D|연구\s*개발"
-        protection = re.search(r"유지|보호|(?:감축|축소|삭감|줄이)[^.!?\n]{0,20}(?:없|금지|않|불가)", item.quote, re.I)
-        reversal = re.search(r"(?:유지|보호)[^.!?\n]{0,8}(?:않|아니|불필요)|(?:감축|축소|삭감)[^.!?\n]{0,8}(?:가능|허용)", item.quote)
-        if _AMBIGUOUS.search(prompt) or reversal or not protection or not re.search(indicator, item.quote, re.I):
+        protection = re.search(r"유지|보호|(?:감축|축소|삭감|줄이)[^.!?\n]{0,20}(?:없|금지|않|불가)", item.quote, re.I) or _REDUCTION_PROHIBITION.search(item.quote)
+        reversal = re.search(r"(?:유지|보호)[^.!?\n]{0,8}(?:않|아니|불필요)|(?:감축|축소|삭감)[^.!?\n]{0,8}(?:가능|허용)|(?:유지|보호|감축|축소|삭감|줄이)[^.!?\n]{0,20}(?:않아도|말아도)", item.quote)
+        if ambiguous_protection_request(prompt) or reversal or not protection or not re.search(indicator, item.quote, re.I):
             uncertainties.append("부정·예외가 있거나 의미가 불명확한 보호 조건은 자동 제안에서 제외했습니다.")
             continue
         if item.category not in categories:

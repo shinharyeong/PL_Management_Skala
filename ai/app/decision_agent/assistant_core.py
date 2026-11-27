@@ -47,25 +47,35 @@ FINISH_ERRORS = {
     "BRIEF_REPAIR": "repair_answer만 단독 호출해 schema에 허용된 오류 경로를 각각 한 번씩 수정하세요. updates에는 path와 text만 사용하며 기존 의미·근거를 유지하세요. 계획·인용·식별자·상태·다른 문장은 변경할 수 없습니다.",
     "MODEL_OUTPUT_LIMIT": "모델 응답이 출력 길이 한도로 잘려 완료되지 않았습니다. 잘린 원문은 대화에서 제외했습니다. 기존 계획·관찰·인용만 사용해 현재 제공된 도구 계약에 맞는 짧은 결과를 다시 작성하세요.",
     "COMPACT_FINISH_ONLY": "새 조회나 계획 변경 없이 기존 관찰로 finish_answer만 단독 호출하세요. 모든 요구 항목을 유지하며 핵심 판단과 필요한 확인 질문만 짧게 작성하세요.",
+    "FINALIZATION_ONLY": "남은 모델 호출은 종료 전용입니다. 추가 조회하지 말고 finish_answer로 기존 근거에 답한 항목과 아직 답하지 못한 항목을 모두 정리하세요. 미조회 항목은 NEEDS_INPUT과 구체적인 부족 자료로 남기세요.",
     "BRIEF_ASSERTED": "결과를 보장하거나 저장·발송·추진 승인 등을 실행했다고 쓰지 마세요. 가설과 조건부 판단을 구분하세요.",
+}
+NUMERIC_REASONS = {
+    "NUMERIC_CHARACTER": "숫자 문자가 포함되어 있습니다. 수치는 기존 인용에 맡기세요.",
+    "PERCENT_EXPRESSION": "백분율 표현을 설명에서 반복하지 마세요.",
+    "RATIO_EXPRESSION": "절반·배수 같은 정량 비교를 기존 인용과 정성 설명으로 구분하세요.",
+    "SCALE_EXPRESSION": "금액 규모 단어를 설명에서 반복하지 마세요.",
+    "KOREAN_AMOUNT": "한글 수사와 금액 단위가 결합되어 있습니다. 목표액 대신 요청한 목표라고 표현하세요.",
 }
 
 
 class FinishValidationError(ValueError):
     """모델 원문을 담지 않는 종료 검증 코드와 고정 복구 안내."""
 
-    def __init__(self, code: str, field_issues: list[str] | None = None) -> None:
+    def __init__(self, code: str, field_issues: list[str] | None = None, reason_codes: list[str] | None = None) -> None:
         """허용된 오류 코드만 복구 안내와 함께 보관한다.
 
-        Args: code 내부 종료 검증 오류 코드, field_issues 원문 없는 허용 필드·오류 종류 목록.
+        Args: code 내부 종료 검증 오류 코드, field_issues 원문 없는 허용 필드·오류 종류 목록, reason_codes 고정 수치 분류 코드.
         Returns: 없음.
         Raises: 없음.
         Side Effects: 없음. 응답 원문·금액·ID·인자를 저장하거나 기록하지 않는다.
         """
         self.code = code if code in FINISH_ERRORS else "INVALID_FINISH"
         self.field_issues = list(field_issues or [])[:8]
+        self.reason_codes = list(dict.fromkeys(item for item in (reason_codes or []) if item in NUMERIC_REASONS))[:5]
         detail = " 수정할 필드: " + "; ".join(self.field_issues) if self.field_issues else ""
-        super().__init__(FINISH_ERRORS[self.code] + detail)
+        reasons = " ".join(NUMERIC_REASONS[item] for item in self.reason_codes)
+        super().__init__(FINISH_ERRORS[self.code] + detail + (" 판정 종류: " + reasons if reasons else ""))
 
 
 def strict_schema(value: Any) -> Any:
@@ -93,10 +103,12 @@ def strict_schema(value: Any) -> Any:
 
 
 def tool_schemas(citation_ids: list[str] | None = None, plan: list[dict[str, str]] | None = None,
-                 repair_fields: list[str] | None = None, compact_finish: bool = False) -> list[dict[str, Any]]:
+                 repair_fields: list[str] | None = None, compact_finish: bool = False,
+                 request_message: str | None = None, finalization_only: bool = False) -> list[dict[str, Any]]:
     """백엔드 읽기 allowlist와 검증된 종료 도구의 native schema를 만든다.
 
-    Args: citation_ids 실제 근거 ID, plan 수락한 요구 항목, repair_fields 오류 문장 경로, compact_finish 출력 잘림 후 짧은 종료 전용 여부.
+    Args: citation_ids 실제 근거 ID, plan 수락한 요구 항목, repair_fields 오류 문장 경로, compact_finish 출력 잘림 후 짧은 종료 전용 여부,
+        request_message 현재 사용자 원문, finalization_only 마지막 호출에서 조회 대신 종료만 허용하는지 여부.
     Returns: OpenAI function tool schema 목록.
     Raises: 없음.
     Side Effects: 없음.
@@ -110,11 +122,17 @@ def tool_schemas(citation_ids: list[str] | None = None, plan: list[dict[str, str
                  "description": "거절된 finish_answer 전체를 다시 만들지 않고 허용된 오류 문장만 짧게 다시 쓴다. 숫자는 이미 연결된 인용에서 확인하므로 설명에 반복하지 않는다. 원래 의미·근거를 유지하며 새 사실을 추가하지 않는다. 조회 도구·계획·인용·다른 필드는 변경하지 않는다.",
                  "parameters": schema}}]
     if plan == []:
+        schema = strict_schema(AnalysisPlan.model_json_schema())
+        description = "현재 사용자 질문을 빠짐없는 확인 항목으로 나눈다. 각 항목의 requestQuote는 현재 message의 실제 부분 인용이며, 인용들의 합집합으로 요청 전체를 빠짐없이 덮는다. 공백·문장부호만 인용 범위에서 제외할 수 있다. 단문 안의 복수 요구도 누락하지 않는다. 답변·가설·수치를 만들지 않고 확인할 질문만 선언한다."
+        if request_message is not None and 0 < len(request_message) <= 500:
+            schema["$defs"]["PlannedRequirement"]["properties"]["requestQuote"]["enum"] = [request_message]
+            description += " 이번 짧은 요청은 각 requestQuote에 enum의 전체 원문을 그대로 선택한다. 같은 인용을 여러 항목에서 사용해도 되며, question은 그 안의 서로 다른 업무 요구를 빠짐없이 구분한다. 인용을 요약하거나 재작성하지 않는다."
         return [{"type": "function", "function": {"name": "plan_analysis",
-                 "description": "현재 사용자 질문을 빠짐없는 확인 항목으로 나눈다. 각 항목의 requestQuote는 현재 message의 실제 부분 인용이며, 인용들의 합집합으로 요청 전체를 빠짐없이 덮는다. 공백·문장부호만 인용 범위에서 제외할 수 있다. 단문 안의 복수 요구도 누락하지 않는다. 답변·가설·수치를 만들지 않고 확인할 질문만 선언한다.",
-                 "strict": True, "parameters": strict_schema(AnalysisPlan.model_json_schema())}}]
+                 "description": description, "strict": True, "parameters": schema}}]
     tools = [{"type": "function", "function": {"name": name, "description": TOOL_DESCRIPTIONS[name],
               "parameters": model.model_json_schema()}} for name, model in ARGUMENT_MODELS.items()]
+    if finalization_only:
+        tools = []
     finish_schema = GroundedFinish.model_json_schema()
     if compact_finish:
         tools = []
@@ -137,6 +155,8 @@ def tool_schemas(citation_ids: list[str] | None = None, plan: list[dict[str, str
                   "strict": True, "parameters": strict_schema(finish_schema)}})
     if compact_finish:
         tools[-1]["function"]["description"] = "출력 길이 한도로 잘린 답변을 기존 관찰·인용만 사용해 간결하게 다시 작성한다. summary는 짧은 한 문장, 각 finding도 짧은 판단 하나만 작성하고 숫자·원문 인용 내용을 반복하지 않는다. 모든 계획 항목은 그대로 포함한다. 새 조회·계획 변경은 하지 않는다."
+    if finalization_only:
+        tools[-1]["function"]["description"] += " 이번 호출은 종료 전용이다. 모든 계획 항목을 반환하고, 기존 관찰로 답할 수 없는 항목을 숨기거나 완료로 만들지 말고 NEEDS_INPUT으로 명시한다."
     return tools
 
 

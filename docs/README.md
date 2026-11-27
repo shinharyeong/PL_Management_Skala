@@ -5,7 +5,8 @@
 - [PRD](경영팀을부탁해_PRD_ver1.xlsx) — 기능·비기능 요구사항, 용어, 범위 (기준 문서)
 - [인프라 구성](infrastructure.md) — SKALA 플랫폼 EKS 공유 클러스터(`skala-pg`) 기준 요청 경로·워크로드·RDS·ECR·GitHub Actions 배포·runner·모니터링. RabbitMQ·S3 원본 저장은 2차 목표 구성
 - [인프라 구성도](architecture.png)
-- [물리 ERD](erd/physical-erd.svg) — PRD·와이어프레임·인프라 구성을 반영한 DB 설계안 도식. 원본은 [DBML](erd/physical-erd.dbml)이며 [dbdiagram.io](https://dbdiagram.io) 편집창에 붙여 넣어 수정함
+- [물리 ERD 원본(DBML)](erd/physical-erd.dbml) — 2026-11-27 소스의 `V1`~`V20261127_1300` 마이그레이션 정의를 반영. Agent 3개 테이블, 조직별 요청, 월간 비교 정책과 직접 승인 상태를 포함하며 실제 환경 적용 여부는 Flyway 이력으로 별도 확인. [dbdiagram.io](https://dbdiagram.io) 편집창에서 확인·수정할 수 있음
+- [이전 ERD 그림(SVG)](erd/physical-erd.svg) — 위 DBML의 최신 변경은 아직 반영하지 않은 이전 그림
 - [API 명세](api/api-spec.md) — 화면별 API 개요·공통 규칙·FR 대응. 상세(요청·응답·오류)는 [OpenAPI](api/openapi.yaml)
 - [로컬 Docker 환경](development/local-environment.md) — `.env`·실행·종료·DB 볼륨·smoke 검증
 - [공개 API와 화면 연결](development/api-integration.md) — 현재 미연결 경로·보고서 연결·추가 구현 범위

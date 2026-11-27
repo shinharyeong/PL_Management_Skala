@@ -441,7 +441,8 @@ class AssistantLoopGuardTests(unittest.TestCase):
         result = graph.run_assistant(request_fixture(), settings=self.settings, model_caller=model, tool_caller=tool)
         self.assertEqual(model.call_count, 6)
         self.assertEqual(result["status"], "LIMIT_REACHED")
-        self.assertIn("이번 호출이 마지막 모델 선택", model.call_args.args[1][-1].content)
+        self.assertIn("이번 호출이 마지막 모델 선택", " ".join(message.content for message in model.call_args.args[1][-2:]))
+        self.assertEqual([item["function"]["name"] for item in model.call_args.args[2]], ["finish_answer"])
         self.assertIn("모델 선택이 두 번", model.call_args_list[-2].args[1][-1].content)
         tool.assert_not_called()
 
