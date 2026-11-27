@@ -1,4 +1,5 @@
 <script setup>
+import {confirmBusinessAction} from './business-confirm.js'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { usePrototypeStore } from './live-store.js'
 import { saveFile } from './live-api.js'
@@ -54,7 +55,7 @@ async function run(work) {
   if (busy.value) return false
   busy.value = true; error.value = ''; notice.value = ''
   try { await work(); return !controller.signal.aborted }
-  catch (cause) { if (!controller.signal.aborted) error.value = cause.message; return false }
+  catch (cause) { if (!controller.signal.aborted && cause.name !== 'AbortError') error.value = cause.message; return false }
   finally { busy.value = false }
 }
 
@@ -360,9 +361,11 @@ function undoEdit() { if (undo.value) { definition.value = JSON.parse(undo.value
  * Side Effects: 서버에 불변 틀 버전 저장.
  */
 async function saveTemplate() {
+  await confirmBusinessAction({title:'자료 틀을 저장할까요?',confirmLabel:'새 버전 저장',message:'현재 구성을 새 버전으로 저장합니다. 이전 버전은 유지됩니다.',details:[{label:'자료 틀',value:definition.value?.name||draftName.value}]})
+  if(controller.signal.aborted)return
   const record = await reportRequest(api, 'save', { definition: definition.value, id: saved.value?.id, expectedVersion: saved.value?.latestVersion, sourcePdfJobId: job.value?.status === 'SUCCEEDED' ? job.value.id : null })
   saved.value = record; definition.value = record.definition; savedContent.value = JSON.stringify(record.definition)
-  await loadTemplates(true); notice.value = `자료 틀 ${record.version}버전을 저장했습니다.`
+  await loadTemplates(true); notice.value = `자료 틀 ${record.version}버전을 저장했습니다.`; store.notify(notice.value)
 }
 
 /** 저장된 현재 버전과 기준 월을 XLSX로 내려받는다.

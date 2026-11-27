@@ -32,6 +32,8 @@ import { clockText } from './auth-demo.js'
 import { pageTitles } from './router.js'
 import NavIcon from './NavIcon.vue'
 import FeedbackToast from './FeedbackToast.vue'
+import BusinessConfirm from './BusinessConfirm.vue'
+import {settleBusinessConfirmation} from './business-confirm.js'
 
 const CopyEditor = defineAsyncComponent(() => import('./CopyEditor.vue'))
 const store = usePrototypeStore()
@@ -165,12 +167,15 @@ watch(page,async value=>{
     if(current===pageLoad&&['monthly','monthly-request'].includes(value))await store.loadMonthly()
   }catch(error){if(current===pageLoad&&error.name!=='AbortError')store.error=error.message}
 }, { immediate: true })
+watch(() => route.fullPath, () => settleBusinessConfirmation(false))
+watch(() => store.actor?.id, () => settleBusinessConfirmation(false))
 </script>
 
 <template>
   <CopyEditor v-if="developmentEntry" />
   <div v-if="developmentEntry" class="dev-entry-notice">개발용 화면 · 계정 선택 로그인 · 공통 문구 편집 <a href="/">일반 화면</a></div>
   <FeedbackToast />
+  <BusinessConfirm />
   <div v-if="developmentEntry && !store.actor" class="prototype-banner"><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span> <span><span data-copy-key="shellText.text002">{{ copy.shellText.text002 }}</span></span></div>
   <div v-if="page === 'login'" class="auth-page">
     <a class="brand auth-brand" href="#/login"><span data-copy-key="shellText.text001">{{ copy.shellText.text001 }}</span></a>

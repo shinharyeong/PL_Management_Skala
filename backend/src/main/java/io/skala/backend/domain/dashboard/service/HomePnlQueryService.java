@@ -96,21 +96,43 @@ public class HomePnlQueryService {
             throw new BusinessException(ErrorCode.INVALID_REQUEST, "limit은 1~10입니다.");
         }
         Snapshot s = loader.load(period, year, month, masterId);
-        record Driver(Org org, BigDecimal diff, String rate) {
+        record Driver(Org org, Item item, BigDecimal diff, String rate) {
         }
         List<Driver> drivers = new ArrayList<>();
         for (Org org : s.orgs()) {
-            BigDecimal op = new Tree(s.items(), s.actual().of(org.id())).op();
-            BigDecimal planOp = new Tree(s.items(), s.plan().of(org.id())).op();
-            drivers.add(new Driver(org, Amounts.diff(op, planOp), Amounts.rate(op, planOp)));
+            Map<Long, BigDecimal> actual = s.actual().of(org.id());
+            Map<Long, BigDecimal> plan = s.plan().of(org.id());
+            Set<Long> itemIds = new HashSet<>(actual.keySet());
+            itemIds.addAll(plan.keySet());
+            for (Long itemId : itemIds) {
+                Item item = s.items().get(itemId);
+                if (item == null || (!REVENUE.equals(item.kind()) && !COST.equals(item.kind()))) {
+                    continue;
+                }
+                BigDecimal current = actual.get(itemId);
+                BigDecimal baseline = plan.get(itemId);
+                BigDecimal diff = Amounts.diff(current, baseline);
+                // 비용 증가는 영업이익 감소 요인이다. 상위 합산 항목은 중복하지 않는다.
+                boolean cost = COST.equals(item.kind());
+                if (diff == null || diff.signum() == 0) {
+                    continue;
+                }
+                drivers.add(new Driver(org, item, cost ? diff.negate() : diff,
+                        Amounts.rate(cost ? current.negate() : current,
+                                cost ? baseline.negate() : baseline)));
+            }
         }
-        drivers.sort(Comparator.comparing((Driver d) -> d.diff() == null)
-                .thenComparing(d -> d.diff() == null ? BigDecimal.ZERO : d.diff().abs(), Comparator.reverseOrder())
-                .thenComparing(d -> d.org().code()));
+        drivers.sort(Comparator.comparing((Driver d) -> d.diff().abs(), Comparator.reverseOrder())
+                .thenComparing(d -> d.org().code()).thenComparingLong(d -> d.item().id()));
         BigDecimal total = Amounts.diff(new Tree(s.items(), s.actual().company()).op(),
                 new Tree(s.items(), s.plan().company()).op());
-        return new HomeOpDriversResponse(s.dataStatus(), Amounts.money(total), drivers.stream().limit(size)
-                .map(d -> new HomeOpDriversResponse.Item(ref(d.org()), Amounts.money(d.diff()), d.rate())).toList());
+        java.util.function.Function<Driver, HomeOpDriversResponse.Item> toItem = d ->
+                new HomeOpDriversResponse.Item(ref(d.org()), String.valueOf(d.item().id()),
+                        d.item().name(), Amounts.money(d.diff()), d.rate());
+        return new HomeOpDriversResponse(s.dataStatus(), Amounts.money(total),
+                drivers.stream().limit(size).map(toItem).toList(),
+                drivers.stream().filter(d -> d.diff().signum() < 0).limit(size).map(toItem).toList(),
+                drivers.stream().filter(d -> d.diff().signum() > 0).limit(size).map(toItem).toList());
     }
 
     @Transactional(readOnly = true)

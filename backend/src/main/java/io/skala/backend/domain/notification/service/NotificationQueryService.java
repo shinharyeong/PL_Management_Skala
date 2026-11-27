@@ -72,15 +72,16 @@ public class NotificationQueryService {
     private final Clock clock;
 
     @Transactional(readOnly = true)
-    public NotificationListResponse list(AuthenticatedUser actor, String type, Boolean unreadOnly, String sort,
+    public NotificationListResponse list(AuthenticatedUser actor, String type, Boolean unreadOnly, Boolean readOnly, String sort,
                                          String cursor, Integer limit) {
         actor.requireRole(UserRole.PLANNER);
         NotificationType filter = parseType(type);
-        boolean unread = Boolean.TRUE.equals(unreadOnly);
+        boolean unread = Boolean.TRUE.equals(unreadOnly), read = Boolean.TRUE.equals(readOnly);
+        if (unread && read) throw new BusinessException(ErrorCode.INVALID_REQUEST, "읽음과 안 읽음 조건을 동시에 선택할 수 없습니다.");
         if (sort != null && !"LATEST".equals(sort)) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST, "sort는 LATEST만 지원합니다.");
         }
-        String scope = "noti|" + filter + "|" + unread;
+        String scope = "noti|" + filter + "|" + unread + (read ? "|read" : "");
         int size = OffsetCursor.limit(limit);
         int offset = OffsetCursor.decode(cursor, scope);
 
@@ -89,6 +90,7 @@ public class NotificationQueryService {
         if (unread) {
             where.append(" AND n.read_at IS NULL");
         }
+        if (read) where.append(" AND n.read_at IS NOT NULL");
         Map<String, Long> typeCounts = typeCounts(where.toString(), args);
         if (filter != null) {
             where.append(" AND n.type = ?");

@@ -108,11 +108,11 @@ class PnlSnapshotLoader {
         Values plan = yearly ? values(plans.values(), "PLAN", year, 1, 12) : values(plans.values(), "PLAN", year, m, m);
 
         Values prevEstimate = Values.empty();
-        Long previousRequest = m > 1 ? requestId(year, m - 1) : null;
+        Long previousRequest = yearly ? requestId(year - 1, 12) : m > 1 ? requestId(year, m - 1) : null;
         if (previousRequest != null) {
             Map<Long, Long> previous = new LinkedHashMap<>(sources(previousRequest, null).byOrg());
             previous.keySet().retainAll(sources.byOrg().keySet());
-            prevEstimate = yearly ? outlook(previous.values(), year, m - 1)
+            prevEstimate = yearly ? values(previous.values(), "ACTUAL", year - 1, 1, 12)
                     : values(previous.values(), "ESTIMATE", year, m, m);
         }
         return new Snapshot(sources.status(), p, year, m, orgs(sources.byOrg().keySet()), items,

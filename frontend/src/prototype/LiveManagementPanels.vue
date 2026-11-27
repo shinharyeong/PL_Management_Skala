@@ -74,9 +74,9 @@ async function toggleRow(target){if(expanded.value===target.organization.id){rep
 async function send(){
  formError.value=''
  if(!validYear(year.value)||!recipients.value.length||!message.value.trim()||!Number.isFinite(seoulDeadline(due.value))||seoulDeadline(due.value)<=Date.now()){formError.value='계획 연도와 요청 대상, 메시지, 현재 시각 이후의 회신 기한을 확인해 주세요.';return}
- if(await store.run(()=>store.createRequest('ANNUAL_PLAN',recipients.value,due.value,message.value,Number(year.value))))emit('navigate','annual')
+ if(await store.run(()=>store.createRequest('ANNUAL_PLAN',recipients.value,due.value,message.value,Number(year.value)))){store.notify('연간 계획 요청을 발송했습니다.');emit('navigate','annual')}
 }
-async function decide(decision){const g=generation;if(await store.run(()=>store.decideSubmission(reply.value,decision,comment.value))){if(!disposed&&g===generation){reply.value=null;await load()}}}
+async function decide(decision){const g=generation;if(await store.run(()=>store.decideSubmission(reply.value,decision,comment.value))){store.notify(decision==='APPROVE'?'연간 계획 제출본을 승인했습니다.':'연간 계획 재제출을 요청했습니다.');if(!disposed&&g===generation){reply.value=null;await load()}}}
 /** 확인한 대기 조직을 순서대로 승인하고 성공·실패 결과를 안내한다.
  * Args: 없음. Returns: Promise<void>.
  * Raises: 없음; 서버 오류는 조직별 안내로 남긴다.
@@ -89,7 +89,7 @@ async function bulkAccept(){
  await store.run(async()=>{for(const target of chosen){try{
   const current=await store.api('/api/v1/submissions/'+target.latestSubmission.id)
   if(current.status!=='PENDING')throw new Error('제출본 상태가 변경됐습니다.')
-  await store.decideSubmission(current,'APPROVE','');success++
+  await store.decideSubmission(current,'APPROVE','',[],{confirmed:true});success++
  }catch(e){failures.push(target.organization.name+': '+e.message)}}})
  if(!disposed)await load()
  store.notify(`${success}개 조직 수락 완료${failures.length?' · '+failures.join(' · '):''}`,failures.length?'error':'info')

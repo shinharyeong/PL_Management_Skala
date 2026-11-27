@@ -1,4 +1,6 @@
 <script setup>
+import {confirmBusinessAction} from '../prototype/business-confirm.js'
+import {usePrototypeStore} from '../prototype/live-store.js'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useSession } from '../stores/session'
 import { dateTime, errorText, saveBlob } from '../lib/display'
@@ -91,10 +93,13 @@ async function command(action) {
   if (!keys.has(fingerprint)) keys.set(fingerprint, crypto.randomUUID())
   busy.value = true; error.value = ''; message.value = ''
   try {
+    await confirmBusinessAction({title:action==='answer'?'소명을 저장할까요?':action==='ACCEPT'?'소명을 수락할까요?':'소명 보완을 요청할까요?',confirmLabel:action==='answer'?'소명 저장':action==='ACCEPT'?'소명 수락':'보완 요청',message:action==='answer'?'입력한 소명을 현재 항목에 저장합니다.':action==='ACCEPT'?'해당 항목의 소명을 수락합니다. 제출본 승인은 별도입니다.':'조직 담당자에게 소명 보완을 요청합니다.',details:[{label:action==='answer'?'소명 내용':'검토 메모',value:action==='answer'?body.answer:body.note||'없음'}]})
+    if(controller.signal.aborted)return
     await session.request(`/api/v1/review-items/${id}/${action === 'answer' ? 'answer' : 'decisions'}`, { method: action === 'answer' ? 'PUT' : 'POST', headers: { 'Idempotency-Key': keys.get(fingerprint) }, body: JSON.stringify(body), signal: controller.signal })
     if (controller.signal.aborted) return
     if(action === 'answer') { clearReviewDraft(draftKey.value); draftKey.value = '' }
     keys.delete(fingerprint); message.value = action === 'answer' ? '소명을 저장했습니다.' : action === 'ACCEPT' ? '소명을 수락했습니다.' : '소명 보완을 요청했습니다.'
+    usePrototypeStore().notify(message.value)
     await load(); emit('changed')
   } catch (cause) { if (cause.name !== 'AbortError') error.value = errorText(cause) }
   finally { busy.value = false }
